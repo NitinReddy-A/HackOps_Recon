@@ -1,0 +1,4 @@
+langchain
+langgraph
+groq
+python-nmap
