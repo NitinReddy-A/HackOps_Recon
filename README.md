@@ -8,19 +8,23 @@ In the world of cybersecurity, speed and accuracy are critical. HackOps Recon co
 
 - **Real-time Cyber Scan Operations**
 - **AI-Powered Vulnerability Analysis**
+- **Stateful Attack Workflows**
+- **Adaptive Retry Mechanisms**
 - **Scan Logging & Reporting**
 - **Hacky Terminal UI for the True Hacker Feel**
 
-HackOps Recon brings together the best of both worlds—*powerful tools and cutting-edge AI*.
+HackOps Recon brings together the best of both worlds—*powerful tools, cutting-edge AI, and autonomous agentic workflows.*
 
 ---
 
 ## 💻 Features
 
+- **Agentic Workflow Engine**: Powered by **LangGraph**, our stateful workflow orchestrator manages complex scan sequences with dynamic adaptation.
 - **Port Scanning**: Perform a stealthy scan using **Nmap** to identify open ports on the target system.
 - **Web Directory Enumeration**: Use **Gobuster** to brute force web directories and uncover hidden entry points.
 - **Hidden Endpoint Discovery**: **FFUF** fuzzes for web application vulnerabilities, discovering sensitive and hidden endpoints.
 - **AI Vulnerability Analysis**: After scans, HackOps Recon leverages **LLM-powered AI** (via **Groq**) to analyze the results and provide a concise, actionable report on the vulnerabilities.
+- **Stateful Execution**: Maintains scan context across tools with intelligent state passing between nodes.
 - **Scan Logging**: Every scan is logged for future reference and accountability. Raw outputs are saved to a `scanLog.txt` file, and final results are written to `FinalReport.md`.
 - **Retry Mechanism**: Failsafes in place for retries with alternate parameters, ensuring your scans continue even if an error occurs.
 - **Hacky Terminal UI**: Custom terminal-style user interface in **Streamlit** to give you that authentic hacker vibe while scanning.
@@ -86,6 +90,28 @@ streamlit run app.py
 4. **Monitor the Scan**: Watch live progress and terminal-style output as each step (Nmap, Gobuster, FFUF) is executed.
 
 5. **Receive Your Report**: After the scan completes, you'll receive a detailed analysis report highlighting vulnerabilities, suspicious ports, directories, and recommendations for further investigation.
+
+---
+
+## 🧠 Agentic Framework Architecture
+
+HackOps Recon's brain is powered by LangGraph - a stateful workflow engine that orchestrates complex security operations:
+
+```mermaid
+graph LR
+    A[Nmap Scan] --> B{Gobuster Condition}
+    B -->|Web Ports Found| C[Gobuster Scan]
+    B -->|No Web Ports| D[Skip Web Scans]
+    C --> E[FFUF Scan]
+    E --> F[AI Supervisor]
+    F --> G[Final Report]
+```
+# Key Components:
+
+- **Stateful Workflow**: Maintains context between scan stages using shared state objects
+- **Adaptive Nodes**: Each tool (Nmap/Gobuster/FFUF) runs as independent nodes with failure recovery
+- **AI Supervisor**: Final node that analyzes aggregated results using Groq's LLM
+- **Conditional Flows**: Dynamic path selection based on scan results (e.g., skip web scans if no web ports open)
 
 ---
 
