@@ -1,5 +1,13 @@
 # ⚡ HackOps Recon: Scan. Exploit. Own. ⚡
 
+```diff
++ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
++ █░░▒▓████████████▓▒░░█   AUTONOMOUS CYBER AGENT
++ █░░▒▓█─▀▀▀▀▀▀▀▀▀▀─█▓▒░░█
++ █░░▒▓█▄▄▄▄▄▄▄▄▄▄▄▄█▓▒░░█  [STATUS: LETHAL]
++ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+```
+
 Welcome to **HackOps Recon**, an autonomous, LLM-powered cybersecurity scanner built to **identify vulnerabilities**, **exploit weaknesses**, and **automate security assessments** in a seamless, efficient, and hacker-inspired manner. This tool runs a series of advanced scans and generates **AI-driven security reports**, all while ensuring maximum stealth and control.
 
 ## 🔥 Why HackOps Recon?
@@ -107,7 +115,7 @@ graph LR
     C[FFUF Scan] --> D
     D --> E[Final Report]
 ```
-# Key Components:
+### Key Components:
 
 - **Stateful Workflow**: Maintains context between scan stages using shared state objects
 - **Adaptive Nodes**: Each tool (Nmap/Gobuster/FFUF) runs as independent nodes with failure recovery
