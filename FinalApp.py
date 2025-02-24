@@ -242,14 +242,10 @@ st.markdown("""
     
     .stTextInput>div>div>input {
         background: #1a1a1a;
-        color: #00ff00 !important;
-        border: 1px solid #00ff00;
     }
     
     .stTextArea>div>div>textarea {
         background: #1a1a1a;
-        color: #00ff00 !important;
-        border: 1px solid #00ff00;
     }
     
     .stProgress>div>div>div {
