@@ -216,8 +216,8 @@ class SecurityScanGraph:
 
 # --- Streamlit App ---
 def main():
-    st.title("🛡️ Autonomous Security Scanner")
-    st.markdown("### AI-Powered Vulnerability Assessment Platform")
+    st.title("🛡️ 🔥 HackOps Recon 🔥")
+    st.markdown("### LLM-Powered Autonomous Cyber Scanner ")
 
     # Initialize session state
     if 'scan_complete' not in st.session_state:
