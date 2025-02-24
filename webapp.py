@@ -274,10 +274,10 @@ def main():
                         status.update(label="🚀 Starting Nmap Port Scan...", state="running")
                         current_state = nmap_scan(current_state)
                     elif node == "gobuster_scan":
-                        status.update(label="📂 Running Directory Enumeration...", state="running")
+                        status.update(label="📂 Running Directory Enumeration using Gobuster...", state="running")
                         current_state = gobuster_scan(current_state)
                     elif node == "ffuf_scan":
-                        status.update(label="🔎 Performing Content Discovery...", state="running")
+                        status.update(label="🔎 Performing Endpoint Discovery using ffuf...", state="running")
                         current_state = ffuf_scan(current_state)
                     elif node == "supervisor":
                         status.update(label="🧠 Analyzing Results with AI...", state="running")
