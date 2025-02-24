@@ -286,13 +286,14 @@ st.markdown("""
 
 # --- ASCII Art Banner ---
 ASCII_BANNER = r"""
-  _    _           _   _      _____           _       _   
- | |  | |         | | | |    / ____|         | |     | |  
- | |__| | __ _ ___| |_| |__ | |     ___ _ __ | |_ ___| |_ 
- |  __  |/ _` / __| __| '_ \| |    / _ \ '_ \| __/ __| __|
- | |  | | (_| \__ \ |_| | | | |___|  __/ | | | |_\__ \ |_ 
- |_|  |_|\__,_|___/\__|_| |_|\_____\___|_| |_|\__|___/\__|
-                                                           
+██╗  ██╗ █████╗  ██████╗ ██╗  ██╗ ██████╗ ██████╗ ███████╗
+██║  ██║██╔══██╗██╔════╝ ██║  ██║██╔═══██╗██╔══██╗██╔════╝
+███████║███████║██║  ███╗███████║██║   ██║██████╔╝███████╗
+██╔══██║██╔══██║██║   ██║██╔══██║██║   ██║██╔═══╝ ╚════██║
+██║  ██║██║  ██║╚██████╔╝██║  ██║╚██████╔╝██║     ███████║
+╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚══════╝
+          ⚡ HackOps Recon: Scan. Exploit. Own. ⚡
+                                                      
 """
 
 # --- Main Function with Enhanced UI ---
@@ -300,7 +301,7 @@ ASCII_BANNER = r"""
 
 def main():
     st.markdown(f"```css\n{ASCII_BANNER}\n```")
-    st.markdown("### AI-Powered Cybersecurity Reconnaissance Platform")
+    st.markdown("### LLM-Powered Autonomous Cyber Scanner")
 
     # Initialize session state
     if 'scan_complete' not in st.session_state:
@@ -311,6 +312,7 @@ def main():
         st.session_state.scan_log = ""
     if 'scan_metrics' not in st.session_state:
         st.session_state.scan_metrics = {
+            'start_time': time.time(),
             'duration': 0,
             'llm_time': 0,
             'throughput': 0
@@ -351,7 +353,7 @@ def main():
         executor = graph.compile()
 
         # Execute scan with time tracking
-        start_time = time.time()
+        
         llm_processing_time = 0
         
         with st.expander("🔎 LIVE SCAN OPERATIONS", expanded=True):
@@ -390,7 +392,7 @@ def main():
                 terminal_output.code(term_content, language="bash")
 
         # Calculate metrics
-        total_duration = time.time() - start_time
+        total_duration = time.time() - st.session_state.scan_metrics['start_time']
         try:
             log_size = os.path.getsize("scanLog.txt") / 1024  # KB
             data_throughput = log_size / total_duration if total_duration > 0 else 0
@@ -417,28 +419,6 @@ def main():
 
     # Display results
     if st.session_state.scan_complete:
-        st.markdown("---")
-        st.markdown("### 📡 SCAN RESULTS")
-        
-        tab1, tab2, tab3 = st.tabs(["AI ANALYSIS", "RAW DATA", "SCAN METRICS"])
-        
-        with tab3:
-            st.markdown("#### 📊 SCAN METRICS")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("TOTAL DURATION", f"{st.session_state.scan_metrics['duration']:.2f}s")
-            col2.metric("AI PROCESSING", f"{st.session_state.scan_metrics['llm_time']:.2f}s")
-            col3.metric("DATA THROUGHPUT", f"{st.session_state.scan_metrics['throughput']:.2f} KB/s")
-            
-            st.markdown("#### 📈 PERFORMANCE STATS")
-            st.code(f"""
-            Scan Start    : {time.ctime(start_time)}
-            Scan End      : {time.ctime(start_time + st.session_state.scan_metrics['duration'])}
-            Peak Memory   : {psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024:.2f} MB
-            CPU Usage     : {psutil.cpu_percent()}%
-            """)
-
-# ... rest of the code
-
         # Download Section
         st.markdown("---")
         st.markdown("### 📥 DATA EXFILTRATION")
@@ -453,12 +433,29 @@ def main():
             )
         with col2:
             st.download_button(
-                label="💾 DOWNMARKDOWN_LOGS",
+                label="💾 DOWNLOAD MARKDOWN_LOGS",
                 data=st.session_state.scan_log,
                 file_name="SCAN_LOGS.txt",
                 mime="text/plain",
                 use_container_width=True
             )
+        st.markdown("---")
+        st.markdown("### 📡 SCAN RESULTS")
+        
+        tab1, tab2 = st.tabs(["AI ANALYSIS REPORT", "SCAN METRICS"])
+        with tab1:
+            st.markdown("### 🔍 Analysis Results")
+            st.markdown(st.session_state.final_report)
+
+        with tab2:
+            st.markdown("#### 📊 SCAN METRICS")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("TOTAL DURATION", f"{st.session_state.scan_metrics['duration']:.2f}s")
+            col2.metric("AI PROCESSING", f"{st.session_state.scan_metrics['llm_time']:.2f}s")
+            col3.metric("DATA THROUGHPUT", f"{st.session_state.scan_metrics['throughput']:.2f} KB/s")
+            
+        st.markdown("---")
+
 
 if __name__ == "__main__":
     main()
