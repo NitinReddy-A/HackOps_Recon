@@ -102,6 +102,8 @@ graph LR
     A[Nmap Scan] --> B[Gobuster Scan]
     B -->C[FFUF Scan]
     C --> D[AI Supervisor]
+    B --> D
+    A --> D
     D --> E[Final Report]
 ```
 # Key Components:
