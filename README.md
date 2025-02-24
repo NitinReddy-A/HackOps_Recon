@@ -99,12 +99,10 @@ HackOps Recon's brain is powered by LangGraph - a stateful workflow engine that 
 
 ```mermaid
 graph LR
-    A[Nmap Scan] --> B{Gobuster Condition}
-    B -->|Web Ports Found| C[Gobuster Scan]
-    B -->|No Web Ports| D[Skip Web Scans]
-    C --> E[FFUF Scan]
-    E --> F[AI Supervisor]
-    F --> G[Final Report]
+    A[Nmap Scan] --> B[Gobuster Scan]
+    B -->C[FFUF Scan]
+    C --> D[AI Supervisor]
+    D --> E[Final Report]
 ```
 # Key Components:
 
