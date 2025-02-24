@@ -7,6 +7,7 @@ from datetime import datetime
 from groq import Groq
 from dotenv import load_dotenv
 import psutil
+from langgraph.graph import StateGraph, END 
 
 # --- Initialize OpenAI GPT-4o Mini LLM ---
 load_dotenv()
@@ -188,32 +189,27 @@ def supervisor(state):
     state["final_report"] = report
     return state
 
-class SecurityScanGraph:
-    def __init__(self):
-        self.nodes = {}
-        self.edges = {}
-        self.entry_point = None
+# --- Updated Graph Implementation using LangGraph ---
+def create_security_workflow():
+    workflow = StateGraph(state_schema=dict)
+    
+    # Define nodes
+    workflow.add_node("nmap_scan", nmap_scan)
+    workflow.add_node("gobuster_scan", gobuster_scan)
+    workflow.add_node("ffuf_scan", ffuf_scan)
+    workflow.add_node("supervisor", supervisor)
+    
+    # Define edges
+    workflow.add_edge("nmap_scan", "gobuster_scan")
+    workflow.add_edge("gobuster_scan", "ffuf_scan")
+    workflow.add_edge("ffuf_scan", "supervisor")
+    
+    # **Set Entry and Exit Point**
+    workflow.set_entry_point("nmap_scan")
+    workflow.set_finish_point("supervisor")
+    
+    return workflow
 
-    def add_node(self, name, func):
-        self.nodes[name] = func
-
-    def add_edge(self, from_node, to_node):
-        self.edges.setdefault(from_node, []).append(to_node)
-
-    def set_entry_point(self, name):
-        self.entry_point = name
-
-    def compile(self):
-        def executor(initial_state):
-            current_state = initial_state
-            current_node = self.entry_point
-            while current_node is not None:
-                func = self.nodes[current_node]
-                current_state = func(current_state)
-                next_nodes = self.edges.get(current_node, [])
-                current_node = next_nodes[0] if next_nodes else None
-            return current_state
-        return executor
 
 # --- Custom CSS for Hacker Theme ---
 st.markdown("""
@@ -335,57 +331,53 @@ def main():
             """, unsafe_allow_html=True)
             return
 
-        # Initialize scan graph
+        # Initialize LangGraph workflow
         initial_state = {"target": target}
-        graph = SecurityScanGraph()
-        graph.add_node("nmap_scan", nmap_scan)
-        graph.add_node("gobuster_scan", gobuster_scan)
-        graph.add_node("ffuf_scan", ffuf_scan)
-        graph.add_node("supervisor", supervisor)
-        graph.add_edge("nmap_scan", "gobuster_scan")
-        graph.add_edge("gobuster_scan", "ffuf_scan")
-        graph.add_edge("ffuf_scan", "supervisor")
-        graph.set_entry_point("nmap_scan")
-        executor = graph.compile()
-
+        workflow = create_security_workflow()
+        app = workflow.compile()
         # Execute scan with time tracking
-        
         llm_processing_time = 0
-        
+        # Define explicit execution order
+        nodes_in_order = ["nmap_scan", "gobuster_scan", "ffuf_scan", "supervisor"]
+
         with st.expander("🔎 LIVE SCAN OPERATIONS", expanded=True):
             terminal_output = st.empty()
-            nodes = ["nmap_scan", "gobuster_scan", "ffuf_scan", "supervisor"]
-            
-            for i, node in enumerate(nodes):
+            # Execute workflow with progress tracking
+
+            status_messages = [
+                ("🚀 INITIALIZING CYBER SCAN PROTOCOL...", "yellow"),
+                ("🔍 PORT SCANNING ENGAGED...", "cyan"),
+                ("📂 DIRECTORY ENUMERATION IN PROGRESS...", "green"),
+                ("🧠 AI ANALYSIS INITIATED...", "blue")
+            ]
+            current_step = 0
+            start_time = time.time()
+            # Stream through workflow execution
+            for step in app.stream(initial_state):
                 # Update status display
-                status_messages = [
-                    ("🚀 INITIALIZING CYBER SCAN PROTOCOL...", "yellow"),
-                    ("🔍 PORT SCANNING ENGAGED...", "cyan"),
-                    ("📂 DIRECTORY ENUMERATION IN PROGRESS...", "green"),
-                    ("🧠 AI ANALYSIS INITIATED...", "blue")
-                ]
-                status_text, color = status_messages[i]
+                status_text, color = status_messages[current_step]
                 status_display.markdown(
                     f"<span style='color:{color};'>▌{status_text}</span>",
                     unsafe_allow_html=True
                 )
 
-                # Execute node with timing
-                node_start = time.time()
-                initial_state = graph.nodes[node](initial_state)
-                node_time = time.time() - node_start
-
-                # Track LLM processing time specifically
-                if node == "supervisor":
-                    llm_processing_time = node_time
+                # Calculate step duration
+                step_time = time.time() - start_time
+                start_time = time.time()
 
                 # Update terminal display
                 term_content = f"""
-                [~] Executed {node.replace('_', ' ').upper()}
-                [⏱] Execution time: {node_time:.2f}s
+                [~] Executed {nodes_in_order[current_step].replace('_', ' ').upper()}
+                [⏱] Execution time: {step_time:.2f}s
                 {"▔"*40}
                 """
                 terminal_output.code(term_content, language="bash")
+                
+                # Track LLM processing time
+                if nodes_in_order[current_step] == "supervisor":
+                    st.session_state.scan_metrics['llm_time'] = step_time
+                
+                current_step += 1
 
         # Calculate metrics
         total_duration = time.time() - st.session_state.scan_metrics['start_time']
