@@ -93,7 +93,7 @@ GROQ_API_KEY=your-api-key-here
 1. **Run the app**:
 
 ```bash
-streamlit run Finalapp.py
+streamlit run FinalApp.py
 ```
 
 2. **Configure Scan Settings**:
