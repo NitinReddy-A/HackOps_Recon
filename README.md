@@ -52,7 +52,7 @@ HackOps Recon brings together the best of both worlds—*powerful tools, cutting
 Clone the repository and navigate into the project directory:
 
 ```bash
-git clone https://github.com/yourusername/hackops-recon.git
+git clone https://github.com/NitinReddy-A/hackops-recon.git
 cd hackops-recon
 ```
 
@@ -93,7 +93,7 @@ GROQ_API_KEY=your-api-key-here
 1. **Run the app**:
 
 ```bash
-streamlit run app.py
+streamlit run Finalapp.py
 ```
 
 2. **Configure Scan Settings**:
