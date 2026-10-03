@@ -1,3 +1,33 @@
-venv
+# Rampart run artifacts
+.rampart/
+.rampart-*/
+benchmarks/results.json
+
+# Secrets — never commit real credentials (the demo file is toy creds for a local target)
+secrets.json
+!examples/demo_target/secrets.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+
+# Preserved from the previous project setup
 .env
 Tempe.ovpn
+# Research / blueprint (kept locally, not committed)
+reports/
+research_notes/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+*.log

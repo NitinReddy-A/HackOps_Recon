@@ -1,0 +1,45 @@
+---
+# SECURITY.md — the machine-readable scope & authorization contract Rampart parses BEFORE any run.
+# Copy to SECURITY.md, fill it in, and keep it under version control. Rampart refuses to run if this
+# is missing, invalid, expired, or if the target resolves outside the allowlist (fail-closed).
+apiVersion: security-agent/v1
+kind: EngagementScope
+authorization:
+  owner: "team-payments@acme.example"          # accountable human/team
+  authorized_by: "ciso@acme.example"            # who granted permission
+  ticket: "APPSEC-1421"                          # paper trail
+  attestation: "I confirm Acme owns or is authorized to test these assets."
+  expires: "2026-12-31T23:59:59Z"                # scope auto-expires (fail-closed)
+scope:
+  in_scope:
+    - host: "staging.acme.internal"
+      ports: [443]
+      paths_include: ["/api/**", "/app/**"]
+      methods: ["GET", "POST"]                    # add PUT/DELETE only if you intend Tier-2 tests
+  out_of_scope:
+    paths_exclude: ["/admin/billing/**", "/api/payments/execute", "/logout"]
+    hosts_exclude: ["*.prod.acme.com"]
+  resolved_ip_allowlist: ["10.20.0.0/24"]         # checked against the RESOLVED IP at run time (anti-SSRF/rebind)
+limits:
+  max_requests_per_host_per_min: 120
+  max_total_requests: 50000
+  max_concurrent_workers: 4
+  budget_usd: 25.00
+  max_tokens: 20000000
+action_policy:
+  default_tier_ceiling: 1        # auto-allow only Tier 0 (read) + Tier 1 (controlled validation)
+  tier2_requires_approval: true  # writes/state-change require a human approval (HITL)
+  tier3: deny                    # DoS/destructive/exfil are always denied
+test_accounts:                   # SEEDED, non-production principals ONLY — never real users
+  - { id: user_a, role: customer, secret_ref: "vault://eng/user_a" }
+  - { id: user_b, role: customer, secret_ref: "vault://eng/user_b" }
+notify:
+  on_start: ["appsec-oncall@acme.example"]
+  kill_switch_contact: "appsec-oncall@acme.example"
+---
+
+# Engagement scope (human-readable notes)
+
+Everything above the `---` fence is the machine-readable contract Rampart enforces. Prose for
+your team can follow here. `secret_ref` values are resolved by a credentials provider (a local
+`secrets.json` for the demo; a KMS/secrets manager in production) — never put raw passwords here.

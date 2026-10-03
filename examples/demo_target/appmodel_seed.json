@@ -1,0 +1,18 @@
+{
+  "roles": ["customer"],
+  "endpoint_hints": [
+    {
+      "path": "/api/orders/{id}",
+      "method": "GET",
+      "returns_object_type": "Order",
+      "object_selector": { "param": "id", "in": "path" }
+    }
+  ],
+  "objects": [
+    { "type": "Order", "id": "1043", "owner_principal": "user_a", "seeded": true, "signature": "SIGNATURE-A-4f9c1e77" },
+    { "type": "Order", "id": "2087", "owner_principal": "user_b", "seeded": true, "signature": "SIGNATURE-B-1a2b3c4d" }
+  ],
+  "permissions": [
+    { "role": "customer", "object_type": "Order", "action": "read", "constraint": "owner_only" }
+  ]
+}

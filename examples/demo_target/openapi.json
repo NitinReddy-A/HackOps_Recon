@@ -1,0 +1,22 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "demo-shop-api", "version": "1.0.0" },
+  "servers": [{ "url": "http://127.0.0.1:8080" }],
+  "paths": {
+    "/api/login": {
+      "post": {
+        "summary": "Authenticate and receive a bearer token",
+        "security": []
+      }
+    },
+    "/api/orders/{id}": {
+      "get": {
+        "summary": "Fetch an order by id",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "security": [{ "bearerAuth": [] }]
+      }
+    }
+  }
+}

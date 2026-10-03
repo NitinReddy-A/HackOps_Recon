@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rampart-appsec"
+version = "0.1.0"
+description = "Open-source, self-hostable, evidence-first application-security agent — find, prove, and help fix web/API vulnerabilities in apps you are authorized to test."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Rampart contributors" }]
+keywords = ["security", "appsec", "pentest", "dast", "bola", "idor", "sarif", "authorized-testing"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security",
+]
+
+# The CORE has NO required runtime dependencies (stdlib only) so it runs anywhere.
+dependencies = []
+
+[project.optional-dependencies]
+# Nicer scope parsing (a strict fallback parser is built in, so this is optional).
+yaml = ["PyYAML>=6.0"]
+# Bring-your-own-key LLM path uses stdlib urllib; no extra deps required.
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+rampart = "rampart.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/your-org/rampart"
+
+[tool.setuptools]
+packages = ["rampart", "rampart.schemas", "rampart.policy", "rampart.audit",
+            "rampart.executor", "rampart.evidence", "rampart.scanners",
+            "rampart.intelligence", "rampart.appmodel", "rampart.workers",
+            "rampart.validation", "rampart.remediation", "rampart.reporting", "rampart.store"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

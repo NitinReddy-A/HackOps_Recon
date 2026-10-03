@@ -1,193 +1,203 @@
-```diff
-██╗  ██╗ █████╗  ██████╗ ██╗  ██╗ ██████╗ ██████╗ ███████╗
-██║  ██║██╔══██╗██╔════╝ ██║  ██║██╔═══██╗██╔══██╗██╔════╝
-███████║███████║██║      ███████║██║   ██║██████╔╝███████╗
-██╔══██║██╔══██║██║      ██╔══██║██║   ██║██╔═══╝ ╚════██║
-██║  ██║██║  ██║╚██████╔ ██║  ██║╚██████╔╝██║     ███████║
-╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚══════╝
-          ⚡ HackOps Recon: Scan. Exploit. Own. ⚡
-```
+# Rampart
 
-```diff
-+ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
-+ █░░▒▓████████████▓▒░░█   AUTONOMOUS CYBER AGENT
-+ █░░▒▓█─▀▀▀▀▀▀▀▀▀▀─█▓▒░░█
-+ █░░▒▓█▄▄▄▄▄▄▄▄▄▄▄▄█▓▒░░█  [STATUS: LETHAL]
-+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-```
+**Find, _prove_, and help _fix_ web/API vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
-Welcome to **HackOps Recon**, an autonomous, LLM-powered cybersecurity scanner built to **identify vulnerabilities**, **exploit weaknesses**, and **automate security assessments** in a seamless, efficient, and hacker-inspired manner. This tool runs a series of advanced scans and generates **AI-driven security reports**, all while ensuring maximum stealth and control.
+Rampart is an open-source, self-hostable application-security agent. It orchestrates deterministic testing under an LLM planner to reproduce the shape of the commercial *Probe → Exploit → Verify* loop (Parameter, XBOW, Horizon3) — but it runs **inside your own infrastructure**, ships **proof-of-exploit instead of CVSS lists**, and is honest about what it can and cannot do.
 
-## 🔥 Why HackOps Recon?
-
-In the world of cybersecurity, speed and accuracy are critical. HackOps Recon combines cutting-edge tools like **Nmap**, **Gobuster**, and **FFUF**, alongside **AI-powered analysis** to empower security researchers, pentesters, and hackers with:
-
-- **Real-time Cyber Scan Operations**
-- **AI-Powered Vulnerability Analysis**
-- **Stateful Attack Workflows**
-- **Adaptive Retry Mechanisms**
-- **Scan Logging & Reporting**
-- **Hacky Terminal UI for the True Hacker Feel**
-
-HackOps Recon brings together the best of both worlds—*powerful tools, cutting-edge AI, and autonomous agentic workflows.*
+> It is a **defensive tool for assets you own or are authorized to test**. It augments — it does not replace — expert human pentesters.
 
 ---
 
-## 💻 Features
+## Why Rampart is different
 
-- **Agentic Workflow Engine**: Powered by **LangGraph**, our stateful workflow orchestrator manages complex scan sequences with dynamic adaptation.
-- **Port Scanning**: Perform a stealthy scan using **Nmap** to identify open ports on the target system.
-- **Web Directory Enumeration**: Use **Gobuster** to brute force web directories and uncover hidden entry points.
-- **Hidden Endpoint Discovery**: **FFUF** fuzzes for web application vulnerabilities, discovering sensitive and hidden endpoints.
-- **AI Vulnerability Analysis**: After scans, HackOps Recon leverages **LLM-powered AI** (via **Groq**) to analyze the results and provide a concise, actionable report on the vulnerabilities.
-- **Stateful Execution**: Maintains scan context across tools with intelligent state passing between nodes.
-- **Scan Logging**: Every scan is logged for future reference and accountability. Raw outputs are saved to a `scanLog.txt` file, and final results are written to `FinalReport.md`.
-- **Retry Mechanism**: Failsafes in place for retries with alternate parameters, ensuring your scans continue even if an error occurs.
-- **Hacky Terminal UI**: Custom terminal-style user interface in **Streamlit** to give you that authentic hacker vibe while scanning.
+The autonomous-AppSec field is almost entirely closed-source SaaS. Rampart occupies the intersection no incumbent does:
+
+1. **Open + self-hostable** — your code and targets never leave your infra (vs XBOW/NodeZero/Pentera SaaS).
+2. **Validation + evidence** — no finding is "confirmed" until an *independent* component re-derives the proof from a clean state. This kills DAST/SAST false-positive noise.
+3. **Runtime ↔ source correlation + fix loop** — localizes a bug to a code line and proposes a minimal, *advisory* patch (never auto-merged).
+4. **Developer-first** — one CLI command, SARIF for CI, evidence you can hand to an auditor.
+
+Two architectural invariants carry the whole thing:
+
+- **The LLM proposes; deterministic code disposes.** No model output reaches the network or filesystem except as a typed request that has passed a single choke-point: `allowlist → scope → resolved-IP → risk → policy → sandbox → audit`, fail-closed at every stage. A prompt-injected model can, at worst, emit requests the policy engine rejects.
+- **Evidence over alerts.** Nothing is `confidence=confirmed` unless a *separate* validator re-derives the proof with a deterministic oracle, 2+ reproductions from clean state, and negative controls.
 
 ---
 
-## 🔧 Getting Started
+## 60-second demo (no API keys, no Docker, no external targets)
 
-Clone the repository and navigate into the project directory:
+Everything runs against an **intentionally-vulnerable demo app we ship and you own**, on localhost. Nothing touches the internet.
 
 ```bash
-git clone https://github.com/NitinReddy-A/hackops-recon.git
-cd hackops-recon
+python scripts/demo.py            # starts the target, runs the assessment, writes the report
 ```
 
-### Setting up a Virtual Environment
-
-It is recommended to use a virtual environment to manage dependencies.
+or drive it yourself:
 
 ```bash
-# Create a virtual environment
-python -m venv venv
+# 1. start the intentionally-vulnerable target (a tiny stdlib HTTP API with a real IDOR)
+python examples/demo_target/vulnerable_app.py --port 8080 &
 
-# Activate the virtual environment
-# On Windows:
-venv\Scripts\activate
+# 2. run the flagship assessment: scope-gate → map → hypothesize → validate → remediate → report
+python -m rampart test \
+  --scope-file examples/demo_target/SECURITY.md \
+  --target     http://127.0.0.1:8080 \
+  --openapi    examples/demo_target/openapi.json \
+  --appmodel-seed examples/demo_target/appmodel_seed.json \
+  --repo       examples/demo_target \
+  --application demo-shop-api \
+  --work-dir   .rampart-demo \
+  --report     html,md,json,sarif,compliance
 
-# On macOS/Linux:
-source venv/bin/activate
+# 3. open .rampart-demo/reports/report.html
 ```
 
-### Install Dependencies
+You'll get output like:
+
+```
+  [      recon] liveness GET / -> 200
+  [        map] 2 endpoints, 1 ownable, 2 seeded principals
+  [       test] security-headers check produced 1 finding(s)
+  [hypothesize] 1 hypothesis(es) proposed by deterministic
+  [   validate] evidence found; handing to independent validator
+  [   validate] validator verdict: CONFIRMED (2 reproductions)
+
+  Results
+   2 confirmed · 0 dropped by FP gate · validation rate 100%
+   [HIGH]   IDOR/BOLA on GET /api/orders/{id} exposes other users' Orders ✔ CONFIRMED
+   [MEDIUM] Missing security headers on / ✔ CONFIRMED
+   audit chain: intact · 29 events · cost $0.0 · 0 tokens
+```
+
+**The credibility test:** re-run against the patched build (`--fixed`) and Rampart reports **nothing** — the IDOR candidate is *dropped by the false-positive gate*, not confirmed. Vulnerable → proven; fixed → silent.
+
+---
+
+## The flagship: the BOLA/IDOR differential validation oracle
+
+Access-control bugs (BOLA/IDOR) are the highest-value, highest-yield class (Parameter reports authorization + IDOR at ~57% of all findings) — so that's the vertical slice Rampart carries end-to-end. A cross-account `200` is **not** automatically a finding. The deterministic oracle requires all of:
+
+| Check | Why it prevents a false positive |
+|---|---|
+| cross-account probe returns `200` | there is a response to examine |
+| victim's *actual* seeded signature is in the body | not a coincidental 200 / empty body |
+| probe body ≠ attacker's own object | not an "echo-your-own-object" endpoint |
+| victim reading their own object works | the endpoint functions normally |
+| unauthenticated → `401/403` | **authentication is enforced** — the defect is isolated to *ownership* |
+| nonexistent id → `403/404` | a generic `200` would mean no real leak |
+| ≥ 2 reproductions from **clean** sessions | kills flaky one-off results |
+
+All probes are **Tier 1**: read-only, seeded accounts, seeded objects, no real user data, no state change. Enumerating real ids or writing/deleting is Tier 2 (human approval) or Tier 3 (prohibited).
+
+---
+
+## Intelligence: use Claude Code, bring your own key, or run fully deterministic
+
+The reasoning layer ("LLM proposes") is pluggable and **strictly advisory** — every suggestion is re-checked by the deterministic pipeline and the validator, and LLM-proposed hypotheses are dropped if they reference endpoints/objects we didn't actually discover (anti-hallucination).
+
+| `--intel` | What it uses | Cost | Setup |
+|---|---|---|---|
+| `deterministic` *(default)* | rule-based heuristics, no LLM | free | none |
+| `claude-code` | your local `claude` CLI (Claude Code) | your Claude plan | `claude` on PATH |
+| `openai-compat` | **any** OpenAI-compatible API | your key | env vars (below) |
+
+Bring your own key (works with OpenAI, OpenRouter, Groq, Together, a self-hosted LiteLLM gateway, or fully-local Ollama):
 
 ```bash
-pip install -r requirements.txt
+export RAMPART_LLM_BASE_URL="https://api.openai.com/v1"   # or openrouter/groq/ollama/litellm
+export RAMPART_LLM_MODEL="gpt-4o-mini"
+export OPENAI_API_KEY="sk-..."                            # or RAMPART_LLM_API_KEY=...
+python -m rampart test --intel openai-compat ...
 ```
 
-### Set up Environment Variables
+See [docs/LLM_AND_API_KEYS.md](docs/LLM_AND_API_KEYS.md) for model recommendations and **free** options for initial testing.
 
-You'll need a **Groq API key** to enable AI-powered analysis. Get your API key from [Groq](https://groq.ai) and save it in a `.env` file as follows:
+---
+
+## Reliability benchmark
+
+Rampart ships its own reproducible benchmark (the credibility gap the market leaves open — most vendors self-report FP rates):
 
 ```bash
-GROQ_API_KEY=your-api-key-here
+python benchmarks/run_benchmark.py --runs 5
 ```
 
----
-
-## ⚙️ How to Use
-
-1. **Run the app**:
-
-```bash
-streamlit run FinalApp.py
+```
+  Precision : 100.0%   (FP=0)
+  Recall    : 100.0%   (FN=0)
+  F1        : 100.0%
+  MTT-find  : 0.18s
 ```
 
-2. **Configure Scan Settings**:
-
-    - **TARGET**: The target domain you wish to scan (e.g., `example.com`).
-    - **ALLOWED DOMAINS**: Define which domains are allowed for scanning. Targets outside the allowed domains will trigger a **safety alert**.
-
-3. **Initiate the Cyber Scan**: Press the **"🚀 INITIATE CYBER SCAN"** button to begin scanning the target.
-
-4. **Monitor the Scan**: Watch live progress and terminal-style output as each step (Nmap, Gobuster, FFUF) is executed.
-
-5. **Receive Your Report**: After the scan completes, you'll receive a detailed analysis report highlighting vulnerabilities, suspicious ports, directories, and recommendations for further investigation.
+The harness runs the target in VULNERABLE and FIXED modes (a VAmPI-style on/off switch), scores confirmed findings against ground truth, and writes `benchmarks/results.json`. The design extends to OWASP crAPI / VAmPI / Juice Shop fixtures.
 
 ---
 
-## 🧠 Agentic Framework Architecture
+## Safety model (safe-by-default, not a disclaimer)
 
-HackOps Recon's brain is powered by LangGraph - a stateful workflow engine that orchestrates complex security operations:
+- **R1 — Authorization gate.** No run without a valid, unexpired, in-scope `SECURITY.md` naming an accountable owner. Fail-closed.
+- **R2 — Structural scope enforcement.** Every request traverses the single choke-point; no agent code can bypass it.
+- **R3/R4 — Non-destructive by default.** Writes/state-change require human approval (Tier 2); DoS/destructive/exfil are prohibited (Tier 3).
+- **R5 — Independent validation** before `confirmed`.
+- **R6 — Append-only, hash-chained audit log.** `rampart verify-audit` recomputes the chain and detects tampering.
+- **R7 — Advisory remediation.** Patches are written as `.patch` artifacts; Rampart never auto-applies or merges.
+- **R9 — Untrusted target data.** Target output is treated as data, never as instructions (indirect prompt-injection defense).
+- **R10 — Budget & kill-switch.** Per-host rate limits, total caps, and a kill switch.
 
-```mermaid
-graph LR
-    Start --> A
-    Start --> B
-    Start --> C
-    A[Nmap Scan] --> D[AI Supervisor]
-    B[GOBUSTER SCAN] --> D
-    C[FFUF Scan] --> D
-    D --> E[Final Report]
+Full threat model and rationale: this repo's blueprint at `reports/Open source AppSec platform blueprint.md`.
+
+---
+
+## Architecture
+
 ```
-### Key Components:
+CLI ─► Engagement ─► Supervisor (phase state machine: recon → map → hypothesize → test → validate)
+                         │
+   intelligence (advisory) │           deterministic spine (enforces everything)
+   ├ deterministic         │           ├ policy/ ── allowlist → scope → risk → engine → pipeline (choke-point)
+   ├ claude-code           │           ├ executor/ ─ gated HTTP client + seeded-session manager
+   └ openai-compat         │           ├ audit/ ──── append-only hash-chained log
+                           ▼           ├ evidence/ ─ content-addressed, secret-scrubbed store
+              Test Worker (bola-idor)  ├ validation/ ─ independent oracle + FP gate (separation of duties)
+                           ▼           ├ remediation/ ─ source correlation + advisory patch
+                     Validator ────────► reporting/ ─ JSON · SARIF · Markdown · HTML · compliance
+```
 
-- **Stateful Workflow**: Maintains context between scan stages using shared state objects
-- **Adaptive Nodes**: Each tool (Nmap/Gobuster/FFUF) runs as independent nodes with failure recovery
-- **AI Supervisor**: Final node that analyzes aggregated results using Groq's LLM
-- **Conditional Flows**: Dynamic path selection based on scan results (e.g., skip web scans if no web ports open)
-
----
-
-## 🧐 AI-Powered Vulnerability Analysis
-
-Once the tools have completed their scans, HackOps Recon's **AI Supervisor** takes over. It analyzes the raw scan outputs using **Groq's LLM** to generate a **concise report** that identifies:
-
-- **Vulnerabilities**: Any open ports, exposed endpoints, or insecure configurations.
-- **Suspicious Activity**: Anomalies or unusual findings from the scans.
-- **Recommendations**: Actionable steps to secure the system and mitigate threats.
-
-This ensures that you don't just get scan results, but a **clear, actionable vulnerability report** to improve security.
+Repo map: [`rampart/`](rampart) (package) · [`examples/demo_target/`](examples/demo_target) (the owned target) · [`tests/`](tests) (28 tests, A1–A8 acceptance) · [`benchmarks/`](benchmarks) · [`docs/`](docs).
 
 ---
 
-## 📊 Scan Workflow
+## Honesty (what this is not, yet)
 
-1. **Nmap Scan**: Initial reconnaissance to identify open ports on the target.
-2. **Gobuster Scan**: Directory brute-forcing for hidden directories on web servers.
-3. **FFUF Scan**: Fuzzing hidden endpoints and directories for web vulnerabilities.
-4. **AI Analysis**: Groq's LLM processes the scan results and generates a concise security report.
+- It does **not** replace human pentesters — humans remain best at creative/business-logic flaws.
+- The MVP proves **one class end-to-end** (BOLA/IDOR) plus safe misconfiguration checks. It does not yet cover all 22 weakness classes, do autonomous multi-step exploit chaining, or match commercial infra/lateral-movement breadth.
+- It generates **evidence of control effectiveness**, not a compliance attestation.
 
----
+## Progress
 
-## 📊 Scan Metrics
+**Implemented (v0.1 — working, tested, benchmarked):**
+- ✅ Authorization gate — parses & enforces the `SECURITY.md` scope contract (fail-closed, auto-expiry)
+- ✅ Deterministic safety choke-point — `allowlist → scope → resolved-IP → risk → policy → sandbox → audit`
+- ✅ Four-tier action risk classifier with HITL approval for Tier 2 and hard-deny for Tier 3
+- ✅ Append-only, hash-chained, tamper-evident audit log (`rampart verify-audit`)
+- ✅ Application model (endpoints, roles, seeded principals, object ownership) from OpenAPI + seed
+- ✅ BOLA/IDOR vertical slice end-to-end: hypothesis → controlled probe → **independent validation** (2+ reproductions + negative controls) → confirmed finding
+- ✅ Safe deterministic checks (security-header / misconfiguration)
+- ✅ Runtime↔source correlation + **advisory** minimal patch (never auto-applied) → retest → `Fixed`/`Regression`
+- ✅ Three intelligence backends: deterministic (default, free), Claude Code, bring-your-own-key (OpenAI-compatible / Ollama)
+- ✅ Reports: JSON · SARIF · Markdown · HTML dashboard · compliance-evidence bundle
+- ✅ Reproducible reliability benchmark (100% precision/recall on the shipped corpus)
+- ✅ 28 automated tests incl. the full A1–A8 acceptance suite
 
-HackOps Recon tracks critical scan metrics such as:
+**Remaining (next):**
+- ☐ External scanner adapters (Nuclei / ZAP / Semgrep / Trivy → SARIF normalization)
+- ☐ More Test-Worker class profiles (reflected/stored XSS, injection, auth, SSRF)
+- ☐ GitHub Action + GitLab CI templates (SARIF upload, PR annotations, diff-aware runs)
+- ☐ First-party MCP server (scope-guarded tools for Claude Code / agents)
+- ☐ Thin web UI (live run view, finding triage, evidence rendering)
+- ☐ Multi-tenant deployment (Postgres + object storage + per-engagement sandbox)
+- ☐ Expanded benchmark corpus (OWASP crAPI / VAmPI / Juice Shop fixtures)
 
-- **Total Duration**: How long the entire scan took.
-- **AI Processing Time**: The time taken by the AI for vulnerability analysis.
-- **Data Throughput**: The scan data's throughput during execution.
+## License
 
----
-
-## 🔒 Security First
-
-HackOps Recon operates with **safety protocols** to ensure you only scan **allowed** targets. If an out-of-scope target is detected, a **safety alert** is triggered, and the scan will not proceed.
-
----
-
-## 🔗 Related Projects
-
-- [Nmap](https://nmap.org/)
-- [Gobuster](https://github.com/OJ/gobuster)
-- [FFUF](https://github.com/ffuf/ffuf)
-
----
-
-## ⚠️ Warning
-
-**HackOps Recon** should only be used for legal and ethical purposes. Make sure to have explicit permission before scanning any system. Unauthorized use of this tool can result in severe legal consequences.
-
----
-
-## 👾 Show Some Love
-
-If you like HackOps Recon, star the repo! 🔥 If you find any bugs or want to contribute, feel free to **open an issue** or **create a pull request**.
-
----
-
-Happy Hacking! 🚀
-
+Apache-2.0. See [LICENSE](LICENSE). GPL/AGPL scanners integrate as separate processes, never linked.
