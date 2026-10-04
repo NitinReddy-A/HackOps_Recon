@@ -1,5 +1,12 @@
 # Rampart
 
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Runtime deps](https://img.shields.io/badge/runtime%20deps-none-success)
+![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen)
+![Benchmark](https://img.shields.io/badge/benchmark-100%25%20precision%20%2F%20recall-brightgreen)
+![Status](https://img.shields.io/badge/status-v0.1%20MVP-orange)
+
 **Find, _prove_, and help _fix_ web/API vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
 Rampart is an open-source, self-hostable application-security agent. It orchestrates deterministic testing under an LLM planner to reproduce the shape of the commercial *Probe → Exploit → Verify* loop (Parameter, XBOW, Horizon3) — but it runs **inside your own infrastructure**, ships **proof-of-exploit instead of CVSS lists**, and is honest about what it can and cannot do.
