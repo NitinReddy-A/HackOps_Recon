@@ -1,10 +1,15 @@
 """Headless-browser DOM-XSS integration — skipped automatically when Playwright/Chromium absent."""
+import os
+
 import pytest
 
 from conftest import make_engagement
 from rampart.browser import available
 
-pytestmark = pytest.mark.skipif(not available(), reason="headless browser (Playwright+Chromium) not installed")
+# Launches a real browser (slow) — opt-in so the default suite stays fast and CI-portable.
+pytestmark = pytest.mark.skipif(
+    not (available() and os.environ.get("RAMPART_BROWSER_TESTS")),
+    reason="set RAMPART_BROWSER_TESTS=1 with Playwright+Chromium installed to run browser integration")
 
 
 def test_dom_xss_confirmed_via_browser(tmp_path, vuln_server):

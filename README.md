@@ -3,10 +3,10 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Runtime deps](https://img.shields.io/badge/runtime%20deps-none-success)
-![Tests](https://img.shields.io/badge/tests-71%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-89%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/benchmark-100%25%20precision%20%2F%20recall-brightgreen)
 ![Coverage](https://img.shields.io/badge/classes-16%20web%2FAPI%20%2B%20LLM-blue)
-![Status](https://img.shields.io/badge/status-v0.4-orange)
+![Status](https://img.shields.io/badge/status-v0.5-orange)
 
 **Find, _prove_, and help _fix_ web, API, and LLM vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
@@ -154,6 +154,19 @@ Confirmed findings are correlated into **multi-step attack chains** (kill-chains
 
 **Live exploitation (`--exploit`, on in `pipeline`)** goes one step further: for each confirmed finding it runs a **bounded, non-destructive, scope-gated** follow-on that *demonstrates* real impact — enumerates other users' records (IDOR), pulls the privileged dataset (BFLA), retrieves internal metadata (SSRF), reads the out-of-sandbox file (traversal), and proves command execution with a harmless marker (cmdi). Read-only, request-capped, never weaponized — proof of impact, not a weapon.
 
+## The agentic layer — reasoning where no oracle exists
+
+Deterministic oracles can't catch **business-logic** abuse, multi-step **authorization-flow** gaps, or novel bugs, because judging them requires understanding the app's *intended* behaviour. That's what the **multi-agent layer** (`--agents`, needs `--intel claude-code`/`openai-compat`) does: a **planner** proposes objectives, an **explorer** agent runs a bounded ReAct loop (every action a GET through the policy choke-point — gated, audited, read-only), and an **adversarial critic** tries to *disprove* each candidate with a control probe. Survivors are reported as **`agent-assessed`** — an honest tier *below* oracle-`confirmed`, flagged for human review, because the conclusion rests on reasoning, not proof.
+
+```
+rampart test --agents --intel claude-code ...     # or pipeline (agents on when a reasoning intel is set)
+```
+
+This is how Rampart attacks the part automation usually can't — *with* the discipline to never pass off a reasoned guess as proof. Two capabilities make previously-undetectable classes deterministic again:
+
+- **OOB collaborator (`--oob`)** — a self-hosted loopback callback server turns **blind SSRF** (and, next, blind XXE/deserialization) into a deterministic, out-of-band `confirmed` finding: inject a unique-token URL, observe the server call back.
+- **Headless browser (`--browser`, optional `[browser]` extra)** — confirms **DOM-based and stored XSS** by actually executing the page and detecting canary script execution — the classes pure HTTP can't reach.
+
 ## One command, a dashboard, and an MCP server
 
 ```bash
@@ -249,16 +262,16 @@ CLI / serve / mcp ─► Engagement ─► recon(crawl) ─► Supervisor
                      Validator ──────► (only an independent oracle may mark a finding "confirmed")
 ```
 
-Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (crawler) · [`rampart/llm/`](rampart/llm) (LLM Top-10) · [`rampart/correlation/`](rampart/correlation) (attack chains + risk) · [`rampart/scanners/adapters/`](rampart/scanners/adapters) (external tools) · [`rampart/server/`](rampart/server) (dashboard) · [`rampart/mcp/`](rampart/mcp) (MCP server) · [`examples/demo_target/`](examples/demo_target) (owned web + LLM targets) · [`tests/`](tests) (63 tests) · [`benchmarks/`](benchmarks) · [`docs/`](docs).
+Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (crawler) · [`rampart/agents/`](rampart/agents) (multi-agent orchestration) · [`rampart/exploitation/`](rampart/exploitation) (live impact) · [`rampart/correlation/`](rampart/correlation) (chains + risk) · [`rampart/oob/`](rampart/oob) (blind-SSRF collaborator) · [`rampart/browser/`](rampart/browser) (DOM/stored XSS) · [`rampart/llm/`](rampart/llm) · [`rampart/scanners/adapters/`](rampart/scanners/adapters) · [`rampart/server/`](rampart/server) (dashboard) · [`rampart/mcp/`](rampart/mcp) · [`tests/`](tests) (89 + browser opt-in) · [`benchmarks/`](benchmarks).
 
 ---
 
 ## Honesty (what this is not, yet)
 
-- It does **not** replace human pentesters. Business-logic flaws, complex authorization reasoning, and novel bugs have **no deterministic oracle** without knowing intended behavior — a structural limit, not a maturity gap. Realistic automated black-box recall is roughly **half** of the *exploitable* findings in a mature app; this is why PCI/SOC 2 still mandate manual testing. Rampart is a best-in-class **low-noise first pass + continuous regression + SOC 2 evidence** layer, not a one-click "you're secure" button.
-- It proves **16 web/API classes + the OWASP LLM Top 10** end-to-end, each behind an independent oracle, correlates them into attack chains, and now **demonstrates** bounded impact for confirmed findings.
-- Not yet covered (roadmap): stored/DOM XSS (needs a headless browser), mass assignment/BOPLA write-side, CSRF, GraphQL, XXE/deserialization (need an out-of-band collaborator), host-header/smuggling.
-- External-scanner results are **unvalidated leads**, clearly separated from oracle-confirmed findings.
+- It proves **16 web/API classes + the OWASP LLM Top 10** behind independent oracles, confirms **blind SSRF** out-of-band and **DOM/stored XSS** in a real browser, correlates everything into attack chains, **demonstrates** bounded impact, and adds an **agentic layer** for business-logic / auth-flow reasoning.
+- The agentic layer **narrows but does not erase** the human gap. Truly novel logic and deep design flaws still need a human — and Rampart is honest about it: agent-reasoned issues are tiered **`agent-assessed` (human review)**, never silently promoted to `confirmed`. This is why PCI/SOC 2 still mandate manual testing, and why Rampart's value is a **best-in-class low-noise first pass + continuous regression + SOC 2 evidence** layer that makes a human pentester far faster — not a one-click "you're secure" button.
+- Still roadmap: mass assignment/BOPLA write-side, CSRF, GraphQL, blind XXE/deserialization (OOB server is in place), host-header/smuggling.
+- External-scanner results are **unvalidated leads**; agent findings are **agent-assessed** — both clearly separated from oracle-`confirmed`.
 - It generates **evidence of control effectiveness**, not a compliance attestation.
 
 ## Progress
@@ -273,6 +286,9 @@ Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (
 - ✅ **16 web/API classes**, each behind an **independent oracle**: IDOR/BOLA, reflected XSS, SQLi, open redirect, SSRF, OS command injection, path traversal, BFLA, excessive data exposure, SSTI, JWT alg=none, sensitive-file exposure, clickjacking, insecure cookies, CORS, version/header misconfig
 - ✅ **LLM VAPT track** — OWASP LLM Top 10 probes with a marker/canary oracle (`rampart llm-test`)
 - ✅ **Attack-chain correlation + live exploitation (demonstrated impact) + risk score (0–100) + remediation roadmap**
+- ✅ **Agentic reasoning layer** (`--agents`) — planner → explorer → adversarial critic for business-logic / auth-flow flaws, tiered `agent-assessed` (never auto-`confirmed`); scripted-brain tested, real LLM wired
+- ✅ **OOB collaborator** (`--oob`) — deterministic **blind-SSRF** confirmation via out-of-band callback
+- ✅ **Headless-browser engine** (`--browser`, optional) — **DOM & stored XSS** via real script-execution detection
 - ✅ **SOC 2 evidence report** — Trust Services Criteria mapping + retest operating-effectiveness evidence (`--report soc2`)
 - ✅ **External OSS scanner adapters** (Nuclei / Nmap / Semgrep / Trivy / testssl → normalized), graceful + `rampart tools` doctor
 - ✅ **Multi-agent pipeline** (mapper → planner → specialists → validator → reporter); Claude Code / BYO-key / deterministic
