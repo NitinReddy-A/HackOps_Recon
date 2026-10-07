@@ -43,10 +43,10 @@ class ProbeRunner:
         self.phase = phase
 
     def get(self, path, session, payload_class="boundary-probe", rationale="",
-            hypothesis_id=None, capture=True, summary="", query=None) -> ProbeOutcome:
+            hypothesis_id=None, capture=True, summary="", query=None, headers=None) -> ProbeOutcome:
         action = ToolAction(method="GET", target_host=self.host, port=self.port, scheme=self.scheme,
                             path=path, query=dict(query or {}), use_session=session,
-                            payload_class=payload_class)
+                            headers=dict(headers or {}), payload_class=payload_class)
         req = ToolCallRequest(engagement_id=self.engagement_id, actor_role=self.actor_role,
                               actor_profile=self.actor_profile, action=action, declared_tier=1,
                               rationale=rationale, hypothesis_id=hypothesis_id, phase=self.phase)

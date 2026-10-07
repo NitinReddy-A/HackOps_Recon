@@ -11,7 +11,7 @@ scope:
   in_scope:
     - host: "127.0.0.1"
       ports: [8080]
-      paths_include: ["/api/**", "/"]
+      paths_include: ["/**"]
       methods: ["GET", "POST"]
   out_of_scope:
     paths_exclude: ["/api/admin/**"]

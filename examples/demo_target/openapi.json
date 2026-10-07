@@ -77,6 +77,18 @@
     },
     "/api/profile": {
       "get": { "summary": "Current user profile", "security": [{ "bearerAuth": [] }] }
+    },
+    "/api/greet": {
+      "get": {
+        "summary": "Greeting (rendered via a template)",
+        "parameters": [
+          { "name": "name", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
+    },
+    "/api/me": {
+      "get": { "summary": "Who am I (JWT-authenticated)", "security": [{ "bearerAuth": [] }] }
     }
   }
 }

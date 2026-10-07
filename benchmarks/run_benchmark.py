@@ -43,13 +43,18 @@ GROUND_TRUTH = {
         ("PATH_TRAVERSAL", "/api/file"),
         ("BFLA", "/api/reports/orders"),
         ("EXCESSIVE_DATA", "/api/profile"),
+        ("SSTI", "/api/greet"),
+        ("XSS", "/api/greet"),
+        ("JWT", "/api/me"),
+        ("sensitive-file-exposure", "/"),
         ("security-misconfiguration", "/"),
     },
     "fixed": set(),
 }
 
 _PATH_KEYS = ("/api/reports/orders", "/api/orders/", "/api/search", "/api/products",
-              "/api/go", "/api/fetch", "/api/ping", "/api/file", "/api/profile")
+              "/api/go", "/api/fetch", "/api/ping", "/api/file", "/api/profile",
+              "/api/greet", "/api/me")
 
 
 def _pathkey(url: str) -> str:
@@ -65,7 +70,7 @@ scope:
   in_scope:
     - host: "127.0.0.1"
       ports: [{port}]
-      paths_include: ["/api/**", "/"]
+      paths_include: ["/**"]
       methods: ["GET", "POST"]
   out_of_scope: {{paths_exclude: [], hosts_exclude: []}}
   resolved_ip_allowlist: ["127.0.0.1/32"]

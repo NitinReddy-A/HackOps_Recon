@@ -156,6 +156,21 @@ def render_html(rb) -> str:
         chains_html = ('<div class="panel"><h2>Attack chains (kill-chain)</h2>'
                        + "".join(parts) + "</div>")
 
+    proofs = [p for p in (scan.get("exploitation") or []) if p.get("demonstrated")]
+    exploit_html = ""
+    if proofs:
+        parts = []
+        for p in proofs:
+            steps = "".join(f"<li>{_esc(s)}</li>" for s in p.get("steps", []))
+            ev = (f'<div class="sub">Evidence: {_esc(", ".join(str(s) for s in p.get("samples", [])[:8]))}</div>'
+                  if p.get("samples") else "")
+            parts.append(
+                f'<div class="chain" style="border-left-color:#b4232c"><b>{_esc(p["title"])}</b>'
+                f'<div class="sub">Technique: {_esc(p["technique"])}</div><ol class="checks">{steps}</ol>'
+                f'<div><b>Demonstrated impact:</b> {_esc(p["impact"])}</div>{ev}</div>')
+        exploit_html = ('<div class="panel"><h2>Exploitation — demonstrated impact</h2>'
+                        + "".join(parts) + "</div>")
+
     roadmap = corr.get("roadmap") or []
     roadmap_html = ""
     if roadmap:
@@ -270,6 +285,7 @@ discipline visible.</div>
 <div class="panel"><h2>Safety posture</h2><div class="grid2">{posture_html}</div></div>
 <div class="panel"><h2>Coverage &amp; methodology</h2><div class="grid2">{coverage_html}</div></div>
 {chains_html}
+{exploit_html}
 {roadmap_html}
 <div class="panel"><h2>Findings</h2>
 {''.join(findings_html) if findings_html else '<div class="sub">No findings.</div>'}

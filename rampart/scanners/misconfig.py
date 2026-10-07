@@ -40,6 +40,49 @@ def _confirmed_finding(engagement_id, application, target_url, *, title, vuln_cl
     return f
 
 
+# Curated sensitive paths with a CONTENT signature (not bare-200) to keep false positives ~zero.
+_SENSITIVE_PATHS = [
+    ("/.env", "high", re.compile(r"(?mi)^[A-Z0-9_]{2,}\s*=|API_KEY|SECRET|PASSWORD|DB_")),
+    ("/.git/config", "high", re.compile(r"\[core\]|repositoryformatversion|\[remote")),
+    ("/backup.sql", "high", re.compile(r"(?i)INSERT\s+INTO|CREATE\s+TABLE|dump|DROP\s+TABLE")),
+    ("/config.json", "medium", re.compile(r"(?i)\"(password|secret|api[_-]?key|token)\"\s*:")),
+    ("/.aws/credentials", "high", re.compile(r"(?i)aws_secret_access_key|aws_access_key_id")),
+    ("/wp-config.php", "high", re.compile(r"(?i)DB_PASSWORD|DB_NAME|wp-settings")),
+    ("/actuator/env", "medium", re.compile(r"(?i)\"propertySources\"|activeProfiles|spring")),
+    ("/server-status", "low", re.compile(r"(?i)Apache Server Status|Scoreboard")),
+]
+
+
+def sensitive_files_check(runner, target_url, application="target") -> list[Finding]:
+    """Probe well-known sensitive files; confirm by CONTENT signature on two observations."""
+    findings: list[Finding] = []
+    for path, sev, sig in _SENSITIVE_PATHS:
+        r1 = runner.get(path, session=None, payload_class="benign-read",
+                        rationale="probe for exposed sensitive file", summary=f"sensitive {path}")
+        if not r1.executed or r1.status != 200 or not sig.search(r1.body or ""):
+            continue
+        r2 = runner.get(path, session=None, payload_class="benign-read",
+                        rationale="reproduction", summary=f"sensitive {path} repro")
+        if not (r2.executed and r2.status == 200 and sig.search(r2.body or "")):
+            continue
+        findings.append(_confirmed_finding(
+            runner.engagement_id, application, target_url,
+            title=f"Exposed sensitive file: {path}",
+            vuln_class="sensitive-file-exposure", severity=sev, cwe=["CWE-538"],
+            owasp={"web_2025": ["A02:2025-Security Misconfiguration"]},
+            description=f"{path} is web-accessible and returns sensitive content (signature matched).",
+            impact="Leaks secrets / source / credentials / internal config to anyone on the internet.",
+            root_cause="A sensitive file is served by the web server instead of being blocked.",
+            remediation=Remediation(summary=f"Block web access to {path} (and remove it from the web root).",
+                                    type="config", guidance=f"Deny {path} at the web server/CDN, move secrets "
+                                    "out of the web root, and rotate any exposed credentials (CWE-538).",
+                                    effort="low"),
+            references=["https://owasp.org/www-project-web-security-testing-guide/"],
+            compliance=["SOC2:CC6.1", "ISO27001:A.8.9"], tags=["sensitive-file", "exposure"],
+            checks=[f"{path} returned 200 with a content signature on 2/2 requests"], path=path))
+    return findings
+
+
 def misconfig_checks(runner, appmodel, target_url, application="target", sessions=None) -> list[Finding]:
     first = runner.get("/", session=None, payload_class="benign-read",
                        rationale="passive check: inspect CORS/server headers", summary="misconfig")
@@ -75,6 +118,58 @@ def misconfig_checks(runner, appmodel, target_url, application="target", session
             references=["https://owasp.org/www-community/attacks/CORS_OriginHeaderScrutiny"],
             compliance=["SOC2:CC6.1", "ISO27001:A.8.26"], tags=["cors", "misconfiguration"],
             checks=["ACAO='*' and ACAC='true' observed on 2/2 requests"]))
+
+    # --- Clickjacking: no X-Frame-Options and no CSP frame-ancestors (CWE-1021) ---
+    def _framable(h):
+        return ("x-frame-options" not in h) and ("frame-ancestors" not in h.get("content-security-policy", "").lower())
+    if _framable(h1) and _framable(h2):
+        findings.append(_confirmed_finding(
+            runner.engagement_id, application, target_url,
+            title="Clickjacking: page can be framed (no X-Frame-Options / CSP frame-ancestors)",
+            vuln_class="security-misconfiguration", severity="medium", cwe=["CWE-1021"],
+            owasp={"web_2025": ["A02:2025-Security Misconfiguration"]},
+            description="Responses set neither X-Frame-Options nor a CSP frame-ancestors directive.",
+            impact="The UI can be embedded in a hostile frame for clickjacking / UI-redress attacks.",
+            root_cause="No anti-framing control is sent.",
+            remediation=Remediation(summary="Set X-Frame-Options: DENY and CSP frame-ancestors 'none'.",
+                                    type="config", guidance="Add X-Frame-Options: DENY (or SAMEORIGIN) and a "
+                                    "Content-Security-Policy with frame-ancestors 'none' (CWE-1021).", effort="low"),
+            references=["https://owasp.org/www-community/attacks/Clickjacking"],
+            compliance=["SOC2:CC6.6", "ISO27001:A.8.9"], tags=["clickjacking", "misconfiguration"],
+            checks=["no X-Frame-Options and no CSP frame-ancestors on 2/2 responses"]))
+
+    # --- Insecure session cookie: missing HttpOnly / Secure / SameSite (CWE-614/1004) ---
+    c1 = runner.get("/api/session", session=None, payload_class="benign-read",
+                    rationale="cookie hygiene: inspect Set-Cookie flags", summary="cookie check")
+    c2 = runner.get("/api/session", session=None, payload_class="benign-read",
+                    rationale="reproduction", summary="cookie check repro")
+    if c1.executed and c2.executed:
+        def _bad_cookie(outcome):
+            sc = _headers_ci(outcome.response).get("set-cookie", "")
+            if not sc:
+                return None
+            low = sc.lower()
+            missing = [flag for flag, tok in (("HttpOnly", "httponly"), ("Secure", "secure"),
+                                              ("SameSite", "samesite")) if tok not in low]
+            return missing or None
+        m1, m2 = _bad_cookie(c1), _bad_cookie(c2)
+        if m1 and m2:
+            findings.append(_confirmed_finding(
+                runner.engagement_id, application, target_url,
+                title=f"Session cookie missing security flags: {', '.join(m1)}",
+                vuln_class="security-misconfiguration", severity="medium", cwe=["CWE-614", "CWE-1004"],
+                owasp={"web_2025": ["A02:2025-Security Misconfiguration"]},
+                description=f"A Set-Cookie on /api/session omits: {', '.join(m1)}.",
+                impact="Session cookies are exposed to script (no HttpOnly), sent over HTTP (no Secure), "
+                       "or usable cross-site (no SameSite) — aiding theft and CSRF.",
+                root_cause="Session cookies are issued without the HttpOnly/Secure/SameSite attributes.",
+                remediation=Remediation(summary="Set HttpOnly, Secure and SameSite on session cookies.",
+                                        type="config", guidance="Issue session cookies with HttpOnly; Secure; "
+                                        "SameSite=Strict (or Lax), and consider the __Host- prefix (CWE-614/1004).",
+                                        effort="low"),
+                references=["https://owasp.org/www-community/controls/SecureCookieAttribute"],
+                compliance=["SOC2:CC6.1", "ISO27001:A.8.5"], tags=["cookie", "misconfiguration"],
+                checks=[f"Set-Cookie missing {', '.join(m1)} on 2/2 responses"], path="/api/session"))
 
     # --- Server/software version disclosure (CWE-200) ---
     server = h1.get("server", "")

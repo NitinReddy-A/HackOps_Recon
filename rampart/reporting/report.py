@@ -68,6 +68,8 @@ class ReportBuilder:
             "risk_score": (self.scan or {}).get("correlation", {}).get("risk_score", 0),
             "risk_band": (self.scan or {}).get("correlation", {}).get("risk_band", "Informational"),
             "attack_chains": len((self.scan or {}).get("correlation", {}).get("chains", [])),
+            "demonstrated_exploits": len([p for p in (self.scan or {}).get("exploitation", [])
+                                          if p.get("demonstrated")]),
         }
 
     # --------------------------------------------------------------- JSON
@@ -134,6 +136,7 @@ class ReportBuilder:
         L.append("")
         L.append(self._coverage_md(m))
         L.append(self._chains_md())
+        L.append(self._exploitation_md())
         L.append(self._roadmap_md())
         L.append("## Findings")
         for f in self.findings:
@@ -278,6 +281,24 @@ class ReportBuilder:
         L.append("")
         return "\n".join(L)
 
+    def _exploitation_md(self) -> str:
+        proofs = [p for p in (self.scan or {}).get("exploitation", []) if p.get("demonstrated")]
+        if not proofs:
+            return ""
+        L = ["## Exploitation — demonstrated impact", "",
+             "Bounded, non-destructive follow-on steps that *demonstrate* real impact for confirmed "
+             "findings (read-only, scope-gated, request-capped):", ""]
+        for p in proofs:
+            L.append(f"### {p['title']}")
+            L.append(f"- **Technique:** {p['technique']}")
+            for i, s in enumerate(p.get("steps", []), 1):
+                L.append(f"    {i}. {s}")
+            L.append(f"- **Demonstrated impact:** {p['impact']}")
+            if p.get("samples"):
+                L.append(f"- **Evidence:** {', '.join(str(s) for s in p['samples'][:8])}")
+            L.append("")
+        return "\n".join(L)
+
     # -------------------------------------------------------- compliance
     def to_compliance(self) -> str:
         control_map: dict[str, list] = {}
@@ -298,6 +319,11 @@ class ReportBuilder:
                          f"({', '.join(f.cwe)}) · finding `{f.id}`")
             L.append("")
         return "\n".join(L)
+
+    # ---------------------------------------------------------------- SOC 2
+    def to_soc2(self) -> str:
+        from .soc2 import soc2_report
+        return soc2_report(self.findings, self.scan, self.scope)
 
     # -------------------------------------------------------------- HTML
     def to_html(self) -> str:

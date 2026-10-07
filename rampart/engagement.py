@@ -44,6 +44,7 @@ class EngagementConfig:
     crawl: bool = False             # discover endpoints/params by crawling (no OpenAPI needed)
     crawl_max_pages: int = 40
     crawl_max_depth: int = 3
+    exploit: bool = False           # demonstrate bounded, non-destructive impact for confirmed findings
     llm_chat_path: str = "/chat"
     llm_input_field: str = "message"
     llm_output_field: str = "reply"
@@ -130,11 +131,20 @@ class Engagement:
         result = self.supervisor.run()
         corr, corr_dict = self._correlate(result.findings)
         result.correlation = corr
+        exploit_dicts = []
+        if self.cfg.exploit:
+            from dataclasses import asdict
+            from .exploitation import ChainExecutor
+            ex = ChainExecutor(self.pipeline, self.evidence, self.sessions,
+                               self.host, self.port, self.scheme, self.target_url)
+            result.exploit_proofs = ex.demonstrate(result.findings, result.hypotheses)
+            exploit_dicts = [asdict(p) for p in result.exploit_proofs]
         self.store.save_appmodel(self.appmodel)
         self.store.save_hypotheses(result.hypotheses)
         self.store.save_findings(result.findings)
         self.store.save_scan({
             "correlation": corr_dict,
+            "exploitation": exploit_dicts,
             "endpoints_tested": result.endpoints_tested,
             "hypotheses": result.hypotheses,
             "phase_log": result.phase_log,
@@ -225,6 +235,7 @@ class Engagement:
             "markdown": ("report.md", rb.to_markdown),
             "html": ("report.html", rb.to_html),
             "compliance": ("compliance.md", rb.to_compliance),
+            "soc2": ("soc2.md", rb.to_soc2),
         }
         for fmt in formats:
             if fmt not in renderers:

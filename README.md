@@ -3,10 +3,10 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Runtime deps](https://img.shields.io/badge/runtime%20deps-none-success)
-![Tests](https://img.shields.io/badge/tests-63%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-71%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/benchmark-100%25%20precision%20%2F%20recall-brightgreen)
-![Coverage](https://img.shields.io/badge/classes-11%20web%2FAPI%20%2B%20LLM-blue)
-![Status](https://img.shields.io/badge/status-v0.3-orange)
+![Coverage](https://img.shields.io/badge/classes-16%20web%2FAPI%20%2B%20LLM-blue)
+![Status](https://img.shields.io/badge/status-v0.4-orange)
 
 **Find, _prove_, and help _fix_ web, API, and LLM vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
@@ -126,7 +126,12 @@ Every class below is confirmed by its **own independent deterministic oracle** (
 | Web | Path traversal | CWE-22 · A01 | `../` reaches an out-of-sandbox file marker; in-sandbox control does not |
 | API | Broken function-level authz (BFLA) | CWE-285 · API5 | low-priv principal gets privileged data while auth is still enforced |
 | API | Excessive data exposure | CWE-213 · API3 | authed response exposes sensitive fields (PII/secrets) |
+| Web | Server-side template injection | CWE-1336 · A03 | `{{1337*1338}}` evaluates to `1788906`; the literal control does not |
+| Auth | JWT no-signature-verification (alg=none) | CWE-347 · API2 | a forged alg=none token is accepted while unauth is still rejected |
+| Config | Sensitive file exposure | CWE-538 · A02 | `/.env` `/.git/config` `/backup.sql`… served, matched by content signature |
 | Config | Missing security headers | CWE-693 · A02 | header absent on 2/2 observations |
+| Config | Clickjacking | CWE-1021 · A02 | no X-Frame-Options and no CSP `frame-ancestors` |
+| Config | Insecure session cookie | CWE-614/1004 · A02 | Set-Cookie missing HttpOnly/Secure/SameSite |
 | Config | Permissive CORS | CWE-942 · A02 | `ACAO:*` **with** `ACAC:true` |
 | Config | Version disclosure | CWE-200 · A02 | versioned `Server` header |
 | **LLM** | Prompt injection, system-prompt/secret leak, insecure output handling, jailbreak | OWASP **LLM Top 10** (LLM01/05/06) | marker/canary appears for the attack prompt, not for a benign control; reproduced |
@@ -143,9 +148,11 @@ Pass `--crawl` (or use `rampart pipeline`) and Rampart discovers the attack surf
 python -m rampart pipeline --scope-file SECURITY.md --target http://127.0.0.1:8080
 ```
 
-## Attack-chain intelligence & risk scoring
+## Attack-chain intelligence, live exploitation & risk scoring
 
 Confirmed findings are correlated into **multi-step attack chains** (kill-chains) with an aggregate **risk score (0–100)** and a **prioritized remediation roadmap** — the "so what" that turns a findings list into a pentest narrative. Example chains: *SSRF → cloud metadata → IAM credential theft*, *command injection → RCE → pivot*, *broken authz + over-exposed fields → mass data exfiltration*. Every chain cites the confirmed findings it is built from (it never invents impact).
+
+**Live exploitation (`--exploit`, on in `pipeline`)** goes one step further: for each confirmed finding it runs a **bounded, non-destructive, scope-gated** follow-on that *demonstrates* real impact — enumerates other users' records (IDOR), pulls the privileged dataset (BFLA), retrieves internal metadata (SSRF), reads the out-of-sandbox file (traversal), and proves command execution with a harmless marker (cmdi). Read-only, request-capped, never weaponized — proof of impact, not a weapon.
 
 ## One command, a dashboard, and an MCP server
 
@@ -159,6 +166,10 @@ python -m rampart mcp                                  # MCP stdio server (scope
 - **`serve`** — a dependency-free local dashboard (risk, chains, findings table, full report, and a scope-gated "run a scan" form).
 - **`mcp`** — exposes `rampart_scope_check` / `rampart_scan` / `rampart_llm_test` / `rampart_report` to Claude Code and other agents; every tool still passes the `SECURITY.md` scope gate. Register with `claude mcp add rampart -- python -m rampart.mcp`.
 - **`rampart.yaml`** — put `scope_file`, `target`, `intel`, `scanners`, `crawl`, etc. in a config file; CLI flags override it.
+
+## SOC 2 evidence (not an attestation)
+
+`--report soc2` (and `pipeline`) writes `soc2.md` — findings mapped to the SOC 2 **Trust Services Criteria** (CC6.1/6.3/6.6/6.8, CC7.1, CC8.1): a control-coverage summary, open control *exceptions* with remediation, and an **operating-effectiveness** section fed by `rampart retest` (confirmed→Fixed before/after is the before/after evidence a **Type 2** examination relies on). It is **evidence for your auditor, not a SOC 2 report** — only a licensed CPA firm issues that, and a Type 2 opinion needs evidence across the full review period. Hand the auditor this report plus the hash-chained audit log and evidence bundle.
 
 ---
 
@@ -244,8 +255,9 @@ Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (
 
 ## Honesty (what this is not, yet)
 
-- It does **not** replace human pentesters — humans remain best at creative/business-logic flaws.
-- It proves 11 web/API classes + the OWASP LLM Top 10 end-to-end, each behind an independent oracle, and **correlates** confirmed findings into attack chains. It does not yet *execute* multi-step exploit chains live, cover all 22 weakness classes, or match commercial infra/lateral-movement breadth.
+- It does **not** replace human pentesters. Business-logic flaws, complex authorization reasoning, and novel bugs have **no deterministic oracle** without knowing intended behavior — a structural limit, not a maturity gap. Realistic automated black-box recall is roughly **half** of the *exploitable* findings in a mature app; this is why PCI/SOC 2 still mandate manual testing. Rampart is a best-in-class **low-noise first pass + continuous regression + SOC 2 evidence** layer, not a one-click "you're secure" button.
+- It proves **16 web/API classes + the OWASP LLM Top 10** end-to-end, each behind an independent oracle, correlates them into attack chains, and now **demonstrates** bounded impact for confirmed findings.
+- Not yet covered (roadmap): stored/DOM XSS (needs a headless browser), mass assignment/BOPLA write-side, CSRF, GraphQL, XXE/deserialization (need an out-of-band collaborator), host-header/smuggling.
 - External-scanner results are **unvalidated leads**, clearly separated from oracle-confirmed findings.
 - It generates **evidence of control effectiveness**, not a compliance attestation.
 
@@ -258,9 +270,10 @@ Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (
 - ✅ Append-only, hash-chained, tamper-evident audit log (`rampart verify-audit`)
 - ✅ **Recon crawler** — discovers endpoints/params + tech fingerprint with no OpenAPI spec (`--crawl`)
 - ✅ Application model (endpoints, roles, seeded principals, object ownership) from OpenAPI + seed + crawl
-- ✅ **11 web/API classes**, each behind an **independent oracle**: IDOR/BOLA, reflected XSS, SQLi, open redirect, SSRF, OS command injection, path traversal, BFLA, excessive data exposure, plus CORS / version-disclosure / header misconfig
+- ✅ **16 web/API classes**, each behind an **independent oracle**: IDOR/BOLA, reflected XSS, SQLi, open redirect, SSRF, OS command injection, path traversal, BFLA, excessive data exposure, SSTI, JWT alg=none, sensitive-file exposure, clickjacking, insecure cookies, CORS, version/header misconfig
 - ✅ **LLM VAPT track** — OWASP LLM Top 10 probes with a marker/canary oracle (`rampart llm-test`)
-- ✅ **Attack-chain correlation + risk score (0–100) + prioritized remediation roadmap** (`rampart/correlation`)
+- ✅ **Attack-chain correlation + live exploitation (demonstrated impact) + risk score (0–100) + remediation roadmap**
+- ✅ **SOC 2 evidence report** — Trust Services Criteria mapping + retest operating-effectiveness evidence (`--report soc2`)
 - ✅ **External OSS scanner adapters** (Nuclei / Nmap / Semgrep / Trivy / testssl → normalized), graceful + `rampart tools` doctor
 - ✅ **Multi-agent pipeline** (mapper → planner → specialists → validator → reporter); Claude Code / BYO-key / deterministic
 - ✅ **One-command `pipeline`**, a **zero-dep web dashboard (`serve`)**, and an **MCP server (`mcp`)** for agents
@@ -270,10 +283,10 @@ Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (
 - ✅ Reproducible benchmark — **100% precision/recall across all 10 web/API ground-truth classes**, vulnerable and fixed · 63 tests
 
 **Remaining (next):**
-- ☐ Autonomous multi-step exploit *execution* (live chaining, not just correlation)
-- ☐ GitLab CI template; diff-aware / PR-annotation runs
-- ☐ Richer web UI (live run streaming, finding triage workflow)
-- ☐ Multi-tenant deployment (Postgres + object storage + per-engagement sandbox)
+- ☐ Stored/DOM XSS + stored-XSS confirmation (needs an optional headless browser, e.g. Playwright)
+- ☐ Out-of-band collaborator server (turns blind SSRF/XXE/deserialization deterministic)
+- ☐ Mass assignment / BOPLA write-side, CSRF, GraphQL, host-header injection, request smuggling
+- ☐ GitLab CI template; diff-aware / PR-annotation runs; multi-tenant deploy (Postgres + object store)
 - ☐ Expanded benchmark corpus (OWASP crAPI / VAmPI / Juice Shop fixtures)
 
 ## License

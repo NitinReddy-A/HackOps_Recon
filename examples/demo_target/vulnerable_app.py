@@ -20,9 +20,11 @@ Planted flaws (each flips clean under --fixed):
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import json
 import os
+import re
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -60,6 +62,21 @@ SECURITY_HEADERS = {
 # Inert markers returned by the simulated sinks below (no real shell/network/filesystem).
 SSRF_MARKER = "RAMPART-SSRF-INTERNAL iam-role=demo-admin;token=AKIA-DEMO"
 TRAVERSAL_MARKER = "RAMPART-TRAVERSAL root:x:0:0:root:/root:/bin/bash"
+
+# Sensitive files that must never be web-served (exposed only in VULN mode).
+SENSITIVE_FILES = {
+    "/.env": "DB_PASSWORD=sup3rs3cr3t\nAPI_KEY=RAMPART-ENV-LEAK-7f3a\nDEBUG=true",
+    "/.git/config": "[core]\n repositoryformatversion = 0\n# RAMPART-GIT-LEAK remote origin url",
+    "/backup.sql": "-- RAMPART-BACKUP-LEAK MySQL dump\nINSERT INTO users VALUES(1,'admin','hash');",
+    "/config.json": '{"db":{"password":"RAMPART-CONFIG-LEAK"},"debug":true}',
+}
+
+_SSTI_EXPR = re.compile(r"\{\{\s*(\d+)\s*\*\s*(\d+)\s*\}\}")
+
+
+def _b64url_decode(s: str) -> bytes:
+    s += "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s.encode())
 _INTERNAL_HOSTS = {"127.0.0.1", "localhost", "169.254.169.254", "metadata.google.internal",
                    "metadata", "0.0.0.0", "[::1]", "::1"}
 
@@ -278,6 +295,56 @@ class Handler(BaseHTTPRequestHandler):
             if name in known:
                 return self._send(200, {"name": name, "content": known[name]})
             return self._send(404, {"error": "file not found"})
+
+        # Sensitive file exposure: serve dotfiles/backups/config in VULN mode only.
+        if path in SENSITIVE_FILES:
+            if FIXED:
+                return self._send(404, {"error": "not found"})
+            body = SENSITIVE_FILES[path].encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
+
+        # Server-side template injection: name rendered into a template.
+        if path == "/api/greet":
+            name = q.get("name", "world")
+            if not FIXED:
+                m = _SSTI_EXPR.search(name)
+                if m:  # VULN: evaluate the template expression
+                    name = _SSTI_EXPR.sub(str(int(m.group(1)) * int(m.group(2))), name)
+                return self._send_html(200, f"<p>Hello {name}</p>")
+            return self._send_html(200, f"<p>Hello {html.escape(name)}</p>")  # fixed: escaped, not evaluated
+
+        # Cookie hygiene: a GET that sets a session cookie (flags missing in VULN mode).
+        if path == "/api/session":
+            tok = secrets.token_hex(8)
+            cookie = (f"session={tok}; Path=/; HttpOnly; Secure; SameSite=Strict" if FIXED
+                      else f"session={tok}; Path=/")
+            return self._send(200, {"session": "started"}, {"Set-Cookie": cookie})
+
+        # JWT: /api/me trusts the token's identity. VULN accepts alg=none / unsigned tokens.
+        if path == "/api/me":
+            auth = self.headers.get("Authorization", "")
+            if not auth.startswith("Bearer "):
+                return self._send(401, {"error": "authentication required"})
+            parts = auth[7:].split(".")
+            if len(parts) != 3:
+                return self._send(401, {"error": "malformed token"})
+            try:
+                header = json.loads(_b64url_decode(parts[0]))
+                payload = json.loads(_b64url_decode(parts[1]))
+            except Exception:  # noqa: BLE001
+                return self._send(401, {"error": "bad token"})
+            if FIXED:
+                # require a real signed token; alg=none and unsigned are rejected
+                if str(header.get("alg", "")).lower() == "none" or not parts[2]:
+                    return self._send(401, {"error": "invalid token signature"})
+                return self._send(200, {"user": payload.get("sub")})
+            # VULN: trust the token's claims without verifying the signature
+            return self._send(200, {"user": payload.get("sub"),
+                                    "data": f"RAMPART-JWT-NOSIG authenticated as {payload.get('sub')}"})
 
         # BFLA: a privileged "all orders" report that should be admin-only.
         if path == "/api/reports/orders":

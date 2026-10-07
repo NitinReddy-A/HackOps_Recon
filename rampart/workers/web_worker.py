@@ -231,6 +231,56 @@ WEB_CLASS_META = {
         "compliance": ["SOC2:CC6.1", "ISO27001:A.8.12", "PCI-DSS:3.3"],
         "tags": ["excessive-data-exposure", "pii", "api"],
     },
+    "SSTI": {
+        "title": "Server-side template injection in '{param}' on {method} {path}",
+        "severity": "critical",
+        "cwe": ["CWE-1336", "CWE-94"],
+        "owasp": {"web_2025": ["A03:2025-Injection"]},
+        "asvs": {"requirement": "V5.2.5", "level": 2},
+        "cvss": CVSS(version="4.0", base_score=9.1,
+                     vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:L/SC:N/SI:N/SA:N",
+                     severity="critical",
+                     v31_fallback={"base_score": 9.8, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}),
+        "description": ("The '{param}' parameter on {method} {path} is rendered by a template engine; a "
+                        "template expression ({{1337*1338}}) is evaluated server-side."),
+        "impact": "Server-side code/template execution, typically escalating to remote code execution.",
+        "root_cause": "User input is concatenated into a template that is then evaluated.",
+        "remediation": Remediation(
+            summary="Never render user input as a template; use a logic-less, sandboxed engine with data binding.",
+            type="code_patch",
+            guidance=("Pass user input as template *data*, never as template *source*. Use a sandboxed/"
+                      "logic-less engine (e.g. auto-escaping) and validate input (CWE-1336, OWASP ASVS V5.2.5)."),
+            effort="medium"),
+        "references": ["https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/18-Testing_for_Server-side_Template_Injection",
+                       "https://cwe.mitre.org/data/definitions/1336.html"],
+        "compliance": ["SOC2:CC6.8", "ISO27001:A.8.28", "PCI-DSS:6.2.4"],
+        "tags": ["ssti", "injection", "rce"],
+    },
+    "JWT": {
+        "title": "JWT accepted without signature verification (alg=none) on {method} {path}",
+        "severity": "critical",
+        "cwe": ["CWE-347"],
+        "owasp": {"api_2023": ["API2:2023-Broken Authentication"], "web_2025": ["A07:2021-Identification and Authentication Failures"]},
+        "asvs": {"requirement": "V3.5.3", "level": 2},
+        "cvss": CVSS(version="4.0", base_score=9.3,
+                     vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N",
+                     severity="critical",
+                     v31_fallback={"base_score": 9.8, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"}),
+        "description": ("{method} {path} accepts a JWT whose signature is not verified (alg=none / unsigned), "
+                        "so an attacker can forge any identity and claims."),
+        "impact": "Full authentication bypass and privilege escalation by forging arbitrary identities/roles.",
+        "root_cause": "The token is decoded without cryptographically verifying its signature and allowed algorithm.",
+        "remediation": Remediation(
+            summary="Verify the JWT signature with a pinned algorithm; reject 'none' and algorithm confusion.",
+            type="code_patch",
+            guidance=("Verify every token's signature with a server-held key and an explicit allow-list of "
+                      "algorithms; reject alg=none and RS/HS confusion; check exp/aud/iss (CWE-347, ASVS V3.5)."),
+            effort="low"),
+        "references": ["https://owasp.org/API-Security/editions/2023/en/0xa2-broken-authentication/",
+                       "https://cwe.mitre.org/data/definitions/347.html"],
+        "compliance": ["SOC2:CC6.1", "ISO27001:A.8.5", "PCI-DSS:8.3"],
+        "tags": ["jwt", "authentication", "auth-bypass"],
+    },
 }
 
 WEB_CLASSES = set(WEB_CLASS_META)

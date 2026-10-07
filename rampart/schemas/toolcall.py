@@ -41,6 +41,7 @@ class ToolAction:
     body: str | None = None            # deterministic executor holds this; hashed for audit
     body_class: str = "none"
     use_session: str | None = None     # reference to a seeded account id; NOT a raw token
+    headers: dict = field(default_factory=dict)  # extra request headers (e.g. a crafted test token)
     payload_class: str = "benign-read"
 
     def url(self) -> str:

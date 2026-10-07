@@ -77,6 +77,9 @@ class HttpExecutor:
         headers: dict[str, str] = {}
         if action.use_session and self.sessions is not None:
             headers.update(self.sessions.auth_headers(action.use_session))
+        # Extra headers (e.g. a crafted test token from a deterministic oracle) override session auth.
+        if action.headers:
+            headers.update(action.headers)
         body = action.body
         if body is not None and "Content-Type" not in headers:
             headers["Content-Type"] = "application/json"

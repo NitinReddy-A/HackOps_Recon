@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from ..agents import run_planner
 from ..runner import ProbeRunner
-from ..scanners import misconfig_checks, security_headers_check
+from ..scanners import misconfig_checks, security_headers_check, sensitive_files_check
 from ..schemas.finding import State
 from ..util import gen_id, now_iso
 from .test_worker import BolaIdorWorker
@@ -28,6 +28,7 @@ class ScanResult:
     scanner_runs: list = field(default_factory=list)
     plan: dict = field(default_factory=dict)
     correlation: object = None
+    exploit_proofs: list = field(default_factory=list)
 
 
 class Supervisor:
@@ -82,6 +83,7 @@ class Supervisor:
         misc_findings = security_headers_check(misc_runner, "/", self.target_url, self.application)
         misc_findings += misconfig_checks(misc_runner, self.appmodel, self.target_url,
                                           self.application, self.sessions)
+        misc_findings += sensitive_files_check(misc_runner, self.target_url, self.application)
         result.findings.extend(misc_findings)
         self._log(result, "test", f"built-in misconfiguration checks produced {len(misc_findings)} finding(s)")
 

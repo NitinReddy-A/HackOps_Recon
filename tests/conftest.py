@@ -81,7 +81,7 @@ scope:
   in_scope:
     - host: "127.0.0.1"
       ports: [{port}]
-      paths_include: ["/api/**", "/"]
+      paths_include: ["/**"]
       methods: ["GET", "POST"]
   out_of_scope:
     paths_exclude: ["/api/admin/**"]
@@ -127,6 +127,9 @@ notify:
                 "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}]}},
             "/api/reports/orders": {"get": {"security": [{"bearerAuth": []}]}},
             "/api/profile": {"get": {"security": [{"bearerAuth": []}]}},
+            "/api/greet": {"get": {"security": [],
+                "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/me": {"get": {"security": [{"bearerAuth": []}]}},
         },
     }), encoding="utf-8")
     (tmp_path / "seed.json").write_text(json.dumps({

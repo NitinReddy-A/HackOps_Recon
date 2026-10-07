@@ -30,6 +30,8 @@ _TRAVERSAL_PATH_HINTS = ("file", "download", "read", "view", "static", "assets",
 _BFLA_PATH_HINTS = ("report", "admin", "manage", "management", "internal", "dashboard", "metrics",
                     "export", "/all", "accounts", "audit", "/config", "/settings")
 _EXPOSURE_PATH_HINTS = ("profile", "account", "/me", "/user", "customer", "details", "/info")
+_JWT_PATH_HINTS = ("/me", "whoami", "/account", "/token", "/session", "/auth", "/profile",
+                   "/user", "/dashboard", "/identity")
 
 
 class DeterministicProvider(IntelligenceProvider):
@@ -124,6 +126,9 @@ class DeterministicProvider(IntelligenceProvider):
                     hyps.append({**common_ep, "vuln_class": "EXCESSIVE_DATA", "cwe": ["CWE-213"],
                                  "actor_principal": actor,
                                  "rationale": f"{path} may over-expose fields; inspect as '{actor}'"})
+            if any(h in plow0 for h in _JWT_PATH_HINTS) or ep.get("auth_required"):
+                hyps.append({**common_ep, "vuln_class": "JWT", "cwe": ["CWE-347"],
+                             "rationale": f"{path} is token-authenticated; test for unverified-signature JWT"})
             qparams = [p for p in (ep.get("parameters") or []) if p.get("in") == "query" and p.get("name")]
             path = ep.get("path", "")
             plow = path.lower()
@@ -140,6 +145,8 @@ class DeterministicProvider(IntelligenceProvider):
                              "rationale": f"query param '{name}' on {path} may be reflected into HTML unencoded"})
                 hyps.append({**common, "vuln_class": "SQLI", "cwe": ["CWE-89"], "base_value": "1",
                              "rationale": f"query param '{name}' on {path} may reach a SQL sink"})
+                hyps.append({**common, "vuln_class": "SSTI", "cwe": ["CWE-1336"],
+                             "rationale": f"query param '{name}' on {path} may be rendered by a template engine"})
                 if nlow in _REDIRECT_PARAM_HINTS or path_is_redirecty:
                     hyps.append({**common, "vuln_class": "OPEN_REDIRECT", "cwe": ["CWE-601"],
                                  "rationale": f"query param '{name}' on {path} looks like a redirect target"})
