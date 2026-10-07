@@ -31,11 +31,26 @@ sys.path.insert(0, PLATFORM)
 
 from rampart.engagement import Engagement, EngagementConfig  # noqa: E402
 
-# ground truth: (vuln_class, endpoint-path-substring) that SHOULD be confirmed per mode
+# ground truth: (vuln_class, endpoint-path-key) that SHOULD be confirmed per mode
 GROUND_TRUTH = {
-    "vulnerable": {("IDOR/BOLA", "/api/orders/"), ("security-misconfiguration", "/")},
+    "vulnerable": {
+        ("IDOR/BOLA", "/api/orders/"),
+        ("XSS", "/api/search"),
+        ("SQLI", "/api/products"),
+        ("OPEN_REDIRECT", "/api/go"),
+        ("security-misconfiguration", "/"),
+    },
     "fixed": set(),
 }
+
+_PATH_KEYS = ("/api/orders/", "/api/search", "/api/products", "/api/go")
+
+
+def _pathkey(url: str) -> str:
+    for key in _PATH_KEYS:
+        if key in url:
+            return key
+    return "/"
 
 SCOPE_TMPL = """apiVersion: security-agent/v1
 kind: EngagementScope
@@ -76,11 +91,9 @@ def _start_target(fixed: bool):
 def _confirmed_set(findings):
     out = set()
     for f in findings:
-        if not f.verification.validated:
+        if not f.verification.validated or "external-scanner" in f.tags:
             continue
-        url = f.endpoint.get("url", "")
-        path = "/api/orders/" if "/api/orders/" in url else "/"
-        out.add((f.vuln_class, path))
+        out.add((f.vuln_class, _pathkey(f.endpoint.get("url", ""))))
     return out
 
 

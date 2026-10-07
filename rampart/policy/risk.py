@@ -57,7 +57,10 @@ def classify(action: ToolAction, declared_tier: int = 0) -> RiskResult:
         reasons.append(f"payload_class={action.payload_class}")
 
     marker_tier = RiskTier.READ_ONLY
-    haystack = f"{action.path} {action.body or ''}"
+    # Scan path, body AND query values — a hijacked model must not be able to smuggle a
+    # destructive payload through the query string where it would otherwise go unscanned.
+    query_text = " ".join(str(v) for v in (action.query or {}).values())
+    haystack = f"{action.path} {action.body or ''} {query_text}"
     for pat in _DESTRUCTIVE_MARKERS:
         if pat.search(haystack):
             marker_tier = RiskTier.PROHIBITED

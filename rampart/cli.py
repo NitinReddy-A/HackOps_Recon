@@ -55,6 +55,7 @@ def _make_config(args, approver=None):
         intel=getattr(args, "intel", "deterministic"),
         application=getattr(args, "application", "target"),
         repo=getattr(args, "repo", "") or "",
+        scanners=getattr(args, "scanners", "") or "",
         approver=approver,
     )
 
@@ -195,6 +196,67 @@ def cmd_report(args):
     return 0
 
 
+# -------------------------------------------------------------------- tools
+def cmd_tools(args):
+    from .scanners.adapters import doctor
+    _banner()
+    info = doctor()
+    dstat = green("available") if info["docker"] else yellow("not detected")
+    print(f"  Docker: {dstat}  " + dim("(optional — enables containerised scanners)"))
+    print(bold("\n  External OSS scanner adapters"))
+    any_avail = False
+    for row in info["adapters"]:
+        if row["available"]:
+            any_avail = True
+            mark = green("✓ installed")
+            extra = dim(f" · {row['version']}") if row["version"] else ""
+        else:
+            mark = dim("· not installed")
+            extra = dim(f" — {row['install_hint']}")
+        net = cyan("[network]") if row["network"] else dim(f"[{row['category']}]")
+        print(f"   {mark}  {bold(row['name']):<22} {net}{extra}")
+    print()
+    if any_avail:
+        print(dim("  enable with:  rampart test --scanners nuclei,semgrep ...  (or --scanners all)"))
+    else:
+        print(dim("  none installed — Rampart's built-in oracles still run with zero external deps."))
+        print(dim("  see reports/DOCKER_AND_EXTERNAL_TOOLS.md to light these up."))
+    return 0
+
+
+# -------------------------------------------------------------------- llm-test
+def cmd_llm_test(args):
+    from .engagement import Engagement, EngagementConfig
+    _banner()
+    # The LLM assessment sends gated POSTs (Tier 2); the operator authorizes them by running
+    # this command against an in-scope endpoint, so Tier-2 is auto-approved and audited as such.
+    approver = lambda req, dec: {"granted": True, "approver_user_id": "cli:llm-test"}
+    cfg = EngagementConfig(
+        scope_file=args.scope_file, target=args.target, work_dir=args.work_dir,
+        application=getattr(args, "application", "llm-target"),
+        llm_chat_path=args.chat_path, llm_input_field=args.input_field,
+        llm_output_field=args.output_field, llm_canary=args.canary, approver=approver)
+    try:
+        eng = Engagement(cfg)
+    except (ScopeError, FileNotFoundError) as e:
+        print(red(f"✗ refused to run: {e}"))
+        return 2
+    print(f"{green('✓')} scope gate passed · LLM target {bold(eng.target_url)}{eng.cfg.llm_chat_path}")
+    res = eng.run_llm()
+    print(bold("\n  OWASP LLM Top-10 probes"))
+    for p in res.probe_log:
+        mark = {"confirmed": green("✔ CONFIRMED"), "not-vulnerable": dim("· held"),
+                "blocked": yellow("blocked"), "unconfirmed": yellow("~unconfirmed")}.get(p["result"], p["result"])
+        print(f"   {p['owasp']:<42} {mark}")
+    written, rb, chain_ok = eng.report([f.strip() for f in (args.report or "html,md,json").split(",")])
+    m = rb.metrics()
+    print(f"\n  {green(str(m['confirmed']))} confirmed LLM finding(s) · audit chain "
+          f"{'intact' if chain_ok else red('BROKEN')}")
+    for fmt, path in written.items():
+        print(f"  {fmt:>10}: {path}")
+    return 0
+
+
 # -------------------------------------------------------------------- verify-audit
 def cmd_verify_audit(args):
     from .audit import AuditLog
@@ -235,6 +297,7 @@ def build_parser():
     sp.add_argument("--login-path", default="/api/login")
     sp.add_argument("--token-path", default="token")
     sp.add_argument("--report", default="html,md,json,sarif", help="comma list: html,md,json,sarif,compliance")
+    sp.add_argument("--scanners", default="", help="external OSS adapters to run: nuclei,nmap,semgrep,trivy,testssl or 'all'")
     sp.add_argument("--ci", action="store_true", help="nonzero exit if the severity gate is breached")
     sp.add_argument("--fail-on", default="high", help="CI gate severity: low|medium|high|critical")
     sp.add_argument("--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)")
@@ -248,6 +311,7 @@ def build_parser():
     sp.add_argument("--login-path", default="/api/login")
     sp.add_argument("--token-path", default="token")
     sp.add_argument("--report", default="html,md,json,sarif")
+    sp.add_argument("--scanners", default="")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")
@@ -273,6 +337,19 @@ def build_parser():
 
     sp = sub.add_parser("verify-audit", help="verify the append-only audit hash chain")
     sp.add_argument("--work-dir", default=".rampart")
+
+    sub.add_parser("tools", help="show which external OSS scanners are installed (doctor)")
+
+    sp = sub.add_parser("llm-test", help="assess an LLM endpoint against the OWASP LLM Top 10")
+    sp.add_argument("--scope-file", default="SECURITY.md")
+    sp.add_argument("--target", required=True, help="authorized LLM endpoint base URL")
+    sp.add_argument("--work-dir", default=".rampart")
+    sp.add_argument("--chat-path", default="/chat", help="path that accepts the prompt")
+    sp.add_argument("--input-field", default="message", help="JSON field holding the user prompt")
+    sp.add_argument("--output-field", default="reply", help="dotted JSON path to the model reply")
+    sp.add_argument("--canary", default="", help="secret planted in the system prompt (leak oracle)")
+    sp.add_argument("--application", default="llm-target")
+    sp.add_argument("--report", default="html,md,json")
     return p
 
 
@@ -297,5 +374,9 @@ def main(argv=None):
         return cmd_report(args)
     if args.cmd == "verify-audit":
         return cmd_verify_audit(args)
+    if args.cmd == "tools":
+        return cmd_tools(args)
+    if args.cmd == "llm-test":
+        return cmd_llm_test(args)
     build_parser().print_help()
     return 0

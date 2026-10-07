@@ -18,6 +18,14 @@ _SEV_COLOR = {"critical": "#b4232c", "high": "#d1495b", "medium": "#e08a1e",
               "low": "#3a7ca5", "info": "#5b6570"}
 
 
+def owasp_tags(f) -> list:
+    """All OWASP categories on a finding, across web/API/LLM taxonomies."""
+    tags = []
+    for key in ("api_2023", "web_2025", "web_2021", "llm_2025"):
+        tags.extend(f.owasp.get(key, []))
+    return tags
+
+
 class ReportBuilder:
     def __init__(self, findings, scope, appmodel, scan, budget_snapshot, audit_events=0):
         self.findings = sorted(findings, key=lambda f: (_SEV_ORDER.get(f.severity, 9),
@@ -33,19 +41,26 @@ class ReportBuilder:
         confirmed = [f for f in self.findings if f.verification.validated and f.state != State.DROPPED]
         dropped = [f for f in self.findings if f.state == State.DROPPED]
         reported = [f for f in self.findings if f.state != State.DROPPED]
-        by_sev = {}
+        external = [f for f in reported if "external-scanner" in f.tags]
+        by_sev, by_class = {}, {}
         for f in reported:
             by_sev[f.severity] = by_sev.get(f.severity, 0) + 1
-        total_candidates = len(reported) + len(dropped)
-        val_rate = (len(confirmed) / total_candidates) if total_candidates else 0.0
+            by_class[f.vuln_class] = by_class.get(f.vuln_class, 0) + 1
+        # validation rate is over Rampart's own oracle-gated candidates (exclude external leads)
+        own = [f for f in reported if "external-scanner" not in f.tags]
+        total_candidates = len(own) + len(dropped)
+        val_rate = (len([f for f in own if f.verification.validated]) / total_candidates) if total_candidates else 0.0
         return {
             "confirmed": len(confirmed),
             "reported": len(reported),
+            "external_leads": len(external),
             "dropped_candidates": len(dropped),
             "by_severity": by_sev,
+            "by_class": by_class,
             "finding_validation_rate": round(val_rate, 3),
             "endpoints_tested": (self.scan or {}).get("endpoints_tested", 0),
             "endpoints_discovered": len(self.appmodel.endpoints) if self.appmodel else 0,
+            "classes_tested": (self.scan or {}).get("classes_tested", []),
             "hypotheses": len((self.scan or {}).get("hypotheses", [])),
             "audit_events": self.audit_events,
             "tokens_used": self.budget.get("tokens_used", 0),
@@ -107,7 +122,11 @@ class ReportBuilder:
         L.append(f"- Endpoints tested: {m['endpoints_tested']} / {m['endpoints_discovered']} discovered")
         L.append(f"- Audit events: {m['audit_events']} (append-only, hash-chained) · "
                  f"tokens: {m['tokens_used']} · cost: ${m['usd_spent']}")
+        if m["external_leads"]:
+            L.append(f"- **{m['external_leads']}** external-scanner lead(s) included (unvalidated — "
+                     "shown separately, not counted as confirmed)")
         L.append("")
+        L.append(self._coverage_md(m))
         L.append("## Findings")
         for f in self.findings:
             if f.state == State.DROPPED:
@@ -115,9 +134,14 @@ class ReportBuilder:
             L.append("")
             L.append(f"### [{f.severity.upper()}] {f.title}")
             L.append("")
-            badge = "✅ CONFIRMED (validated)" if f.verification.validated else f"⏳ {f.confidence}"
+            if "external-scanner" in f.tags:
+                badge = f"🔎 external lead ({f.verification.validator}, unvalidated)"
+            elif f.verification.validated:
+                badge = "✅ CONFIRMED (validated)"
+            else:
+                badge = f"⏳ {f.confidence}"
             L.append(f"- **Status:** {badge} · state `{f.state}` · {', '.join(f.cwe)} · "
-                     f"{', '.join(f.owasp.get('api_2023', []) + f.owasp.get('web_2025', []))}")
+                     f"{', '.join(owasp_tags(f))}")
             if f.cvss.vector:
                 L.append(f"- **CVSS {f.cvss.version}:** {f.cvss.base_score} ({f.cvss.severity}) `{f.cvss.vector}`")
             if f.endpoint.get("url"):
@@ -138,6 +162,10 @@ class ReportBuilder:
             if f.affected_code and f.affected_code.file:
                 L.append(f"- **Affected code:** `{f.affected_code.file}:{f.affected_code.start_line}` "
                          f"(via {f.affected_code.detected_by})")
+            if f.remediation.summary or f.remediation.guidance:
+                L.append(f"- **Remediation:** {f.remediation.summary}")
+                if f.remediation.guidance:
+                    L.append(f"    - {f.remediation.guidance}")
             if f.remediation.proposed_diff:
                 L.append("- **Advisory patch (not auto-applied):**")
                 L.append("")
@@ -151,6 +179,35 @@ class ReportBuilder:
         L.append("---")
         L.append("*Rampart augments, does not replace, expert human pentesters. This report is "
                  "evidence of control effectiveness, not a compliance attestation.*")
+        return "\n".join(L)
+
+    # -------------------------------------------------------- coverage
+    def _coverage_md(self, m) -> str:
+        from ..agents import describe_roster
+        scan = self.scan or {}
+        L = ["## Coverage & methodology", ""]
+        classes = m.get("classes_tested") or sorted({f.vuln_class for f in self.findings})
+        L.append(f"- **Vulnerability classes tested:** {', '.join(classes) or '—'}")
+        plan = scan.get("plan") or {}
+        if plan.get("order"):
+            L.append(f"- **Planner priority:** {', '.join(plan['order'])}")
+        runs = scan.get("scanner_runs") or []
+        if runs:
+            parts = []
+            for r in runs:
+                if r.get("available"):
+                    parts.append(f"{r['scanner']} ({r.get('findings', 0)} leads)")
+                else:
+                    parts.append(f"{r['scanner']} (not installed)")
+            L.append(f"- **External OSS scanners:** {', '.join(parts)}")
+        probe_log = scan.get("llm_probe_log") or []
+        if probe_log:
+            confirmed = [p for p in probe_log if p["result"] == "confirmed"]
+            L.append(f"- **OWASP LLM Top-10 probes:** {len(confirmed)}/{len(probe_log)} classes vulnerable")
+        L.append("- **Agent pipeline:** " + " → ".join(r["role"] for r in describe_roster()))
+        L.append("- **Trust rule:** only findings re-derived by an independent deterministic oracle "
+                 "are marked *confirmed*; external-scanner results are unvalidated leads.")
+        L.append("")
         return "\n".join(L)
 
     # -------------------------------------------------------- compliance

@@ -40,6 +40,11 @@ class EngagementConfig:
     intel: str = "deterministic"
     application: str = "target"
     repo: str = ""
+    scanners: str = ""              # comma list of external adapters, e.g. "nuclei,semgrep" or "all"
+    llm_chat_path: str = "/chat"
+    llm_input_field: str = "message"
+    llm_output_field: str = "reply"
+    llm_canary: str = ""
     approver: object = None
     resolver: object = None
 
@@ -83,9 +88,11 @@ class Engagement:
                                     seed_path=config.appmodel_seed or None, intel=self.intel)
         self.validator = Validator(self.pipeline, self.evidence, self.sessions,
                                    self.host, self.port, self.scheme)
+        from .scanners.adapters import build_adapters
+        self.scanner_adapters = build_adapters(config.scanners, repo=config.repo)
         self.supervisor = Supervisor(self.pipeline, self.evidence, self.sessions, self.validator,
                                      self.intel, self.appmodel, self.host, self.port, self.scheme,
-                                     self.target_url, config.application)
+                                     self.target_url, config.application, scanners=self.scanner_adapters)
 
     # --------------------------------------------------------------- scan
     def run_scan(self):
@@ -97,10 +104,42 @@ class Engagement:
             "endpoints_tested": result.endpoints_tested,
             "hypotheses": result.hypotheses,
             "phase_log": result.phase_log,
+            "classes_tested": result.classes_tested,
+            "scanner_runs": result.scanner_runs,
+            "plan": result.plan,
             "budget": self.budget.snapshot(),
             "intel_provider": self.intel.name,
         })
         return result
+
+    # --------------------------------------------------------------- LLM
+    def run_llm(self):
+        """Assess an authorized LLM endpoint against the OWASP LLM Top 10.
+
+        Prompts are gated POSTs through the same policy pipeline; the model's reply is data
+        checked by a deterministic marker/canary oracle, never executed."""
+        from .runner import ProbeRunner
+        from .llm import LLMAssessment, LLMClient
+        runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
+                             self.host, self.port, self.scheme,
+                             actor_role="llm-worker", actor_profile="llm", phase="test")
+        client = LLMClient(runner, self.cfg.llm_chat_path, self.cfg.llm_input_field,
+                           self.cfg.llm_output_field)
+        assessment = LLMAssessment(client, canary=self.cfg.llm_canary,
+                                   application=self.cfg.application, target_url=self.target_url,
+                                   engagement_id=self.pipeline.engagement_id)
+        res = assessment.run()
+        self.store.save_findings(res.findings)
+        self.store.save_scan({
+            "endpoints_tested": len(res.probe_log),
+            "hypotheses": [],
+            "classes_tested": ["LLM"],
+            "llm_probe_log": res.probe_log,
+            "phase_log": [{"phase": "llm", "msg": f"{p['id']}: {p['result']}"} for p in res.probe_log],
+            "budget": self.budget.snapshot(),
+            "intel_provider": self.intel.name,
+        })
+        return res
 
     # -------------------------------------------------------- remediation
     def remediate(self):

@@ -26,6 +26,23 @@ class IntelligenceProvider:
         """
         raise NotImplementedError
 
+    def propose_web_hypotheses(self, appmodel: dict) -> list[dict]:
+        """Propose reflected-XSS / SQLi / open-redirect hypotheses from endpoint query params.
+
+        Concrete default is empty; providers that enumerate inputs override this. (Input-fuzzing
+        classes are enumerated deterministically — the oracle, not a model, decides validity.)
+        """
+        return []
+
+    def plan_assessment(self, ctx: dict) -> dict:
+        """Planner agent: prioritise which classes/endpoints to test. Returns
+        {"order": [class,...], "notes": str, "steps": [{"class","rationale"}]}."""
+        classes = list(ctx.get("candidate_classes") or [])
+        severity_rank = {"SQLI": 0, "IDOR/BOLA": 1, "LLM": 2, "OPEN_REDIRECT": 3, "XSS": 4}
+        order = sorted(classes, key=lambda c: severity_rank.get(c, 9))
+        steps = [{"class": c, "rationale": f"test {c} across discovered inputs/endpoints"} for c in order]
+        return {"order": order, "notes": f"deterministic priority over {len(order)} class(es)", "steps": steps}
+
     def draft_finding_narrative(self, ctx: dict) -> dict:
         """Draft human-facing prose for a VALIDATED finding (description/impact/root_cause/
         remediation summary+guidance). Never invents evidence — prose only."""

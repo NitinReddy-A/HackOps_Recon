@@ -1,16 +1,18 @@
 """The independent false-positive gate (blueprint sections 4, 21).
 
-Separation of duties: the Validator is a DIFFERENT component from the Test Worker that
-proposed the candidate. It receives only the structured hypothesis facts (which endpoint,
-which seeded principals/objects) — never the worker's reasoning — and re-derives the proof
-itself from a clean state. Only the Validator may set ``confidence = confirmed``.
+Separation of duties: the Validator is a DIFFERENT component from the worker that proposed
+the candidate. It receives only the structured hypothesis facts (which endpoint, which
+seeded principals/objects/parameter) — never the worker's reasoning — looks up the oracle
+for the finding's class in the registry, and re-derives the proof itself from a clean state.
+Only the Validator may set ``confidence = confirmed``; a class with no registered oracle can
+never be confirmed (fail-closed).
 """
 from __future__ import annotations
 
 from ..runner import ProbeRunner
 from ..schemas.finding import Finding, State, Verification
 from ..util import now_iso
-from .oracle import run_bola_oracle
+from .registry import get_oracle
 
 
 class Validator:
@@ -22,16 +24,29 @@ class Validator:
         self.port = port
         self.scheme = scheme
 
-    def _runner(self, phase: str) -> ProbeRunner:
+    def _runner(self, phase: str, profile: str = "validator") -> ProbeRunner:
         return ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
                            self.host, self.port, self.scheme,
-                           actor_role="validator", actor_profile="bola-idor", phase=phase)
+                           actor_role="validator", actor_profile=profile, phase=phase)
 
     def validate(self, finding: Finding, hyp: dict, reproductions: int = 2) -> bool:
-        runner = self._runner("validate")
-        verdict = run_bola_oracle(runner, self.sessions, hyp, reproductions=reproductions, fresh_sessions=True)
+        oracle = get_oracle(finding.vuln_class)
+        if oracle is None:
+            # No independent oracle for this class — cannot confirm (fail-closed).
+            finding.state = State.DROPPED
+            finding.status = "dropped"
+            finding.confidence = "tentative"
+            finding.verification = Verification(
+                method="no-oracle", validated=False, validated_at=now_iso(),
+                validator="validator", false_positive_checks=[f"no oracle registered for {finding.vuln_class!r}"],
+                confidence_score=0.0)
+            finding.assert_consistent()
+            return False
 
+        runner = self._runner("validate", profile=finding.vuln_class)
+        verdict = oracle(runner, self.sessions, hyp, reproductions)
         finding.evidence.extend(verdict.evidence)
+
         if verdict.validated:
             finding.state = State.VALIDATED
             finding.confidence = "confirmed"
@@ -43,7 +58,6 @@ class Validator:
                 validator="validator",   # a component distinct from the discoverer
                 independent_reproduction=True,
                 reproductions=verdict.reproductions,
-                # the full proof: affirmative oracle checks + negative controls + reproductions
                 false_positive_checks=verdict.reasons + verdict.false_positive_checks,
                 confidence_score=0.95,
                 last_retest={"result": "still-vulnerable", "at": now_iso()},
@@ -55,7 +69,8 @@ class Validator:
             finding.verification = Verification(
                 method="active-exploit-replay", validated=False, validated_at=now_iso(),
                 validator="validator", independent_reproduction=False,
-                reproductions=verdict.reproductions, false_positive_checks=verdict.false_positive_checks,
+                reproductions=verdict.reproductions,
+                false_positive_checks=verdict.reasons + verdict.false_positive_checks,
                 confidence_score=0.0,
             )
         finding.assert_consistent()
@@ -66,8 +81,11 @@ class Validator:
 
         Returns 'Fixed' if the oracle no longer fires, 'Regression'/'still-vulnerable' otherwise.
         """
-        runner = self._runner("retest")
-        verdict = run_bola_oracle(runner, self.sessions, hyp, reproductions=reproductions, fresh_sessions=True)
+        oracle = get_oracle(finding.vuln_class)
+        if oracle is None:
+            return "still-vulnerable"
+        runner = self._runner("retest", profile=finding.vuln_class)
+        verdict = oracle(runner, self.sessions, hyp, reproductions)
         finding.verification.last_retest = {
             "result": "still-vulnerable" if verdict.validated else "fixed",
             "at": now_iso(),
@@ -78,7 +96,6 @@ class Validator:
             finding.state = State.FIXED
             finding.status = "fixed"
             return "Fixed"
-        # was previously Fixed and fires again -> Regression; else still open
         if finding.state == State.FIXED:
             finding.state = State.REGRESSION
             finding.status = "open"

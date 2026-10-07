@@ -3,11 +3,12 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Runtime deps](https://img.shields.io/badge/runtime%20deps-none-success)
-![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-42%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/benchmark-100%25%20precision%20%2F%20recall-brightgreen)
-![Status](https://img.shields.io/badge/status-v0.1%20MVP-orange)
+![Coverage](https://img.shields.io/badge/classes-web%20%C2%B7%20API%20%C2%B7%20LLM-blue)
+![Status](https://img.shields.io/badge/status-v0.2-orange)
 
-**Find, _prove_, and help _fix_ web/API vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
+**Find, _prove_, and help _fix_ web, API, and LLM vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
 Rampart is an open-source, self-hostable application-security agent. It orchestrates deterministic testing under an LLM planner to reproduce the shape of the commercial *Probe → Exploit → Verify* loop (Parameter, XBOW, Horizon3) — but it runs **inside your own infrastructure**, ships **proof-of-exploit instead of CVSS lists**, and is honest about what it can and cannot do.
 
@@ -62,21 +63,33 @@ python -m rampart test \
 You'll get output like:
 
 ```
-  [      recon] liveness GET / -> 200
-  [        map] 2 endpoints, 1 ownable, 2 seeded principals
-  [       test] security-headers check produced 1 finding(s)
-  [hypothesize] 1 hypothesis(es) proposed by deterministic
-  [   validate] evidence found; handing to independent validator
-  [   validate] validator verdict: CONFIRMED (2 reproductions)
-
-  Results
-   2 confirmed · 0 dropped by FP gate · validation rate 100%
-   [HIGH]   IDOR/BOLA on GET /api/orders/{id} exposes other users' Orders ✔ CONFIRMED
-   [MEDIUM] Missing security headers on / ✔ CONFIRMED
-   audit chain: intact · 29 events · cost $0.0 · 0 tokens
+  7 confirmed · 4 dropped by FP gate · validation rate 64%
+   [HIGH]   Overly permissive CORS policy (wildcard origin with credentials)  ✔ CONFIRMED
+   [HIGH]   IDOR/BOLA on GET /api/orders/{id} exposes other users' Orders     ✔ CONFIRMED
+   [HIGH]   SQL injection in 'id' on GET /api/products                        ✔ CONFIRMED
+   [MEDIUM] Reflected XSS in 'q' on GET /api/search                           ✔ CONFIRMED
+   [MEDIUM] Open redirect via 'next' on GET /api/go                           ✔ CONFIRMED
+   [MEDIUM] Missing security headers on /                                     ✔ CONFIRMED
+   [LOW]    Server software/version disclosure                               ✔ CONFIRMED
+   · dropped: SQL injection in 'q' / XSS in 'id' / XSS in 'next' / ...  (oracle killed the non-sinks)
+   audit chain: intact · 91 events · cost $0.0 · 0 tokens
 ```
 
-**The credibility test:** re-run against the patched build (`--fixed`) and Rampart reports **nothing** — the IDOR candidate is *dropped by the false-positive gate*, not confirmed. Vulnerable → proven; fixed → silent.
+Note the **dropped** rows: the same broad enumeration proposed SQLi on `q` and XSS on `id`, and the
+independent oracle *killed them* because they aren't real sinks. Breadth **with** zero false positives.
+
+**The credibility test:** re-run against the patched build (`--fixed`) and Rampart confirms **nothing** — every candidate across every class is *dropped by the false-positive gate*. Vulnerable → proven; fixed → silent.
+
+### Test an LLM endpoint (OWASP LLM Top 10)
+
+```bash
+python scripts/demo.py --llm            # toy local LLM: prompt injection, secret leak, insecure output, jailbreak
+# or against your own authorized endpoint:
+python -m rampart llm-test --scope-file SECURITY.md --target http://127.0.0.1:9090 \
+  --chat-path /chat --input-field message --output-field reply --canary "<secret-in-your-system-prompt>"
+```
+
+See [docs/LLM_SECURITY_TESTING.md](docs/LLM_SECURITY_TESTING.md) for the probe list and oracle details.
 
 ---
 
@@ -98,9 +111,30 @@ All probes are **Tier 1**: read-only, seeded accounts, seeded objects, no real u
 
 ---
 
+## What Rampart tests
+
+Every class below is confirmed by its **own independent deterministic oracle** (controls + 2+ reproductions). The built-in checks need **zero external tools**; external OSS scanners are optional, opt-in leads.
+
+| Area | Class | CWE / OWASP | Oracle (how it's proven) |
+|---|---|---|---|
+| API | IDOR / BOLA | CWE-639 · API1:2023 | cross-account read with victim signature + auth-enforced + absent controls |
+| Web | Reflected XSS | CWE-79 · A03 | unencoded markup reflected in an HTML context, not in encoded/benign controls |
+| Web | SQL injection | CWE-89 · A03 | error-based (quote breaks query) **and** boolean-based (1=1 vs 1=2) differential |
+| Web | Open redirect | CWE-601 · A01 | off-site `Location` for attacker URL; local control stays on-site / rejected |
+| Config | Missing security headers | CWE-693 · A02 | header absent on 2/2 observations |
+| Config | Permissive CORS | CWE-942 · A02 | `ACAO:*` **with** `ACAC:true` |
+| Config | Version disclosure | CWE-200 · A02 | versioned `Server` header |
+| **LLM** | Prompt injection, system-prompt/secret leak, insecure output handling, jailbreak | OWASP **LLM Top 10** (LLM01/05/06) | marker/canary appears for the attack prompt, not for a benign control; reproduced |
+
+External adapters (run with `--scanners`, graceful if not installed): **Nuclei** (DAST templates), **Nmap** (services), **Semgrep** (SAST), **Trivy** (SCA/secrets), **testssl.sh** (TLS). Their results are ingested as *unvalidated leads* — only Rampart's oracles mark a finding `confirmed`. Check what's installed with `rampart tools`.
+
+---
+
 ## Intelligence: use Claude Code, bring your own key, or run fully deterministic
 
 The reasoning layer ("LLM proposes") is pluggable and **strictly advisory** — every suggestion is re-checked by the deterministic pipeline and the validator, and LLM-proposed hypotheses are dropped if they reference endpoints/objects we didn't actually discover (anti-hallucination).
+
+Rampart runs as a **multi-agent pipeline** — `mapper → planner → specialists (BOLA / injection / LLM) → validator → reporter`. With `--intel claude-code`, the planner, specialist and reporter roles each run as a separate headless `claude -p` call; the **validator and policy pipeline are deliberately never an LLM** (pure deterministic code), which is what keeps the safety guarantees true under a prompt-injected model.
 
 | `--intel` | What it uses | Cost | Setup |
 |---|---|---|---|
@@ -158,26 +192,29 @@ Full threat model and rationale: this repo's blueprint at `reports/Open source A
 ## Architecture
 
 ```
-CLI ─► Engagement ─► Supervisor (phase state machine: recon → map → hypothesize → test → validate)
+CLI ─► Engagement ─► Supervisor (recon → map → hypothesize → PLAN → test → validate → scan)
                          │
-   intelligence (advisory) │           deterministic spine (enforces everything)
-   ├ deterministic         │           ├ policy/ ── allowlist → scope → risk → engine → pipeline (choke-point)
-   ├ claude-code           │           ├ executor/ ─ gated HTTP client + seeded-session manager
-   └ openai-compat         │           ├ audit/ ──── append-only hash-chained log
-                           ▼           ├ evidence/ ─ content-addressed, secret-scrubbed store
-              Test Worker (bola-idor)  ├ validation/ ─ independent oracle + FP gate (separation of duties)
-                           ▼           ├ remediation/ ─ source correlation + advisory patch
-                     Validator ────────► reporting/ ─ JSON · SARIF · Markdown · HTML · compliance
+   intelligence (advisory) │          deterministic spine (enforces everything)
+   ├ deterministic         │          ├ policy/ ── allowlist → scope → risk → engine → pipeline (choke-point)
+   ├ claude-code (multi-agent)│       ├ executor/ ─ gated HTTP client + seeded-session manager
+   └ openai-compat         │          ├ audit/ ──── append-only hash-chained log
+                           ▼          ├ evidence/ ─ content-addressed, secret-scrubbed store
+   workers/ (per class)    │          ├ validation/ ─ oracle REGISTRY + FP gate (separation of duties)
+   ├ bola-idor  ├ web (xss/sqli/redirect)│  remediation/ ─ source correlation + advisory patch
+   └ llm (OWASP LLM Top 10) │          ├ scanners/ ─ built-in misconfig + external adapters (nuclei/nmap/…)
+                           ▼          └ reporting/ ─ JSON · SARIF · Markdown · HTML · compliance
+                     Validator ──────► (only an independent oracle may mark a finding "confirmed")
 ```
 
-Repo map: [`rampart/`](rampart) (package) · [`examples/demo_target/`](examples/demo_target) (the owned target) · [`tests/`](tests) (28 tests, A1–A8 acceptance) · [`benchmarks/`](benchmarks) · [`docs/`](docs).
+Repo map: [`rampart/`](rampart) (package) · [`rampart/llm/`](rampart/llm) (LLM Top-10) · [`rampart/scanners/adapters/`](rampart/scanners/adapters) (external tools) · [`examples/demo_target/`](examples/demo_target) (owned web + LLM targets) · [`tests/`](tests) (A1–A8 + web/LLM/adapter coverage) · [`benchmarks/`](benchmarks) · [`docs/`](docs).
 
 ---
 
 ## Honesty (what this is not, yet)
 
 - It does **not** replace human pentesters — humans remain best at creative/business-logic flaws.
-- The MVP proves **one class end-to-end** (BOLA/IDOR) plus safe misconfiguration checks. It does not yet cover all 22 weakness classes, do autonomous multi-step exploit chaining, or match commercial infra/lateral-movement breadth.
+- It proves several classes end-to-end (BOLA/IDOR, XSS, SQLi, open redirect, misconfig, and the OWASP LLM Top 10) each behind an independent oracle. It does not yet do autonomous multi-step exploit *chaining*, cover all 22 weakness classes, or match commercial infra/lateral-movement breadth.
+- External-scanner results are **unvalidated leads**, clearly separated from oracle-confirmed findings.
 - It generates **evidence of control effectiveness**, not a compliance attestation.
 
 ## Progress
@@ -188,17 +225,17 @@ Repo map: [`rampart/`](rampart) (package) · [`examples/demo_target/`](examples/
 - ✅ Four-tier action risk classifier with HITL approval for Tier 2 and hard-deny for Tier 3
 - ✅ Append-only, hash-chained, tamper-evident audit log (`rampart verify-audit`)
 - ✅ Application model (endpoints, roles, seeded principals, object ownership) from OpenAPI + seed
-- ✅ BOLA/IDOR vertical slice end-to-end: hypothesis → controlled probe → **independent validation** (2+ reproductions + negative controls) → confirmed finding
-- ✅ Safe deterministic checks (security-header / misconfiguration)
+- ✅ Multi-class coverage, each behind an **independent oracle** (2+ reproductions + negative controls): BOLA/IDOR, reflected XSS, SQL injection, open redirect, plus CORS / version-disclosure / header misconfig
+- ✅ **LLM VAPT track** — OWASP LLM Top 10 probes (prompt injection, system-prompt/secret leak, insecure output handling, jailbreak) with a marker/canary oracle (`rampart llm-test`)
+- ✅ **External OSS scanner adapters** (Nuclei / Nmap / Semgrep / Trivy / testssl → normalized), graceful when not installed, with a `rampart tools` doctor
+- ✅ **Multi-agent pipeline** (mapper → planner → specialists → validator → reporter); Claude Code / BYO-key / deterministic backends
 - ✅ Runtime↔source correlation + **advisory** minimal patch (never auto-applied) → retest → `Fixed`/`Regression`
-- ✅ Three intelligence backends: deterministic (default, free), Claude Code, bring-your-own-key (OpenAI-compatible / Ollama)
-- ✅ Reports: JSON · SARIF · Markdown · HTML dashboard · compliance-evidence bundle
-- ✅ Reproducible reliability benchmark (100% precision/recall on the shipped corpus)
-- ✅ 28 automated tests incl. the full A1–A8 acceptance suite
+- ✅ Reports: JSON · SARIF · Markdown · HTML dashboard (now with coverage & methodology) · compliance bundle
+- ✅ Reproducible reliability benchmark — **100% precision/recall across all 5 web/API classes**, both vulnerable and fixed
+- ✅ Automated test suite (A1–A8 acceptance + web-class, LLM, and adapter coverage)
 
 **Remaining (next):**
-- ☐ External scanner adapters (Nuclei / ZAP / Semgrep / Trivy → SARIF normalization)
-- ☐ More Test-Worker class profiles (reflected/stored XSS, injection, auth, SSRF)
+- ☐ Autonomous multi-step exploit chaining across classes
 - ☐ GitHub Action + GitLab CI templates (SARIF upload, PR annotations, diff-aware runs)
 - ☐ First-party MCP server (scope-guarded tools for Claude Code / agents)
 - ☐ Thin web UI (live run view, finding triage, evidence rendering)

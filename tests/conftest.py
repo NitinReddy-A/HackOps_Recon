@@ -113,6 +113,12 @@ notify:
         "paths": {
             "/api/login": {"post": {"security": []}},
             "/api/orders/{id}": {"get": {"security": [{"bearerAuth": []}]}},
+            "/api/search": {"get": {"security": [],
+                "parameters": [{"name": "q", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/products": {"get": {"security": [],
+                "parameters": [{"name": "id", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/go": {"get": {"security": [],
+                "parameters": [{"name": "next", "in": "query", "schema": {"type": "string"}}]}},
         },
     }), encoding="utf-8")
     (tmp_path / "seed.json").write_text(json.dumps({

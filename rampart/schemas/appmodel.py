@@ -20,9 +20,13 @@ class Endpoint:
     auth_required: bool = False
     returns_object_type: str | None = None
     object_selector: dict = field(default_factory=dict)  # {"param": "id", "in": "path"}
+    parameters: list = field(default_factory=list)       # [{"name","in","type"}] — query/path inputs
     observed_roles: list = field(default_factory=list)
     provenance: str = "crawl"        # crawl|spec|repo|manual
     trust_level: str = "untrusted"
+
+    def query_params(self) -> list:
+        return [p for p in self.parameters if p.get("in") == "query"]
 
 
 @dataclass

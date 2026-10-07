@@ -56,6 +56,18 @@ def hypotheses_prompt(appmodel: dict) -> str:
     )
 
 
+def plan_prompt(ctx: dict) -> str:
+    return (
+        "You are the planner agent for an authorized, non-destructive web/API/LLM assessment. "
+        "Given the discovered surface and the candidate vulnerability classes, return a risk-ordered "
+        "test plan. Use ONLY the classes in candidate_classes; do not invent classes or endpoints.\n"
+        f"CONTEXT (trusted, from our own mapper):\n{json.dumps(ctx, indent=2)}\n"
+        + _JSON_ONLY
+        + ' Schema: {"order": [string], "notes": string, '
+        '"steps": [{"class": string, "rationale": string}]}'
+    )
+
+
 def narrative_prompt(ctx: dict) -> str:
     return (
         "Write concise, factual prose for a VALIDATED access-control finding. Do not invent evidence "

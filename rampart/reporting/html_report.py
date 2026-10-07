@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from ..version import __version__
 from ..schemas.finding import State
+from .report import owasp_tags
 
 _CSS = """
 :root{
@@ -118,12 +119,32 @@ def render_html(rb) -> str:
     posture_html = "".join(
         f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in posture)
 
+    scan = rb.scan or {}
+    classes = m.get("classes_tested") or sorted({f.vuln_class for f in rb.findings})
+    runs = scan.get("scanner_runs") or []
+    scanner_txt = ", ".join(
+        (f"{r['scanner']} ✓" if r.get("available") else f"{r['scanner']} (not installed)") for r in runs) or "none run"
+    plan = scan.get("plan") or {}
+    coverage = [
+        ("Classes tested", ", ".join(classes) or "—"),
+        ("Planner priority", ", ".join(plan.get("order", [])) or "—"),
+        ("External OSS scanners", scanner_txt),
+        ("Confirmed vs external leads", f"{m['confirmed']} oracle-confirmed · {m['external_leads']} unvalidated leads"),
+        ("Intelligence backend", scan.get("intel_provider", "deterministic")),
+    ]
+    coverage_html = "".join(
+        f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in coverage)
+
     findings_html = []
     for f in rb.findings:
         dropped = f.state == State.DROPPED
         color = sev_color.get(f.severity, "#5b6570")
-        badge = ('<span class="badge cf">✔ CONFIRMED</span>' if f.verification.validated
-                 else f'<span class="badge">{_esc(f.confidence)}</span>')
+        if "external-scanner" in f.tags:
+            badge = f'<span class="badge">🔎 {_esc(f.verification.validator)} lead (unvalidated)</span>'
+        elif f.verification.validated:
+            badge = '<span class="badge cf">✔ CONFIRMED</span>'
+        else:
+            badge = f'<span class="badge">{_esc(f.confidence)}</span>'
         if dropped:
             badge = '<span class="badge">dropped by validator</span>'
         parts = [f'<details class="finding{" dropped" if dropped else ""}" style="border-left-color:{color}"'
@@ -136,7 +157,7 @@ def render_html(rb) -> str:
         meta = []
         if f.cwe:
             meta.append(" ".join(f'<span class="pill">{_esc(c)}</span>' for c in f.cwe))
-        for cat in f.owasp.get("api_2023", []) + f.owasp.get("web_2025", []):
+        for cat in owasp_tags(f):
             meta.append(f'<span class="pill">{_esc(cat)}</span>')
         if f.cvss.vector:
             meta.append(f'<span class="pill">CVSS {_esc(f.cvss.version)} {_esc(f.cvss.base_score)}</span>')
@@ -170,11 +191,15 @@ def render_html(rb) -> str:
             parts.append(f'<h3>Affected code</h3><pre>{_esc(f.affected_code.file)}:'
                          f'{_esc(f.affected_code.start_line)}  (via {_esc(f.affected_code.detected_by)})\n\n'
                          f'{_esc(f.affected_code.snippet)}</pre>')
+        if f.remediation.summary or f.remediation.guidance:
+            parts.append("<h3>Remediation</h3>")
+            if f.remediation.summary:
+                parts.append(f'<div><b>{_esc(f.remediation.summary)}</b></div>')
+            if f.remediation.guidance:
+                parts.append(f'<div>{_esc(f.remediation.guidance)}</div>')
         if f.remediation.proposed_diff:
             parts.append('<h3>Advisory patch <span class="badge">not auto-applied</span></h3>')
             parts.append(f'<pre class="diff">{_diff_html(f.remediation.proposed_diff)}</pre>')
-        elif f.remediation.guidance:
-            parts.append(f'<h3>Remediation</h3><div>{_esc(f.remediation.guidance)}</div>')
 
         if f.compliance_control_refs:
             parts.append("<h3>Compliance evidence</h3><div>"
@@ -207,6 +232,7 @@ findings are shown as confirmed; dropped candidates are listed to make the false
 discipline visible.</div>
 <div class="kpis">{kpi_html}</div>
 <div class="panel"><h2>Safety posture</h2><div class="grid2">{posture_html}</div></div>
+<div class="panel"><h2>Coverage &amp; methodology</h2><div class="grid2">{coverage_html}</div></div>
 <div class="panel"><h2>Findings</h2>
 {''.join(findings_html) if findings_html else '<div class="sub">No findings.</div>'}
 </div>

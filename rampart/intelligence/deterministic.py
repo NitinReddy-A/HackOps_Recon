@@ -13,6 +13,11 @@ from .base import IntelligenceProvider
 
 _PATH_PARAM = re.compile(r"\{([^}]+)\}")
 
+# Parameter/endpoint name hints for the open-redirect class (where testing every param is noise).
+_REDIRECT_PARAM_HINTS = ("next", "url", "redirect", "redirect_uri", "return", "returnurl",
+                         "return_url", "dest", "destination", "to", "continue", "goto", "callback")
+_REDIRECT_PATH_HINTS = ("go", "redirect", "out", "link", "exit", "away")
+
 
 class DeterministicProvider(IntelligenceProvider):
     name = "deterministic"
@@ -76,6 +81,34 @@ class DeterministicProvider(IntelligenceProvider):
                               f"'{sel.get('param')}' under an owner_only policy; two seeded owners exist, "
                               f"so a cross-account read by '{attacker}' of '{victim}'s object is testable at Tier 1."),
             })
+        return hyps
+
+    def propose_web_hypotheses(self, appmodel: dict) -> list[dict]:
+        """Enumerate reflected-XSS / SQLi / open-redirect hypotheses from endpoint query params.
+
+        Enumeration is deliberate and broad: the independent oracle is the gate, so proposing
+        a probe that turns out safe costs one validation and is then dropped with proof — never
+        a false positive. XSS/SQLi are tested on every query parameter; open-redirect is limited
+        to redirect-shaped parameter/endpoint names to avoid pointless probes.
+        """
+        hyps: list[dict] = []
+        for ep in appmodel.get("endpoints", []):
+            if (ep.get("method") or "GET").upper() != "GET":
+                continue
+            qparams = [p for p in (ep.get("parameters") or []) if p.get("in") == "query" and p.get("name")]
+            path = ep.get("path", "")
+            path_is_redirecty = any(h in path.lower() for h in _REDIRECT_PATH_HINTS)
+            for p in qparams:
+                name = p["name"]
+                common = {"endpoint_id": ep.get("id"), "endpoint_method": ep.get("method", "GET"),
+                          "endpoint_path": path, "selector_param": name}
+                hyps.append({**common, "vuln_class": "XSS", "cwe": ["CWE-79"],
+                             "rationale": f"query param '{name}' on {path} may be reflected into HTML unencoded"})
+                hyps.append({**common, "vuln_class": "SQLI", "cwe": ["CWE-89"], "base_value": "1",
+                             "rationale": f"query param '{name}' on {path} may reach a SQL sink"})
+                if name.lower() in _REDIRECT_PARAM_HINTS or path_is_redirecty:
+                    hyps.append({**common, "vuln_class": "OPEN_REDIRECT", "cwe": ["CWE-601"],
+                                 "rationale": f"query param '{name}' on {path} looks like a redirect target"})
         return hyps
 
     def draft_finding_narrative(self, ctx: dict) -> dict:

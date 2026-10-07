@@ -28,11 +28,17 @@ def _endpoints_from_openapi(spec: dict) -> list[Endpoint]:
             security = op.get("security", None)
             # security: [] means explicitly public (e.g. login); absent -> assume auth required
             auth_required = not (security == [])
+            params = [
+                {"name": p.get("name"), "in": p.get("in"),
+                 "type": (p.get("schema") or {}).get("type", "string")}
+                for p in (op.get("parameters") or []) if p.get("name") and p.get("in")
+            ]
             eps.append(Endpoint(
                 id=_slug(method, path),
                 method=method.upper(),
                 path=path,
                 auth_required=auth_required,
+                parameters=params,
                 provenance="spec",
             ))
     return eps

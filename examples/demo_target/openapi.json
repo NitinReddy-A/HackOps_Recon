@@ -17,6 +17,33 @@
         ],
         "security": [{ "bearerAuth": [] }]
       }
+    },
+    "/api/search": {
+      "get": {
+        "summary": "Search (renders an HTML results page)",
+        "parameters": [
+          { "name": "q", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
+    },
+    "/api/products": {
+      "get": {
+        "summary": "Look up a product by id",
+        "parameters": [
+          { "name": "id", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
+    },
+    "/api/go": {
+      "get": {
+        "summary": "Redirect helper",
+        "parameters": [
+          { "name": "next", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
     }
   }
 }

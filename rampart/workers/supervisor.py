@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..agents import run_planner
 from ..runner import ProbeRunner
-from ..scanners import security_headers_check
+from ..scanners import misconfig_checks, security_headers_check
 from ..schemas.finding import State
 from ..util import gen_id, now_iso
 from .test_worker import BolaIdorWorker
+from .web_worker import WEB_CLASSES, WebWorker
 
 
 @dataclass
@@ -22,11 +24,14 @@ class ScanResult:
     hypotheses: list = field(default_factory=list)
     phase_log: list = field(default_factory=list)
     endpoints_tested: int = 0
+    classes_tested: list = field(default_factory=list)
+    scanner_runs: list = field(default_factory=list)
+    plan: dict = field(default_factory=dict)
 
 
 class Supervisor:
     def __init__(self, pipeline, evidence_store, session_manager, validator, intel, appmodel,
-                 host, port, scheme, target_url, application):
+                 host, port, scheme, target_url, application, scanners=None):
         self.pipeline = pipeline
         self.evidence = evidence_store
         self.sessions = session_manager
@@ -38,14 +43,24 @@ class Supervisor:
         self.scheme = scheme
         self.target_url = target_url
         self.application = application
+        self.scanners = scanners or []
 
     def _log(self, result, phase, msg):
         result.phase_log.append({"ts": now_iso(), "phase": phase, "msg": msg})
 
-    def _runner(self, phase, role="test-worker"):
+    def _runner(self, phase, role="test-worker", profile="supervisor"):
         return ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
                            self.host, self.port, self.scheme, actor_role=role,
-                           actor_profile="bola-idor", phase=phase)
+                           actor_profile=profile, phase=phase)
+
+    def _worker_for(self, vuln_class):
+        if vuln_class in WEB_CLASSES:
+            return WebWorker(self._runner("test", profile=vuln_class),
+                             application=self.application, environment="authorized")
+        if vuln_class == "IDOR/BOLA":
+            return BolaIdorWorker(self._runner("test", profile="bola-idor"),
+                                  application=self.application, environment="authorized")
+        return None
 
     def run(self) -> ScanResult:
         result = ScanResult()
@@ -61,25 +76,43 @@ class Supervisor:
         self._log(result, "map", f"{len(self.appmodel.endpoints)} endpoints, {len(ownable)} ownable, "
                                  f"{len(self.appmodel.principals)} seeded principals")
 
-        # Phase: built-in safe checks (security misconfiguration)
-        headers_runner = self._runner("test")
-        header_findings = security_headers_check(headers_runner, "/", self.target_url, self.application)
-        for f in header_findings:
-            result.findings.append(f)
-        self._log(result, "test", f"security-headers check produced {len(header_findings)} finding(s)")
+        # Phase: built-in safe checks (security misconfiguration — observation IS the oracle)
+        misc_runner = self._runner("test", profile="misconfig")
+        misc_findings = security_headers_check(misc_runner, "/", self.target_url, self.application)
+        misc_findings += misconfig_checks(misc_runner, self.appmodel, self.target_url,
+                                          self.application, self.sessions)
+        result.findings.extend(misc_findings)
+        self._log(result, "test", f"built-in misconfiguration checks produced {len(misc_findings)} finding(s)")
 
-        # Phase: hypotheses (LLM proposes / deterministic fallback)
-        hyps = self.intel.propose_hypotheses(self.appmodel.to_dict())
+        # Phase: hypotheses — access-control (LLM/deterministic) + input-fuzzing (deterministic enum)
+        appmodel_d = self.appmodel.to_dict()
+        hyps = list(self.intel.propose_hypotheses(appmodel_d))
+        hyps += list(self.intel.propose_web_hypotheses(appmodel_d))
         for h in hyps:
             h.setdefault("id", gen_id("hyp"))
             h["status"] = "planned"
         result.hypotheses = hyps
-        self._log(result, "hypothesize", f"{len(hyps)} hypothesis(es) proposed by {self.intel.name}")
+        classes = sorted({h["vuln_class"] for h in hyps})
+        result.classes_tested = classes
+        self._log(result, "hypothesize",
+                  f"{len(hyps)} hypothesis(es) across {len(classes)} class(es) [{', '.join(classes)}] "
+                  f"via {self.intel.name}")
 
-        # Phase: test + validate (each hypothesis)
-        worker = BolaIdorWorker(self._runner("test"), application=self.application, environment="authorized")
+        # Phase: plan — the planner agent prioritises classes (reasoning backend; deterministic fallback)
+        plan = run_planner(self.intel, appmodel_d, result.scanner_runs, classes)
+        result.plan = plan
+        order = {c: i for i, c in enumerate(plan.get("order", classes))}
+        hyps.sort(key=lambda h: order.get(h["vuln_class"], 99))
+        self._log(result, "plan", f"planner order: {', '.join(plan.get('order', classes))}")
+
+        # Phase: test + validate (each hypothesis routed to its worker + independent oracle)
         for h in hyps:
             result.endpoints_tested += 1
+            worker = self._worker_for(h["vuln_class"])
+            if worker is None:
+                h["status"] = "no-worker"
+                self._log(result, "test", f"[{h['id']}] no worker for class {h['vuln_class']} -> skipped")
+                continue
             finding = worker.investigate(h, self.target_url)
             if finding is None:
                 h["status"] = "blocked"
@@ -90,20 +123,39 @@ class Supervisor:
                 finding.state = State.DROPPED
                 finding.status = "dropped"
                 result.findings.append(finding)
-                self._log(result, "test", f"[{h['id']}] no cross-account signal -> dropped")
+                self._log(result, "test", f"[{h['id']}] no initial signal -> dropped")
                 continue
 
             # GATE: independent validation (separate component, clean state)
-            self._log(result, "validate", f"[{h['id']}] evidence found; handing to independent validator")
             validated = self.validator.validate(finding, h)
             h["status"] = "validated" if validated else "dropped-by-validator"
             h["finding_id"] = finding.id
-            if validated:
+            if validated and finding.vuln_class == "IDOR/BOLA":
                 self._draft_narrative(finding, h)
             result.findings.append(finding)
             self._log(result, "validate",
-                      f"[{h['id']}] validator verdict: {'CONFIRMED' if validated else 'dropped'} "
+                      f"[{h['id']}:{h['vuln_class']}] {'CONFIRMED' if validated else 'dropped'} "
                       f"({finding.verification.reproductions} reproductions)")
+
+        # Phase: external OSS scanner adapters (graceful — skipped if the tool is not installed)
+        for adapter in self.scanners:
+            run_info = {"scanner": adapter.name, "available": False, "findings": 0, "note": ""}
+            try:
+                if not adapter.is_available():
+                    run_info["note"] = adapter.install_hint
+                    self._log(result, "scan", f"{adapter.name}: not installed — skipped ({adapter.install_hint})")
+                else:
+                    run_info["available"] = True
+                    sfindings = adapter.run(self.appmodel, self.target_url, self.application)
+                    for f in sfindings:
+                        f.engagement_id = self.pipeline.engagement_id
+                    result.findings.extend(sfindings)
+                    run_info["findings"] = len(sfindings)
+                    self._log(result, "scan", f"{adapter.name}: {len(sfindings)} finding(s) ingested")
+            except Exception as exc:  # noqa: BLE001 - a flaky external tool must never break the run
+                run_info["note"] = f"error: {exc}"
+                self._log(result, "scan", f"{adapter.name}: error ({exc}) — skipped")
+            result.scanner_runs.append(run_info)
 
         return result
 

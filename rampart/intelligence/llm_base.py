@@ -83,6 +83,22 @@ class LLMProvider(IntelligenceProvider):
             return self._fallback.propose_hypotheses(appmodel)
         return self._ground(raw, appmodel) or self._fallback.propose_hypotheses(appmodel)
 
+    def propose_web_hypotheses(self, appmodel: dict) -> list[dict]:
+        # Input-fuzzing classes are enumerated deterministically (reliable, no hallucination);
+        # the independent oracle remains the sole confirmation gate.
+        return self._fallback.propose_web_hypotheses(appmodel)
+
+    def plan_assessment(self, ctx: dict) -> dict:
+        # Planner agent (its own reasoning call); falls back to deterministic prioritisation.
+        candidates = set(ctx.get("candidate_classes") or [])
+        out = self._json(prompts.plan_prompt(ctx))
+        if isinstance(out, dict) and isinstance(out.get("order"), list):
+            order = [c for c in out["order"] if c in candidates]
+            if order:
+                out["order"] = order
+                return out
+        return IntelligenceProvider.plan_assessment(self, ctx)
+
     def draft_finding_narrative(self, ctx: dict) -> dict:
         out = self._json(prompts.narrative_prompt(ctx))
         if isinstance(out, dict) and "description" in out:

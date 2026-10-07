@@ -6,6 +6,7 @@ Tier-0/1 reads and returns the outcome.
 """
 from __future__ import annotations
 
+import json as _json
 from dataclasses import dataclass, field
 
 from .schemas.toolcall import ToolAction, ToolCallRequest
@@ -42,12 +43,30 @@ class ProbeRunner:
         self.phase = phase
 
     def get(self, path, session, payload_class="boundary-probe", rationale="",
-            hypothesis_id=None, capture=True, summary="") -> ProbeOutcome:
+            hypothesis_id=None, capture=True, summary="", query=None) -> ProbeOutcome:
         action = ToolAction(method="GET", target_host=self.host, port=self.port, scheme=self.scheme,
-                            path=path, use_session=session, payload_class=payload_class)
+                            path=path, query=dict(query or {}), use_session=session,
+                            payload_class=payload_class)
         req = ToolCallRequest(engagement_id=self.engagement_id, actor_role=self.actor_role,
                               actor_profile=self.actor_profile, action=action, declared_tier=1,
                               rationale=rationale, hypothesis_id=hypothesis_id, phase=self.phase)
+        return self._execute(req, action, capture, summary)
+
+    def post(self, path, json_body, session=None, payload_class="canary", rationale="",
+             hypothesis_id=None, capture=True, summary="") -> ProbeOutcome:
+        """A gated POST with a JSON body. Still a typed ToolCallRequest through the one
+        choke-point — POST classifies as Tier 2 (state-changing), so it is only permitted
+        when the scope/approver authorizes it (e.g. an authorized LLM-endpoint assessment)."""
+        body = json_body if isinstance(json_body, str) else _json.dumps(json_body)
+        action = ToolAction(method="POST", target_host=self.host, port=self.port, scheme=self.scheme,
+                            path=path, body=body, body_class="json", use_session=session,
+                            payload_class=payload_class)
+        req = ToolCallRequest(engagement_id=self.engagement_id, actor_role=self.actor_role,
+                              actor_profile=self.actor_profile, action=action, declared_tier=2,
+                              rationale=rationale, hypothesis_id=hypothesis_id, phase=self.phase)
+        return self._execute(req, action, capture, summary)
+
+    def _execute(self, req, action, capture, summary) -> ProbeOutcome:
         result = self.pipeline.execute(req)
         evs = []
         if capture and result.executed and self.evidence is not None:
