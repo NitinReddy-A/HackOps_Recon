@@ -26,6 +26,7 @@ import json
 import os
 import re
 import secrets
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -224,6 +225,19 @@ class Handler(BaseHTTPRequestHandler):
                 "</body></html>")
             return self._send_html(200, page)
 
+        # DOM XSS: a page whose client-side JS writes a URL param into the DOM via innerHTML.
+        # The sink is in the browser (JS), so only a headless-browser oracle can confirm it.
+        if path == "/dom":
+            if FIXED:
+                page = ("<!doctype html><html><body><div id='out'></div>"
+                        "<script>var p=new URLSearchParams(location.search).get('x')||'';"
+                        "document.getElementById('out').textContent=p;</script></body></html>")
+            else:
+                page = ("<!doctype html><html><body><div id='out'></div>"
+                        "<script>var p=new URLSearchParams(location.search).get('x')||'';"
+                        "document.getElementById('out').innerHTML=p;</script></body></html>")
+            return self._send_html(200, page)
+
         # Reflected XSS: q echoed into an HTML page. Vulnerable: raw. Fixed: html-escaped.
         if path == "/api/search":
             term = q.get("q", "")
@@ -268,6 +282,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"fetched": target, "content": SSRF_MARKER})   # SSRF to internal
             return self._send(200, {"fetched": target, "content": "external resource ok"})
 
+        # Blind SSRF: a "webhook" that fetches the URL server-side with NO response signal.
+        # VULN actually performs the internal fetch (so an OOB collaborator gets a callback);
+        # --fixed blocks internal destinations. Response is identical either way (blind).
+        if path == "/api/webhook":
+            target = q.get("url", "")
+            host = urlparse(target).hostname or ""
+            if FIXED:
+                if _is_internal(host) or urlparse(target).scheme not in ("http", "https"):
+                    return self._send(400, {"error": "destination not allowed"})
+                return self._send(200, {"status": "queued"})
+            if _is_internal(host):           # VULN: perform the server-side fetch (blind SSRF)
+                try:
+                    urllib.request.urlopen(target, timeout=2).read(64)
+                except Exception:  # noqa: BLE001
+                    pass
+            return self._send(200, {"status": "queued"})   # blind: same response regardless
+
         # Command injection: simulated `ping <host>` that honours shell metacharacters.
         if path == "/api/ping":
             host = q.get("host", "")
@@ -295,6 +326,24 @@ class Handler(BaseHTTPRequestHandler):
             if name in known:
                 return self._send(200, {"name": name, "content": known[name]})
             return self._send(404, {"error": "file not found"})
+
+        # Business-logic flaw: a price quote that accepts a negative quantity -> negative total
+        # (store-credit / refund abuse). No deterministic oracle catches this — it needs reasoning
+        # about intended behaviour; the business-logic AGENT finds it.
+        if path == "/api/checkout":
+            item = q.get("item", "1")
+            prod = PRODUCTS.get(item)
+            try:
+                qty = int(q.get("qty", "1"))
+            except ValueError:
+                return self._send(400, {"error": "bad quantity"})
+            if prod is None:
+                return self._send(404, {"error": "unknown item"})
+            if FIXED and qty < 1:
+                return self._send(400, {"error": "quantity must be >= 1"})   # the fix
+            total = round(qty * float(prod["price"]), 2)                     # VULN: negative qty allowed
+            return self._send(200, {"item": item, "qty": qty, "unit_price": prod["price"],
+                                    "total": f"{total:.2f}"})
 
         # Sensitive file exposure: serve dotfiles/backups/config in VULN mode only.
         if path in SENSITIVE_FILES:

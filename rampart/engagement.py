@@ -45,6 +45,9 @@ class EngagementConfig:
     crawl_max_pages: int = 40
     crawl_max_depth: int = 3
     exploit: bool = False           # demonstrate bounded, non-destructive impact for confirmed findings
+    agents: bool = False            # run the multi-agent reasoning layer (business-logic / auth flows)
+    oob: bool = False               # run the OOB collaborator for blind SSRF/XXE detection
+    browser: bool = False           # run the optional headless-browser DOM-XSS pass ([browser] extra)
     llm_chat_path: str = "/chat"
     llm_input_field: str = "message"
     llm_output_field: str = "reply"
@@ -129,6 +132,10 @@ class Engagement:
     def run_scan(self):
         self.recon()
         result = self.supervisor.run()
+        if self.cfg.oob:
+            result.findings = result.findings + self.run_oob()
+        if self.cfg.browser:
+            result.findings = result.findings + self.run_browser()
         corr, corr_dict = self._correlate(result.findings)
         result.correlation = corr
         exploit_dicts = []
@@ -139,12 +146,18 @@ class Engagement:
                                self.host, self.port, self.scheme, self.target_url)
             result.exploit_proofs = ex.demonstrate(result.findings, result.hypotheses)
             exploit_dicts = [asdict(p) for p in result.exploit_proofs]
+        agent_transcript = []
+        if self.cfg.agents:
+            ares = self.run_agents(confirmed_findings=result.findings)
+            result.findings = result.findings + ares.findings
+            agent_transcript = ares.transcript
         self.store.save_appmodel(self.appmodel)
         self.store.save_hypotheses(result.hypotheses)
         self.store.save_findings(result.findings)
         self.store.save_scan({
             "correlation": corr_dict,
             "exploitation": exploit_dicts,
+            "agent_transcript": agent_transcript,
             "endpoints_tested": result.endpoints_tested,
             "hypotheses": result.hypotheses,
             "phase_log": result.phase_log,
@@ -157,6 +170,92 @@ class Engagement:
             "intel_provider": self.intel.name,
         })
         return result
+
+    # ----------------------------------------------------------- browser
+    def run_browser(self):
+        """Optional headless-browser pass for DOM XSS (needs the [browser] extra + Chromium).
+
+        Trust boundary: the browser issues its OWN requests (outside the policy pipeline), so it
+        is only ever pointed at the already in-scope, authorized target URL."""
+        from .browser import PlaywrightDriver, available, run_dom_xss_oracle
+        if not available():
+            return []
+        from .schemas.finding import CVSS, Finding, Reproduction, State, Verification
+        from .util import now_iso
+        driver = PlaywrightDriver()
+        findings = []
+        for ep in self.appmodel.endpoints:
+            if (ep.method or "GET").upper() != "GET":
+                continue
+            for p in (ep.parameters or []):
+                if p.get("in") != "query" or not p.get("name"):
+                    continue
+                v = run_dom_xss_oracle(driver, self.target_url, ep.path, p["name"])
+                if not v.validated:
+                    continue
+                f = Finding(
+                    engagement_id=self.pipeline.engagement_id,
+                    title=f"DOM-based XSS in '{p['name']}' on GET {ep.path}",
+                    vuln_class="XSS", severity="high", confidence="confirmed", state=State.VALIDATED,
+                    cwe=["CWE-79"], owasp={"web_2025": ["A03:2025-Injection"]},
+                    cvss=CVSS(version="4.0", base_score=7.1, severity="high",
+                              vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:L/VA:N/SC:L/SI:L/SA:N"),
+                    asset={"type": "web", "application": self.cfg.application,
+                           "environment": "authorized", "target": self.target_url},
+                    endpoint={"method": "GET", "url": f"{self.target_url}{ep.path}",
+                              "parameters": [{"name": p["name"], "in": "query"}], "auth_required": False},
+                    description=(f"The '{p['name']}' parameter is written into the DOM by client-side "
+                                 "JavaScript without sanitisation; injected script executes in the browser."),
+                    impact="Script execution in the victim's browser session (session theft / account takeover).",
+                    root_cause="Client-side code writes untrusted input into a dangerous DOM sink (e.g. innerHTML).",
+                    reproduction=Reproduction(prerequisites=["A headless browser"],
+                                              steps=[f"Load {ep.path}?{p['name']}=<payload>",
+                                                     "Observe the injected script execute in the DOM"],
+                                              deterministic=True),
+                    references=["https://owasp.org/www-community/attacks/DOM_Based_XSS",
+                                "https://cwe.mitre.org/data/definitions/79.html"],
+                    compliance_control_refs=["SOC2:CC6.8", "ISO27001:A.8.26"],
+                    dedupe_key=f"{self.cfg.application}:GET:{ep.path}:{p['name']}:dom-xss",
+                    tags=["xss", "dom", "browser-confirmed"],
+                    verification=Verification(method="headless-browser-execution", validated=True,
+                                              validated_at=now_iso(),
+                                              validator="browser-oracle", independent_reproduction=True,
+                                              reproductions=v.reproductions,
+                                              false_positive_checks=v.reasons + v.false_positive_checks,
+                                              confidence_score=0.95))
+                f.assert_consistent()
+                findings.append(f)
+        return findings
+
+    # --------------------------------------------------------------- OOB
+    def run_oob(self, timeout: float = 3.0):
+        """Start a loopback OOB collaborator and confirm blind SSRF via out-of-band callbacks."""
+        from .oob import OOBCollaborator, blind_ssrf_scan
+        from .runner import ProbeRunner
+        collaborator = OOBCollaborator()
+        collaborator.start()
+        try:
+            runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
+                                 self.host, self.port, self.scheme, actor_role="oob-worker",
+                                 actor_profile="blind-ssrf", phase="test")
+            return blind_ssrf_scan(runner, collaborator, self.appmodel, self.target_url,
+                                   self.cfg.application, timeout=timeout)
+        finally:
+            collaborator.stop()
+
+    # ------------------------------------------------------------ agents
+    def run_agents(self, brain=None, confirmed_findings=None):
+        """Run the multi-agent reasoning layer. Returns an AgentResult (agent-assessed findings
+        are tiered below oracle-'confirmed'). With the deterministic provider the brain cannot
+        reason and this honestly returns nothing; pass a brain (e.g. MockBrain) or use an LLM intel."""
+        from .agents import AgentBrain, AgentOrchestrator
+        brain = brain or AgentBrain(self.intel)
+        orch = AgentOrchestrator(self.pipeline, self.evidence, self.sessions, self.host, self.port,
+                                 self.scheme, self.target_url, self.appmodel, brain,
+                                 application=self.cfg.application)
+        if confirmed_findings is None:
+            confirmed_findings = self.store.load_findings()
+        return orch.run([f for f in confirmed_findings if f.verification.validated])
 
     # --------------------------------------------------------------- LLM
     def run_llm(self):

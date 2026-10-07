@@ -99,6 +99,11 @@ class LLMProvider(IntelligenceProvider):
                 return out
         return IntelligenceProvider.plan_assessment(self, ctx)
 
+    def agent_step(self, ctx: dict) -> dict:
+        # A reasoning step for the business-logic / access-logic / critic agents.
+        out = self._json(prompts.agent_step_prompt(ctx))
+        return out if isinstance(out, dict) else {"thought": "no decision", "stop": True}
+
     def draft_finding_narrative(self, ctx: dict) -> dict:
         out = self._json(prompts.narrative_prompt(ctx))
         if isinstance(out, dict) and "description" in out:

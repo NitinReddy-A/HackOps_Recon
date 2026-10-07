@@ -1,24 +1,28 @@
 # ---------------------------------------------------------------------------
-# Rampart AppSec scan — COPY THIS TEMPLATE into your own repository.
+# Rampart AppSec scan.
 #
-# This workflow runs Rampart against a target you are AUTHORIZED to test and
-# uploads the results to GitHub code scanning (Security tab) as SARIF.
+# On this repo it runs as a SELF-CONTAINED DEMO: it spins up the bundled,
+# intentionally-vulnerable demo target (examples/demo_target), scans it against
+# the demo's own committed SECURITY.md authorization contract, and uploads the
+# findings to the GitHub Security tab as SARIF. Everything stays on loopback —
+# there is no route to any real asset — so it is safe to run on every push.
 #
-# Prerequisites:
-#   1. A SECURITY.md authorization contract committed to your repo. It names an
-#      accountable owner, the in-scope host(s), an expiry, and seeded test
-#      accounts. Without a valid, unexpired, in-scope contract Rampart refuses
-#      to run (fail-closed) — this is the authorization gate, by design.
-#   2. A reachable, authorized target (e.g. an ephemeral staging deploy, or a
-#      service you spin up earlier in the job). Point TARGET at it below.
+# TO USE THIS IN YOUR OWN REPOSITORY, copy this file and:
+#   1. Commit a real SECURITY.md authorization contract (see SECURITY.md.example
+#      at the repo root). It names an accountable owner, the in-scope host(s),
+#      an expiry, and seeded test accounts. Without a valid, unexpired, in-scope
+#      contract Rampart refuses to run (fail-closed) — the authorization gate.
+#   2. Point --target at a reachable, authorized target (an ephemeral staging
+#      deploy, or a service you spin up earlier in the job) instead of the demo.
+#   3. Add `--ci --fail-on high` to the scan so a validated high-severity
+#      finding fails the build (left OFF here because the demo target is
+#      deliberately vulnerable and would always trip the gate).
 #
 # Only test assets you own or are explicitly authorized to test.
 # ---------------------------------------------------------------------------
 name: Rampart AppSec Scan
 
 on:
-  # Run on pushes to main. Adjust the triggers to suit your workflow
-  # (e.g. a nightly schedule, or after a staging deploy completes).
   push:
     branches: [main]
   workflow_dispatch:
@@ -52,26 +56,35 @@ jobs:
           #   pip install rampart-appsec
           pip install -e .
 
-      # OPTIONAL: start / wait for your authorized target here, e.g.
-      #   - name: Start target
-      #     run: |
-      #       python examples/demo_target/vulnerable_app.py --port 8080 &
-      #       sleep 2
+      - name: Start bundled demo target
+        # Isolated, offline, loopback-only — the target we own and test against.
+        run: |
+          python examples/demo_target/vulnerable_app.py --port 8080 &
+          for i in $(seq 1 20); do
+            if curl -sf -o /dev/null http://127.0.0.1:8080/; then
+              echo "demo target is up"; exit 0
+            fi
+            sleep 0.5
+          done
+          echo "demo target did not come up" >&2; exit 1
 
       - name: Run Rampart assessment
-        # --ci makes the job fail when a validated finding meets --fail-on.
-        # --report sarif writes SARIF that code scanning can ingest.
+        # Scans the bundled demo target against its committed scope contract and
+        # writes SARIF for code scanning. No --ci gate here: the demo is
+        # intentionally vulnerable, so findings are expected and informational.
+        # In your own repo, add `--ci --fail-on high` to gate the build.
         run: |
           python -m rampart test \
-            --scope-file SECURITY.md \
+            --scope-file examples/demo_target/SECURITY.md \
             --target "${{ github.event.inputs.target || 'http://127.0.0.1:8080' }}" \
+            --secrets examples/demo_target/secrets.json \
+            --openapi examples/demo_target/openapi.json \
             --report sarif \
-            --ci \
             --fail-on high
         # The SARIF lands at <work-dir>/reports/report.sarif (default work-dir: .rampart).
 
       - name: Upload SARIF to code scanning
-        # Upload even if the scan gate failed, so findings still show up.
+        # Upload even if the scan step failed, so findings still show up.
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:

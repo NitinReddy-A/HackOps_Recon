@@ -189,7 +189,9 @@ def render_html(rb) -> str:
     for f in rb.findings:
         dropped = f.state == State.DROPPED
         color = sev_color.get(f.severity, "#5b6570")
-        if "external-scanner" in f.tags:
+        if "agent-assessed" in f.tags:
+            badge = '<span class="badge">🤖 agent-assessed (human review)</span>'
+        elif "external-scanner" in f.tags:
             badge = f'<span class="badge">🔎 {_esc(f.verification.validator)} lead (unvalidated)</span>'
         elif f.verification.validated:
             badge = '<span class="badge cf">✔ CONFIRMED</span>'

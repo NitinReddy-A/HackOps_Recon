@@ -70,6 +70,8 @@ class ReportBuilder:
             "attack_chains": len((self.scan or {}).get("correlation", {}).get("chains", [])),
             "demonstrated_exploits": len([p for p in (self.scan or {}).get("exploitation", [])
                                           if p.get("demonstrated")]),
+            "agent_assessed": len([f for f in self.findings
+                                   if "agent-assessed" in f.tags and f.state != State.DROPPED]),
         }
 
     # --------------------------------------------------------------- JSON
@@ -145,7 +147,9 @@ class ReportBuilder:
             L.append("")
             L.append(f"### [{f.severity.upper()}] {f.title}")
             L.append("")
-            if "external-scanner" in f.tags:
+            if "agent-assessed" in f.tags:
+                badge = "🤖 AGENT-ASSESSED (human review recommended)"
+            elif "external-scanner" in f.tags:
                 badge = f"🔎 external lead ({f.verification.validator}, unvalidated)"
             elif f.verification.validated:
                 badge = "✅ CONFIRMED (validated)"
@@ -244,6 +248,10 @@ class ReportBuilder:
         if corr.get("roadmap"):
             top = corr["roadmap"][0]
             bits.append(f"Highest-priority fix: {top['summary']}")
+        if m.get("agent_assessed"):
+            bits.append(f"Additionally, the reasoning agents flagged {m['agent_assessed']} "
+                        "agent-assessed issue(s) (e.g. business-logic abuse) for human confirmation — "
+                        "these are reported separately from oracle-confirmed findings.")
         return " ".join(bits)
 
     def _executive_summary_md(self, m) -> str:

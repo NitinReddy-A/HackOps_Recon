@@ -130,6 +130,13 @@ notify:
             "/api/greet": {"get": {"security": [],
                 "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}]}},
             "/api/me": {"get": {"security": [{"bearerAuth": []}]}},
+            "/api/checkout": {"get": {"security": [], "parameters": [
+                {"name": "item", "in": "query", "schema": {"type": "string"}},
+                {"name": "qty", "in": "query", "schema": {"type": "integer"}}]}},
+            "/api/webhook": {"get": {"security": [],
+                "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}]}},
+            "/dom": {"get": {"security": [],
+                "parameters": [{"name": "x", "in": "query", "schema": {"type": "string"}}]}},
         },
     }), encoding="utf-8")
     (tmp_path / "seed.json").write_text(json.dumps({

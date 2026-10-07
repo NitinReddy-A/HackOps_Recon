@@ -1,13 +1,4 @@
-"""The agent roster — the multi-agent pipeline, and which backend runs each role.
-
-Rampart runs as a pipeline of specialised agents under a deterministic supervisor. The
-reasoning roles (planner / specialists / reporter) run on the configured intelligence
-backend — Claude Code (``--intel claude-code``, each role a separate headless ``claude -p``
-call), an OpenAI-compatible API, or the zero-cost deterministic engine. Two roles are
-DELIBERATELY never an LLM: the policy pipeline and the independent validator/oracles are
-pure deterministic code, because that is what makes "the LLM proposes, deterministic code
-disposes" and "evidence over alerts" true regardless of a prompt-injected model.
-"""
+"""The agent roster + the planner step (which backend runs each role)."""
 from __future__ import annotations
 
 AGENT_ROSTER = [
@@ -17,14 +8,20 @@ AGENT_ROSTER = [
      "backend": "reasoning", "duty": "prioritise which classes/endpoints to test and why"},
     {"role": "specialist:bola", "title": "BOLA / IDOR specialist",
      "backend": "reasoning", "duty": "propose cross-account access-control hypotheses"},
-    {"role": "specialist:injection", "title": "Injection specialist (XSS / SQLi / open-redirect)",
+    {"role": "specialist:injection", "title": "Injection specialist (XSS / SQLi / SSRF / cmdi / traversal / SSTI)",
      "backend": "deterministic-enum", "duty": "enumerate input-fuzzing hypotheses from parameters"},
     {"role": "specialist:llm", "title": "LLM red-team specialist",
      "backend": "deterministic-probes", "duty": "run the OWASP LLM Top-10 probe set"},
+    {"role": "agent:business-logic", "title": "Business-logic abuse agent",
+     "backend": "reasoning", "duty": "reason about intended behaviour and probe for logic abuse (no oracle exists)"},
+    {"role": "agent:access-logic", "title": "Authorization-logic agent",
+     "backend": "reasoning", "duty": "reason across roles/flows for multi-step authorization gaps"},
+    {"role": "agent:critic", "title": "Adversarial critic / verifier",
+     "backend": "reasoning", "duty": "try to DISPROVE each agent-proposed finding with a control probe"},
     {"role": "validator", "title": "Independent validator",
      "backend": "deterministic-ONLY", "duty": "re-derive proof via a deterministic oracle; sole gate for 'confirmed'"},
     {"role": "reporter", "title": "Reporter",
-     "backend": "reasoning", "duty": "draft prose for validated findings (never invents evidence)"},
+     "backend": "reasoning", "duty": "draft prose for validated + agent-assessed findings"},
 ]
 
 

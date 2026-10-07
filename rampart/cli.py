@@ -87,6 +87,9 @@ def _make_config(args, approver=None):
         scanners=getattr(args, "scanners", "") or "",
         crawl=getattr(args, "crawl", False),
         exploit=getattr(args, "exploit", False),
+        agents=getattr(args, "agents", False),
+        oob=getattr(args, "oob", False),
+        browser=getattr(args, "browser", False),
         approver=approver,
     )
 
@@ -182,8 +185,9 @@ def _print_summary(rb, chain_ok, eng):
     print(bold("  Results"))
     riskc = red if m["risk_band"] in ("Critical", "High") else (yellow if m["risk_band"] == "Medium" else green)
     exploit_txt = f" · {cyan(str(m['demonstrated_exploits']))} demonstrated" if m.get("demonstrated_exploits") else ""
+    agent_txt = f" · {cyan(str(m['agent_assessed']))} agent-assessed" if m.get("agent_assessed") else ""
     print(f"   risk {riskc(str(m['risk_score']) + '/100 ' + m['risk_band'])} · "
-          f"{cyan(str(m['attack_chains']))} attack chain(s){exploit_txt}")
+          f"{cyan(str(m['attack_chains']))} attack chain(s){exploit_txt}{agent_txt}")
     print(f"   {green(str(m['confirmed']))} confirmed · {dim(dropped_txt)} · validation rate {bold(vr)}")
     for f in rb.findings:
         if f.state == State.DROPPED:
@@ -213,8 +217,10 @@ def cmd_pipeline(args):
     """The full intense pipeline: scope-gate -> crawl -> map -> every class -> correlate -> report."""
     args.crawl = True
     args.exploit = True
+    args.agents = True
+    args.oob = True
     args._pipeline = True
-    print(dim("  pipeline: recon crawl + full class coverage + chains + demonstrated exploitation"))
+    print(dim("  pipeline: recon + full coverage + OOB blind-SSRF + chains + exploitation + agentic reasoning"))
     return cmd_test(args)
 
 
@@ -293,6 +299,19 @@ def cmd_tools(args):
     else:
         print(dim("  none installed — Rampart's built-in oracles still run with zero external deps."))
         print(dim("  see reports/DOCKER_AND_EXTERNAL_TOOLS.md to light these up."))
+    # Built-in optional engines
+    try:
+        from .browser import available as _browser_available
+        browser_ok = _browser_available()
+    except Exception:  # noqa: BLE001
+        browser_ok = False
+    print(bold("\n  Built-in engines"))
+    bmark = green("✓ available") if browser_ok else dim("· not installed")
+    print(f"   {bmark}  {bold('headless-browser (DOM/stored XSS)'):<40} "
+          + ("" if browser_ok else dim("pip install rampart-appsec[browser] && python -m playwright install chromium")))
+    print(f"   {green('✓ built-in')}  {bold('OOB collaborator (blind SSRF)'):<40} {dim('zero-dep; enable with --oob')}")
+    print(f"   {green('✓ built-in')}  {bold('agentic reasoning (business logic)'):<40} "
+          + dim("enable with --agents (needs --intel claude-code / openai-compat)"))
     return 0
 
 
@@ -373,6 +392,9 @@ def build_parser():
     sp.add_argument("--scanners", default="", help="external OSS adapters to run: nuclei,nmap,semgrep,trivy,testssl or 'all'")
     sp.add_argument("--crawl", action="store_true", help="discover endpoints/params by crawling (no OpenAPI needed)")
     sp.add_argument("--exploit", action="store_true", help="demonstrate bounded, non-destructive impact for confirmed findings")
+    sp.add_argument("--agents", action="store_true", help="run the multi-agent reasoning layer (business-logic / auth flows; needs an LLM intel)")
+    sp.add_argument("--oob", action="store_true", help="run an OOB collaborator to confirm blind SSRF out-of-band")
+    sp.add_argument("--browser", action="store_true", help="run the headless-browser DOM-XSS pass (needs the [browser] extra)")
     sp.add_argument("--ci", action="store_true", help="nonzero exit if the severity gate is breached")
     sp.add_argument("--fail-on", default="high", help="CI gate severity: low|medium|high|critical")
     sp.add_argument("--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)")
@@ -392,6 +414,9 @@ def build_parser():
     sp.add_argument("--scanners", default="")
     sp.add_argument("--crawl", action="store_true")
     sp.add_argument("--exploit", action="store_true")
+    sp.add_argument("--agents", action="store_true")
+    sp.add_argument("--oob", action="store_true")
+    sp.add_argument("--browser", action="store_true")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")
@@ -414,6 +439,9 @@ def build_parser():
     sp.add_argument("--scanners", default="")
     sp.add_argument("--crawl", action="store_true")
     sp.add_argument("--exploit", action="store_true")
+    sp.add_argument("--agents", action="store_true")
+    sp.add_argument("--oob", action="store_true")
+    sp.add_argument("--browser", action="store_true")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")

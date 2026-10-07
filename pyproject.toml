@@ -26,6 +26,9 @@ dependencies = []
 # Nicer scope parsing (a strict fallback parser is built in, so this is optional).
 yaml = ["PyYAML>=6.0"]
 # Bring-your-own-key LLM path uses stdlib urllib; no extra deps required.
+# Headless-browser engine for stored/DOM XSS (optional). After install:
+#   python -m playwright install chromium
+browser = ["playwright>=1.40"]
 # Test/dev tooling.
 dev = ["pytest>=7.0"]
 

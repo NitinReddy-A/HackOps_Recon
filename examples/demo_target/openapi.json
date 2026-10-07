@@ -89,6 +89,34 @@
     },
     "/api/me": {
       "get": { "summary": "Who am I (JWT-authenticated)", "security": [{ "bearerAuth": [] }] }
+    },
+    "/api/checkout": {
+      "get": {
+        "summary": "Price quote for an item and quantity",
+        "parameters": [
+          { "name": "item", "in": "query", "schema": { "type": "string" } },
+          { "name": "qty", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "security": []
+      }
+    },
+    "/api/webhook": {
+      "get": {
+        "summary": "Register a webhook URL (fetched server-side)",
+        "parameters": [
+          { "name": "url", "in": "query", "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
+    },
+    "/dom": {
+      "get": {
+        "summary": "Client-rendered page (DOM sink)",
+        "parameters": [
+          { "name": "x", "in": "query", "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
     }
   }
 }

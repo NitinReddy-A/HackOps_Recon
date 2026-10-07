@@ -43,6 +43,12 @@ class IntelligenceProvider:
         steps = [{"class": c, "rationale": f"test {c} across discovered inputs/endpoints"} for c in order]
         return {"order": order, "notes": f"deterministic priority over {len(order)} class(es)", "steps": steps}
 
+    def agent_step(self, ctx: dict) -> dict:
+        """One decision for the reasoning agent loop (plan/explore/critique). The deterministic
+        provider cannot reason about intended behaviour, so it stops immediately and the agentic
+        layer honestly produces nothing. LLM-backed providers override this."""
+        return {"thought": "deterministic provider cannot perform agentic reasoning", "stop": True}
+
     def draft_finding_narrative(self, ctx: dict) -> dict:
         """Draft human-facing prose for a VALIDATED finding (description/impact/root_cause/
         remediation summary+guidance). Never invents evidence — prose only."""
