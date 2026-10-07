@@ -115,10 +115,22 @@ def correlate(findings, appmodel=None, tech=None) -> CorrelationResult:
                        "steps": list(rule["steps"]), "rationale": rule["rationale"],
                        "finding_ids": sorted(set(ids)), "contributing": sorted(set(titles))})
 
+    # ---- agent-assessed (business-logic) findings: flow through at a DISCOUNTED weight ----
+    agent = [f for f in findings if "agent-assessed" in f.tags and f.vuln_class != "DROPPED"
+             and getattr(f, "state", "") != "Dropped"]
+    for af in agent:
+        chains.append({"id": f"agent-logic-{af.id}", "title": af.title, "severity": af.severity,
+                       "steps": (af.reproduction.steps if af.reproduction else []) or
+                                ["Reasoned by the business-logic agent; human confirmation recommended"],
+                       "rationale": "Agent-assessed (reasoning-based, not oracle-proven) — confirm manually.",
+                       "finding_ids": [af.id], "contributing": [af.title], "agent_assessed": True})
+
     # ---- risk score: weighted findings + chain amplification, capped at 100 ----
     base = sum(_SEV_WEIGHT.get(f.severity, 1) for f in confirmed)
-    chain_bonus = sum(15 if c["severity"] == "critical" else 8 for c in chains)
-    score = min(100, base + chain_bonus) if confirmed else 0
+    agent_weight = sum(_SEV_WEIGHT.get(f.severity, 1) for f in agent) // 2   # discounted: not proven
+    chain_bonus = sum(15 if c.get("severity") == "critical" else 8
+                      for c in chains if not c.get("agent_assessed"))
+    score = min(100, base + chain_bonus + agent_weight) if (confirmed or agent) else 0
     band = ("Critical" if score >= 80 else "High" if score >= 55
             else "Medium" if score >= 30 else "Low" if score > 0 else "Informational")
 
@@ -139,10 +151,16 @@ def correlate(findings, appmodel=None, tech=None) -> CorrelationResult:
     for b in roadmap:
         b["classes"] = sorted(b["classes"])
 
-    crit_hi = [c for c in chains if c["severity"] in ("critical", "high")]
-    summary = (f"{len(confirmed)} confirmed finding(s) compose into {len(chains)} attack chain(s); "
-               f"{len(crit_hi)} reach critical/high impact. Aggregate risk {score}/100 ({band}).") \
-        if confirmed else "No confirmed findings."
+    oracle_chains = [c for c in chains if not c.get("agent_assessed")]
+    crit_hi = [c for c in oracle_chains if c["severity"] in ("critical", "high")]
+    if confirmed or agent:
+        summary = (f"{len(confirmed)} confirmed finding(s) compose into {len(oracle_chains)} attack "
+                   f"chain(s) ({len(crit_hi)} critical/high)")
+        if agent:
+            summary += f", plus {len(agent)} agent-assessed logic observation(s) pending human review"
+        summary += f". Aggregate risk {score}/100 ({band})."
+    else:
+        summary = "No confirmed findings."
 
     return CorrelationResult(chains=chains, risk_score=score, risk_band=band,
                              roadmap=roadmap, summary=summary)

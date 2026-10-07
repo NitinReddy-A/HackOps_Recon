@@ -71,3 +71,18 @@ def test_deterministic_brain_produces_nothing(tmp_path, vuln_server):
     eng = make_engagement(tmp_path, vuln_server.port)
     res = eng.run_agents(brain=AgentBrain(eng.intel), confirmed_findings=[])
     assert res.findings == []
+
+
+def test_agent_findings_flow_into_correlation_and_soc2(tmp_path, vuln_server):
+    from rampart.correlation import correlate
+    from rampart.reporting.soc2 import soc2_report
+    eng = make_engagement(tmp_path, vuln_server.port)
+    res = eng.run_agents(brain=MockBrain(_script("stands")), confirmed_findings=[])
+    assert res.findings
+    # correlation: agent finding becomes an agent-assessed chain and contributes (discounted) risk
+    corr = correlate(res.findings)
+    agent_chains = [c for c in corr.chains if c.get("agent_assessed")]
+    assert agent_chains and corr.risk_score > 0
+    # SOC 2: shown as an agent-assessed observation (not a confirmed exception)
+    text = soc2_report(res.findings, {}, eng.scope)
+    assert "Agent-assessed observations" in text

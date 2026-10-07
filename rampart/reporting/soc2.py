@@ -55,7 +55,9 @@ def soc2_report(findings, scan, scope) -> str:
             by_control.setdefault(c, []).append(f)
 
     fixed = [f for f in reported if f.state in (State.FIXED,)]
-    open_exc = [f for f in reported if f.verification.validated and f.state not in (State.FIXED,)]
+    agent = [f for f in reported if "agent-assessed" in f.tags]
+    open_exc = [f for f in reported if f.verification.validated and f.state not in (State.FIXED,)
+                and "agent-assessed" not in f.tags]
 
     L = ["# SOC 2 control-effectiveness evidence", ""]
     L.append(f"*Engagement* **{scope.authorization.ticket or 'engagement'}** · "
@@ -95,6 +97,17 @@ def soc2_report(findings, scan, scope) -> str:
             if f.remediation.summary:
                 L.append(f"    - *Remediation:* {f.remediation.summary}")
     L.append("")
+
+    # ---- agent-assessed observations (reasoning-based; pending human confirmation) ----
+    if agent:
+        L.append("## Agent-assessed observations (pending human confirmation)")
+        L.append("")
+        L.append("> Reasoning-based findings (e.g. business-logic abuse) the agent flagged but no "
+                 "deterministic oracle can prove. Treat as auditor review items, not confirmed exceptions.")
+        for f in agent:
+            ctrls = ", ".join(sorted(_controls_for(f)))
+            L.append(f"- **[{f.severity.upper()}] {f.title}** — TSC {ctrls} · finding `{f.id}` (agent-assessed)")
+        L.append("")
 
     # ---- operating effectiveness (retest / Type 2 oriented) ----
     L.append("## Operating effectiveness (retest evidence)")

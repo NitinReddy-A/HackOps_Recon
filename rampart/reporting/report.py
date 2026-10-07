@@ -269,7 +269,8 @@ class ReportBuilder:
         L = ["## Attack chains (kill-chain)", "",
              "Confirmed findings composed into realistic multi-step attacks:", ""]
         for c in chains:
-            L.append(f"### [{c['severity'].upper()}] {c['title']}")
+            tag = " _(agent-assessed — human review)_" if c.get("agent_assessed") else ""
+            L.append(f"### [{c['severity'].upper()}] {c['title']}{tag}")
             L.append(f"- *Why:* {c['rationale']}")
             for i, step in enumerate(c["steps"], 1):
                 L.append(f"    {i}. {step}")
