@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from ..runner import ProbeRunner
 from ..schemas.finding import Finding, Remediation, Reproduction, State, Verification
+from .harness import DecisionGuard
 
 
 @dataclass
@@ -22,6 +23,8 @@ class AgentResult:
     findings: list = field(default_factory=list)
     transcript: list = field(default_factory=list)
     objectives: list = field(default_factory=list)
+    coverage: dict = field(default_factory=dict)      # objective -> outcome (no objective silently missed)
+    harness_stats: dict = field(default_factory=dict)
 
 
 class AgentOrchestrator:
@@ -75,21 +78,33 @@ class AgentOrchestrator:
                         "status": r.status, "body": (r.body or "")[:600], "executed": r.executed})
 
     # -------------------------------------------------------------- explore
-    def _explore(self, objective, confirmed_summary):
+    def _explore(self, objective, confirmed_summary, guard):
         runner = self._runner("agent-explorer")
         history: list = []
         evidence: list = []
+        guard.reset_loop_memory()
+        outcome = "no-finding"
         for _ in range(self.max_steps):
-            d = self.brain.decide({"mode": "explore", "objective": objective,
-                                   "endpoints": self._slim_endpoints(),
-                                   "confirmed": confirmed_summary, "history": history})
+            d, status = guard.decide({"mode": "explore", "objective": objective,
+                                      "endpoints": self._slim_endpoints(),
+                                      "confirmed": confirmed_summary, "history": history})
+            if status == "invalid":
+                history.append({"note": "stopped: invalid agent decision after repair"})
+                outcome = "stopped-invalid"
+                break
+            if status == "repeat":
+                history.append({"note": "stopped: agent repeated an action (no progress / loop)"})
+                outcome = "stuck"
+                break
             if d.get("conclude"):
-                return d["conclude"], history, evidence
+                return d["conclude"], history, evidence, "concluded"
             if d.get("action"):
                 self._run_action(runner, d["action"], history, evidence)
             if d.get("stop") or (not d.get("action") and not d.get("conclude")):
                 break
-        return None, history, evidence
+        else:
+            outcome = "max-steps"
+        return None, history, evidence, outcome
 
     # -------------------------------------------------------------- critique
     def _critique(self, candidate, history, evidence):
@@ -150,18 +165,26 @@ class AgentOrchestrator:
             return result   # deterministic brain cannot do logic reasoning — honestly produce nothing
         confirmed_summary = [{"title": f.title, "class": f.vuln_class}
                              for f in (confirmed_findings or []) if f.verification.validated][:20]
+        guard = DecisionGuard(self.brain)
         plan = self.brain.decide({"mode": "plan", "endpoints": self._slim_endpoints(),
                                   "confirmed": confirmed_summary})
-        objectives = [o for o in (plan.get("objectives") or []) if isinstance(o, str)][: self.max_objectives]
+        objectives = [o for o in ((plan or {}).get("objectives") or []) if isinstance(o, str)][: self.max_objectives]
         result.objectives = objectives
         for obj in objectives:
-            cand, history, evidence = self._explore(obj, confirmed_summary)
-            entry = {"objective": obj, "candidate": cand, "steps": len(history)}
-            if cand:
-                kept, reason = self._critique(cand, history, evidence)
-                entry["verdict"] = "agent-assessed" if kept else "refuted-by-critic"
-                entry["reason"] = reason
-                if kept:
-                    result.findings.append(self._finding(cand, reason, evidence))
+            try:
+                cand, history, evidence, outcome = self._explore(obj, confirmed_summary, guard)
+                entry = {"objective": obj, "steps": len(history), "outcome": outcome}
+                if cand:
+                    kept, reason = self._critique(cand, history, evidence)
+                    outcome = "agent-assessed" if kept else "refuted-by-critic"
+                    entry["outcome"] = outcome
+                    entry["reason"] = reason
+                    if kept:
+                        result.findings.append(self._finding(cand, reason, evidence))
+            except Exception as exc:  # noqa: BLE001 - one objective must not sink the run
+                outcome = "error"
+                entry = {"objective": obj, "outcome": "error", "error": str(exc)}
+            result.coverage[obj] = outcome
             result.transcript.append(entry)
+        result.harness_stats = dict(guard.stats)
         return result

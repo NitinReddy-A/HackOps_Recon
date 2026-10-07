@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 from .base import ScannerAdapter, docker_available
-from .tools import (NmapAdapter, NucleiAdapter, SemgrepAdapter, TestsslAdapter, TrivyAdapter)
+from .tools import (BanditAdapter, GitleaksAdapter, NmapAdapter, NucleiAdapter, OpengrepAdapter,
+                    SemgrepAdapter, TestsslAdapter, TrivyAdapter)
 
 ADAPTERS = {
     "nuclei": NucleiAdapter,
     "nmap": NmapAdapter,
     "semgrep": SemgrepAdapter,
+    "opengrep": OpengrepAdapter,
+    "bandit": BanditAdapter,
+    "gitleaks": GitleaksAdapter,
     "trivy": TrivyAdapter,
     "testssl": TestsslAdapter,
 }

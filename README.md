@@ -3,10 +3,10 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Runtime deps](https://img.shields.io/badge/runtime%20deps-none-success)
-![Tests](https://img.shields.io/badge/tests-89%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-100%2B%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/benchmark-100%25%20precision%20%2F%20recall-brightgreen)
-![Coverage](https://img.shields.io/badge/classes-16%20web%2FAPI%20%2B%20LLM-blue)
-![Status](https://img.shields.io/badge/status-v0.5-orange)
+![Coverage](https://img.shields.io/badge/box-black%20%C2%B7%20grey%20%C2%B7%20white-blue)
+![Status](https://img.shields.io/badge/status-v0.6-orange)
 
 **Find, _prove_, and help _fix_ web, API, and LLM vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
@@ -179,6 +179,26 @@ python -m rampart mcp                                  # MCP stdio server (scope
 - **`serve`** — a dependency-free local dashboard (risk, chains, findings table, full report, and a scope-gated "run a scan" form).
 - **`mcp`** — exposes `rampart_scope_check` / `rampart_scan` / `rampart_llm_test` / `rampart_report` to Claude Code and other agents; every tool still passes the `SECURITY.md` scope gate. Register with `claude mcp add rampart -- python -m rampart.mcp`.
 - **`rampart.yaml`** — put `scope_file`, `target`, `intel`, `scanners`, `crawl`, etc. in a config file; CLI flags override it.
+
+## Scan modes — run exactly the check you want (black / grey / white box)
+
+Rampart separates concerns so each capability runs in isolation; `pipeline` composes them.
+
+```bash
+rampart recon   --target ...                 # discovery only (crawl + map + fingerprint)
+rampart dast    --target ...                 # black-box web/API oracle classes + misconfig
+rampart api     --target ... --openapi ...   # API-focused (grey-box with a spec/seed)
+rampart sast    --target ... --repo .        # white-box: native AST sinks + secrets + deps
+rampart sca     --target ... --repo .        # dependencies + secrets
+rampart llm-test --target ...                # OWASP LLM Top 10
+rampart agents  --target ... --intel claude-code   # agentic business-logic reasoning
+rampart pipeline --target ... --repo .       # everything, correlated
+rampart features                             # list every capability + how to run it
+```
+
+**White-box (SAST/SCA).** A native, zero-dep Python-AST scanner flags high-signal sinks (command/SQL/code injection, insecure deserialization, SSRF, path traversal, weak crypto, debug-mode) — each only when the dangerous argument is non-constant, to keep false positives low — plus a secret scanner and dependency inventory. External SAST/SCA (Opengrep, Bandit, Trivy, gitleaks) plug in via SARIF adapters (Opengrep is the OSS default; Semgrep `--config auto` is avoided for licensing/offline reasons). **SAST↔DAST correlation** is the differentiator: a runtime-`confirmed` finding whose CWE also appears in source is tagged *source-correlated* — "proven at runtime **and** located in source." Static findings are their own tier (never auto-`confirmed`).
+
+**Hardened agent harness.** The reasoning agents run under a reliability layer: every LLM decision is schema-validated with one self-repair, repeated actions are detected as loops and halt the objective, and **every planned objective gets a recorded outcome** (coverage) so nothing is silently missed — all auditable in the run record.
 
 ## SOC 2 evidence (not an attestation)
 

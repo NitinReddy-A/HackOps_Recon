@@ -90,6 +90,9 @@ def _make_config(args, approver=None):
         agents=getattr(args, "agents", False),
         oob=getattr(args, "oob", False),
         browser=getattr(args, "browser", False),
+        do_dast=getattr(args, "do_dast", True),
+        do_sast=getattr(args, "do_sast", False),
+        do_sca=getattr(args, "do_sca", False),
         approver=approver,
     )
 
@@ -189,6 +192,14 @@ def _print_summary(rb, chain_ok, eng):
     print(f"   risk {riskc(str(m['risk_score']) + '/100 ' + m['risk_band'])} · "
           f"{cyan(str(m['attack_chains']))} attack chain(s){exploit_txt}{agent_txt}")
     print(f"   {green(str(m['confirmed']))} confirmed · {dim(dropped_txt)} · validation rate {bold(vr)}")
+    extra = []
+    if m.get("static_findings"):
+        sc = f" ({m['source_correlated']} source-correlated)" if m.get("source_correlated") else ""
+        extra.append(f"{cyan(str(m['static_findings']))} static/SAST{sc}")
+    if m.get("agent_assessed"):
+        extra.append(f"{cyan(str(m['agent_assessed']))} agent-assessed")
+    if extra:
+        print("   " + " · ".join(extra))
     for f in rb.findings:
         if f.state == State.DROPPED:
             print("   " + dim(f"· dropped: {f.title}"))
@@ -210,6 +221,56 @@ def _ci_gate(rb, fail_on):
     if bad:
         return f"{len(bad)} validated finding(s) at or above '{fail_on}'"
     return ""
+
+
+# ---------------------------------------------------------------- scan modes
+# Each mode is an isolated slice of the engagement so users run exactly the check they want.
+_MODES = {
+    "recon":    {"do_dast": False, "crawl": True, "desc": "crawl + map + fingerprint only"},
+    "dast":     {"do_dast": True, "desc": "black-box HTTP/web/API testing (oracle classes + misconfig)"},
+    "api":      {"do_dast": True, "desc": "API-focused black-box testing (BOLA/BFLA/mass-assignment/exposure/…)"},
+    "sast":     {"do_dast": False, "do_sast": True, "do_sca": True, "desc": "white-box source + secret/dependency scan"},
+    "sca":      {"do_dast": False, "do_sca": True, "desc": "dependency + secret scan"},
+    "agents":   {"do_dast": True, "agents": True, "desc": "black-box + agentic business-logic reasoning"},
+}
+
+
+def cmd_mode(args, mode):
+    cfg = _MODES[mode]
+    for k, v in cfg.items():
+        if k == "desc":
+            continue
+        setattr(args, k, v)
+    print(dim(f"  mode {mode}: {cfg['desc']}"))
+    return cmd_test(args)
+
+
+def cmd_features(args):
+    _banner()
+    rows = [
+        ("recon", "Attack-surface discovery (crawl, map, fingerprint)", "rampart recon"),
+        ("dast", "Black-box web/API testing — 16 oracle classes, zero false positives", "rampart dast"),
+        ("api", "API-focused testing (BOLA, BFLA, mass assignment, data exposure)", "rampart api"),
+        ("sast", "White-box source scan (native AST sinks) + secrets + dependencies", "rampart sast --repo ."),
+        ("sca", "Dependency + secret scanning", "rampart sca --repo ."),
+        ("llm", "OWASP LLM Top 10 (prompt injection, leakage, jailbreak)", "rampart llm-test ..."),
+        ("agents", "Agentic reasoning for business-logic / auth-flow flaws (agent-assessed)", "rampart agents --intel claude-code"),
+        ("exploit", "Demonstrate bounded, non-destructive impact for confirmed findings", "rampart dast --exploit"),
+        ("oob", "Blind SSRF/XXE confirmation via out-of-band collaborator", "rampart dast --oob"),
+        ("browser", "DOM & stored XSS via headless browser (optional [browser] extra)", "rampart dast --browser"),
+        ("scanners", "External OSS tools (nuclei/nmap/semgrep/trivy/testssl) as leads", "rampart dast --scanners all"),
+        ("pipeline", "Everything, orchestrated, with correlation + risk + SOC 2 report", "rampart pipeline"),
+        ("serve", "Local zero-dep web dashboard", "rampart serve"),
+        ("mcp", "MCP server (scope-guarded tools for Claude Code / agents)", "rampart mcp"),
+        ("report", "Regenerate reports (html/md/json/sarif/compliance/soc2)", "rampart report --format soc2"),
+    ]
+    print(bold("\n  Rampart capabilities (run any in isolation, or `pipeline` for all)\n"))
+    for name, desc, example in rows:
+        print(f"   {cyan(name):<12} {desc}")
+        print(dim(f"                {example}"))
+    print(dim("\n  Testing types: black-box (dast/api/llm) · grey-box (dast + --openapi/seed) · "
+              "white-box (sast/sca). Confidence tiers: oracle-confirmed > agent-assessed > external-lead > static."))
+    return 0
 
 
 # ------------------------------------------------------------------------- pipeline
@@ -421,6 +482,39 @@ def build_parser():
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")
 
+    def add_eng_opts(name, help_text, need_target=True):
+        s = sub.add_parser(name, help=help_text)
+        add_common(s, need_target=need_target)
+        s.add_argument("--config", default="")
+        s.add_argument("--repo", default="")
+        s.add_argument("--openapi", default="")
+        s.add_argument("--appmodel-seed", default="")
+        s.add_argument("--secrets", default="")
+        s.add_argument("--intel", default="")
+        s.add_argument("--application", default="")
+        s.add_argument("--login-path", default="")
+        s.add_argument("--token-path", default="")
+        s.add_argument("--report", default="")
+        s.add_argument("--scanners", default="")
+        s.add_argument("--crawl", action="store_true")
+        s.add_argument("--exploit", action="store_true")
+        s.add_argument("--agents", action="store_true")
+        s.add_argument("--oob", action="store_true")
+        s.add_argument("--browser", action="store_true")
+        s.add_argument("--active", action="store_true", help="allow gated write/active probes (off by default)")
+        s.add_argument("--ci", action="store_true")
+        s.add_argument("--fail-on", default="high")
+        s.add_argument("--approve-tier2", action="store_true")
+        return s
+
+    add_eng_opts("recon", "mode: attack-surface discovery only (crawl + map + fingerprint)", need_target=True)
+    add_eng_opts("dast", "mode: black-box web/API testing (oracle classes + misconfig)")
+    add_eng_opts("api", "mode: API-focused black-box testing")
+    add_eng_opts("sast", "mode: white-box source scan + secrets + dependencies")
+    add_eng_opts("sca", "mode: dependency + secret scan")
+    add_eng_opts("agents", "mode: black-box + agentic business-logic reasoning")
+    sub.add_parser("features", help="list Rampart's capabilities and how to run each in isolation")
+
     sp = sub.add_parser("serve", help="serve a local web dashboard over a run work-dir (zero-dep)")
     sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--port", type=int, default=8787)
@@ -500,6 +594,10 @@ def main(argv=None):
         return cmd_test(args)
     if args.cmd == "pipeline":
         return cmd_pipeline(args)
+    if args.cmd in _MODES:
+        return cmd_mode(args, args.cmd)
+    if args.cmd == "features":
+        return cmd_features(args)
     if args.cmd == "serve":
         return cmd_serve(args)
     if args.cmd == "init":

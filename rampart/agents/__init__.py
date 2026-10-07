@@ -6,8 +6,10 @@ oracles) are never an LLM — that is what keeps the safety and evidence guarant
 Agent-reasoned findings are tiered 'agent-assessed' (below oracle-'confirmed').
 """
 from .brain import AgentBrain, MockBrain
+from .harness import DecisionGuard, action_signature, validate_decision
 from .orchestrator import AgentOrchestrator, AgentResult
 from .roster import AGENT_ROSTER, describe_roster, run_planner
 
 __all__ = ["AGENT_ROSTER", "describe_roster", "run_planner",
-           "AgentBrain", "MockBrain", "AgentOrchestrator", "AgentResult"]
+           "AgentBrain", "MockBrain", "AgentOrchestrator", "AgentResult",
+           "DecisionGuard", "validate_decision", "action_signature"]

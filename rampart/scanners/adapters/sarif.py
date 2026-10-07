@@ -50,13 +50,15 @@ def sarif_to_findings(adapter, sarif: dict, application: str, target_url: str) -
             title = (rule.get("name") or res.get("ruleId") or "finding")
             help_uri = rule.get("helpUri", "")
             # physical location (file:line or url)
-            loc_uri = ""
+            loc_uri, file_uri, start_line = "", "", 0
             for loc in res.get("locations") or []:
                 art = ((loc.get("physicalLocation") or {}).get("artifactLocation") or {})
                 if art.get("uri"):
                     region = (loc.get("physicalLocation") or {}).get("region") or {}
                     line = region.get("startLine")
-                    loc_uri = art["uri"] + (f":{line}" if line else "")
+                    file_uri = art["uri"]
+                    start_line = int(line) if line else 0
+                    loc_uri = file_uri + (f":{line}" if line else "")
                     break
             cwes = _cwes_from(rule, f"{res.get('ruleId','')} {title} {msg}")
             f = adapter._external_finding(
@@ -66,5 +68,12 @@ def sarif_to_findings(adapter, sarif: dict, application: str, target_url: str) -
                 cwe=cwes, description=msg or str(title),
                 endpoint_url=loc_uri or target_url, help_uri=help_uri,
                 rule_id=str(res.get("ruleId") or title))
+            # Source-side tools (SAST/SCA): record the source location so SAST<->DAST correlation works.
+            if file_uri and "://" not in file_uri:
+                from ...schemas.finding import AffectedCode
+                f.affected_code = AffectedCode(detected_by=adapter.name, repo="", file=file_uri,
+                                               start_line=start_line, end_line=start_line)
+                if "sast" not in f.tags and adapter.category in ("sast", "sca"):
+                    f.tags.append("sast")
             out.append(f)
     return out

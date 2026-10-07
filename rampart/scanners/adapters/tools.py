@@ -122,11 +122,54 @@ class SemgrepAdapter(_SarifRepoAdapter):
     binary = "semgrep"
     category = "sast"
     network = False
-    install_hint = "pip install semgrep  (or use Opengrep); runs best on Linux/macOS/WSL"
+    install_hint = "pip install semgrep (prefer Opengrep — Semgrep registry rules are not OSS since 2024)"
     help_uri = "https://semgrep.dev"
 
     def _cmd(self, repo):
-        return [self.resolved_binary(), "scan", "--config", "auto", "--sarif", "-q", repo, *self.extra_args]
+        # NOTE: `--config auto` pulls Semgrep's registry rules (restrictive license since 2024-12)
+        # and needs network. Default to a local/offline config; override via RAMPART_SEMGREP_CONFIG.
+        import os
+        config = os.environ.get("RAMPART_SEMGREP_CONFIG", "p/default")
+        return [self.resolved_binary(), "scan", "--config", config, "--sarif", "-q", repo, *self.extra_args]
+
+
+class OpengrepAdapter(_SarifRepoAdapter):
+    name = "opengrep"
+    binary = "opengrep"
+    category = "sast"
+    network = False
+    install_hint = "install Opengrep (LGPL engine+rules, OSS) from https://github.com/opengrep/opengrep"
+    help_uri = "https://opengrep.dev"
+
+    def _cmd(self, repo):
+        import os
+        config = os.environ.get("RAMPART_OPENGREP_CONFIG", "auto")
+        return [self.resolved_binary(), "scan", "--config", config, "--sarif", "-q", repo, *self.extra_args]
+
+
+class BanditAdapter(_SarifRepoAdapter):
+    name = "bandit"
+    binary = "bandit"
+    category = "sast"
+    network = False
+    install_hint = "pip install bandit (Python SAST)"
+    help_uri = "https://bandit.readthedocs.io"
+
+    def _cmd(self, repo):
+        return [self.resolved_binary(), "-r", repo, "-f", "sarif", "-q", *self.extra_args]
+
+
+class GitleaksAdapter(_SarifRepoAdapter):
+    name = "gitleaks"
+    binary = "gitleaks"
+    category = "sca"
+    network = False
+    install_hint = "install gitleaks (secret scanning) from https://github.com/gitleaks/gitleaks"
+    help_uri = "https://gitleaks.io"
+
+    def _cmd(self, repo):
+        return [self.resolved_binary(), "detect", "--source", repo, "--no-git",
+                "--report-format", "sarif", "--report-path", "/dev/stdout", "--redact", *self.extra_args]
 
 
 class TrivyAdapter(_SarifRepoAdapter):

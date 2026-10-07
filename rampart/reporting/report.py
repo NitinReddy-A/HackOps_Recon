@@ -72,6 +72,9 @@ class ReportBuilder:
                                           if p.get("demonstrated")]),
             "agent_assessed": len([f for f in self.findings
                                    if "agent-assessed" in f.tags and f.state != State.DROPPED]),
+            "static_findings": len([f for f in self.findings
+                                    if "sast" in f.tags and f.state != State.DROPPED]),
+            "source_correlated": len([f for f in self.findings if "source-correlated" in f.tags]),
         }
 
     # --------------------------------------------------------------- JSON

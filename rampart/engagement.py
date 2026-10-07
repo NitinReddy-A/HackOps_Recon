@@ -48,6 +48,10 @@ class EngagementConfig:
     agents: bool = False            # run the multi-agent reasoning layer (business-logic / auth flows)
     oob: bool = False               # run the OOB collaborator for blind SSRF/XXE detection
     browser: bool = False           # run the optional headless-browser DOM-XSS pass ([browser] extra)
+    # --- scan stages (separation of concerns; a "mode" sets these) ---
+    do_dast: bool = True            # black-box HTTP testing (the oracle classes + misconfig)
+    do_sast: bool = False           # white-box source scanning (native AST + adapters)
+    do_sca: bool = False            # dependency + secret scanning
     llm_chat_path: str = "/chat"
     llm_input_field: str = "message"
     llm_output_field: str = "reply"
@@ -121,6 +125,45 @@ class Engagement:
         self.recon_pages = crawl.pages_visited
         return {"pages": crawl.pages_visited, "added_endpoints": added, "tech": crawl.tech}
 
+    # ------------------------------------------------------------- SAST
+    def run_sast(self):
+        """White-box source scan (native AST sink patterns)."""
+        from .sast import scan_source
+        return scan_source(self.cfg.repo, self.pipeline.engagement_id)
+
+    def run_sca(self):
+        """Secret + dependency scanning over the source tree."""
+        from .sast import scan_dependencies, scan_secrets
+        return scan_secrets(self.cfg.repo, self.pipeline.engagement_id) \
+            + scan_dependencies(self.cfg.repo, self.pipeline.engagement_id)
+
+    def _correlate_sast_dast(self, findings):
+        """Link runtime-confirmed DAST findings to a source location sharing the CWE —
+        'proven at runtime AND located in source' is the highest-confidence result."""
+        sast = [f for f in findings if "sast" in f.tags and f.affected_code]
+        if not sast:
+            return
+        by_cwe = {}
+        for s in sast:
+            for c in s.cwe:
+                by_cwe.setdefault(c, []).append(s)
+        for f in findings:
+            if "sast" in f.tags or not f.verification.validated:
+                continue
+            for c in f.cwe:
+                match = by_cwe.get(c)
+                if not match:
+                    continue
+                s = match[0]
+                if not (f.affected_code and getattr(f.affected_code, "file", "")):
+                    f.affected_code = s.affected_code
+                if "source-correlated" not in f.tags:
+                    f.tags.append("source-correlated")
+                    f.verification.false_positive_checks.append(
+                        f"source-correlated: same {c} located at {s.affected_code.file}:"
+                        f"{s.affected_code.start_line} (confirmed at runtime AND present in source)")
+                break
+
     # ------------------------------------------------------- correlation
     def _correlate(self, findings):
         from dataclasses import asdict
@@ -130,12 +173,30 @@ class Engagement:
 
     # --------------------------------------------------------------- scan
     def run_scan(self):
+        from .workers.supervisor import ScanResult
         self.recon()
-        result = self.supervisor.run()
+        # Black-box DAST stage (the oracle classes + misconfig + external scanners).
+        if self.cfg.do_dast:
+            result = self.supervisor.run()
+        else:
+            result = ScanResult()
+            result.phase_log.append({"phase": "dast", "msg": "skipped (stage disabled)"})
+        # White-box stages (source + dependencies/secrets) feed the same finding set.
+        self.sast_findings = []
+        if self.cfg.do_sast:
+            self.sast_findings += self.run_sast()
+        if self.cfg.do_sca:
+            self.sast_findings += self.run_sca()
+        if self.sast_findings:
+            result.findings = result.findings + self.sast_findings
+            if "SAST" not in result.classes_tested:
+                result.classes_tested = list(result.classes_tested) + ["SAST"]
         if self.cfg.oob:
             result.findings = result.findings + self.run_oob()
         if self.cfg.browser:
             result.findings = result.findings + self.run_browser()
+        # correlate (includes SAST<->DAST correlation below)
+        self._correlate_sast_dast(result.findings)
         corr, corr_dict = self._correlate(result.findings)
         result.correlation = corr
         exploit_dicts = []
@@ -146,11 +207,13 @@ class Engagement:
                                self.host, self.port, self.scheme, self.target_url)
             result.exploit_proofs = ex.demonstrate(result.findings, result.hypotheses)
             exploit_dicts = [asdict(p) for p in result.exploit_proofs]
-        agent_transcript = []
+        agent_transcript, agent_coverage, agent_harness = [], {}, {}
         if self.cfg.agents:
             ares = self.run_agents(confirmed_findings=result.findings)
             result.findings = result.findings + ares.findings
             agent_transcript = ares.transcript
+            agent_coverage = ares.coverage
+            agent_harness = ares.harness_stats
         self.store.save_appmodel(self.appmodel)
         self.store.save_hypotheses(result.hypotheses)
         self.store.save_findings(result.findings)
@@ -158,6 +221,8 @@ class Engagement:
             "correlation": corr_dict,
             "exploitation": exploit_dicts,
             "agent_transcript": agent_transcript,
+            "agent_coverage": agent_coverage,
+            "agent_harness": agent_harness,
             "endpoints_tested": result.endpoints_tested,
             "hypotheses": result.hypotheses,
             "phase_log": result.phase_log,
