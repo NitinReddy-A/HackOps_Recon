@@ -306,6 +306,59 @@ WEB_CLASS_META = {
         "compliance": ["SOC2:CC6.1", "ISO27001:A.8.26"],
         "tags": ["host-header-injection", "misconfiguration"],
     },
+    "MASS_ASSIGNMENT": {
+        "title": "Mass assignment / BOPLA on {method} {path}",
+        "severity": "high",
+        "cwe": ["CWE-915"],
+        "owasp": {"api_2023": ["API6:2023-Unrestricted Access to Sensitive Business Flows",
+                               "API3:2023-Broken Object Property Level Authorization"],
+                  "web_2025": ["A04:2021-Insecure Design"]},
+        "asvs": {"requirement": "V5.1.2", "level": 1},
+        "cvss": CVSS(version="4.0", base_score=8.3,
+                     vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N",
+                     severity="high",
+                     v31_fallback={"base_score": 8.1, "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"}),
+        "description": ("{method} {path} binds client-supplied fields to the object model, so an "
+                        "attacker can set privileged properties (e.g. role/is_admin) they shouldn't control."),
+        "impact": "Privilege escalation / tampering by setting server-controlled fields from the request body.",
+        "root_cause": "Request bodies are bound wholesale to the model without an allow-list of writable fields.",
+        "remediation": Remediation(
+            summary="Bind only an explicit allow-list of client-writable fields (DTO/schema).",
+            type="code_patch",
+            guidance=("Use per-endpoint input DTOs / serializers that whitelist writable properties; never "
+                      "mass-assign request bodies to ORM models (CWE-915, OWASP API3/API6)."),
+            effort="medium"),
+        "references": ["https://owasp.org/API-Security/editions/2023/en/0xa3-broken-object-property-level-authorization/",
+                       "https://cwe.mitre.org/data/definitions/915.html"],
+        "compliance": ["SOC2:CC6.3", "ISO27001:A.8.2"],
+        "tags": ["mass-assignment", "bopla", "api", "active"],
+    },
+    "GRAPHQL": {
+        "title": "GraphQL introspection enabled on {method} {path}",
+        "severity": "medium",
+        "cwe": ["CWE-16"],
+        "owasp": {"api_2023": ["API8:2023-Security Misconfiguration"],
+                  "web_2025": ["A02:2025-Security Misconfiguration"]},
+        "asvs": {"requirement": "V14.3", "level": 1},
+        "cvss": CVSS(version="4.0", base_score=5.3,
+                     vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N",
+                     severity="medium",
+                     v31_fallback={"base_score": 5.3, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"}),
+        "description": ("{method} {path} exposes the full GraphQL schema via introspection to any "
+                        "client, revealing all types/queries/mutations and aiding further attacks."),
+        "impact": "Full API surface disclosure (types, fields, mutations) enabling targeted attacks.",
+        "root_cause": "GraphQL introspection is enabled in production.",
+        "remediation": Remediation(
+            summary="Disable introspection in production; add depth/complexity limits and auth.",
+            type="config",
+            guidance=("Turn off introspection for untrusted clients, enforce query depth/complexity limits, "
+                      "and require auth for the GraphQL endpoint (OWASP API8)."),
+            effort="low"),
+        "references": ["https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/12-API_Testing/01-Testing_GraphQL",
+                       "https://cwe.mitre.org/data/definitions/16.html"],
+        "compliance": ["SOC2:CC7.1", "ISO27001:A.8.9"],
+        "tags": ["graphql", "introspection", "misconfiguration", "active"],
+    },
 }
 
 WEB_CLASSES = set(WEB_CLASS_META)

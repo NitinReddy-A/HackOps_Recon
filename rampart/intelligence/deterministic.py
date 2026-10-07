@@ -34,6 +34,8 @@ _JWT_PATH_HINTS = ("/me", "whoami", "/account", "/token", "/session", "/auth", "
                    "/user", "/dashboard", "/identity")
 _HHI_PATH_HINTS = ("reset", "password", "forgot", "verify", "activate", "invite", "confirm",
                    "/link", "magic", "recover")
+_MASS_ASSIGN_PATH_HINTS = ("account", "profile", "user", "update", "settings", "register",
+                           "create", "edit", "signup", "me")
 
 
 class DeterministicProvider(IntelligenceProvider):
@@ -164,6 +166,21 @@ class DeterministicProvider(IntelligenceProvider):
                 if nlow in _TRAVERSAL_PARAM_HINTS or path_is_filey:
                     hyps.append({**common, "vuln_class": "PATH_TRAVERSAL", "cwe": ["CWE-22"],
                                  "rationale": f"query param '{name}' on {path} may be used as a file path"})
+
+        # write endpoints (active-gated) — mass assignment / GraphQL
+        for ep in appmodel.get("endpoints", []):
+            m = (ep.get("method") or "GET").upper()
+            if m not in ("POST", "PUT", "PATCH"):
+                continue
+            path = ep.get("path", "")
+            plow = path.lower()
+            common_ep = {"endpoint_id": ep.get("id"), "endpoint_method": m, "endpoint_path": path}
+            if any(h in plow for h in _MASS_ASSIGN_PATH_HINTS):
+                hyps.append({**common_ep, "vuln_class": "MASS_ASSIGNMENT", "cwe": ["CWE-915"],
+                             "rationale": f"{m} {path} may bind client-supplied privileged fields"})
+            if "graphql" in plow or "/graph" in plow:
+                hyps.append({**common_ep, "vuln_class": "GRAPHQL", "cwe": ["CWE-16"],
+                             "rationale": f"{path} is a GraphQL endpoint; test for introspection"})
         return hyps
 
     def draft_finding_narrative(self, ctx: dict) -> dict:

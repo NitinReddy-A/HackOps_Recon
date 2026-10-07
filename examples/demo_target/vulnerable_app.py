@@ -198,6 +198,36 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 cookie = f"session={token}; Path=/"
             return self._send(200, {"token": token, "user_id": u["id"]}, {"Set-Cookie": cookie})
+
+        # Mass assignment / BOPLA: profile update that honours client-supplied privileged fields.
+        if self.path == "/api/account":
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except json.JSONDecodeError:
+                return self._send(400, {"error": "bad json"})
+            resp = {"name": data.get("name", "user"), "role": "customer", "is_admin": False}
+            if not FIXED:                              # VULN: bind whatever the client sent
+                for priv in ("role", "is_admin", "balance", "verified"):
+                    if priv in data:
+                        resp[priv] = data[priv]
+            return self._send(200, resp)
+
+        # GraphQL endpoint: introspection enabled in VULN mode.
+        if self.path in ("/graphql", "/api/graphql"):
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except json.JSONDecodeError:
+                return self._send(400, {"error": "bad json"})
+            query = str(data.get("query", ""))
+            if "__schema" in query or "__type" in query:
+                if FIXED:
+                    return self._send(400, {"errors": [{"message": "introspection is disabled"}]})
+                return self._send(200, {"data": {"__schema": {"types": [
+                    {"name": "Query"}, {"name": "Order"}, {"name": "User"}]}}})
+            return self._send(200, {"data": {}})
+
         return self._send(404, {"error": "not found"})
 
     def do_GET(self):

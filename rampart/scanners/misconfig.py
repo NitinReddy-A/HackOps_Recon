@@ -171,6 +171,44 @@ def misconfig_checks(runner, appmodel, target_url, application="target", session
                 compliance=["SOC2:CC6.1", "ISO27001:A.8.5"], tags=["cookie", "misconfiguration"],
                 checks=[f"Set-Cookie missing {', '.join(m1)} on 2/2 responses"], path="/api/session"))
 
+            # --- CSRF (passive partial detector) — cookie session w/o SameSite + state-changing POSTs ---
+            if m1 and "SameSite" in m1:
+                post_eps = [e for e in getattr(appmodel, "endpoints", [])
+                            if (e.method or "GET").upper() in ("POST", "PUT", "PATCH", "DELETE")]
+                if post_eps:
+                    csrf = Finding(
+                        engagement_id=runner.engagement_id,
+                        title="Possible CSRF exposure (cookie session without SameSite + state-changing endpoints)",
+                        vuln_class="csrf", severity="medium", confidence="firm",
+                        state=State.EVIDENCE_FOUND, cwe=["CWE-352"],
+                        owasp={"web_2025": ["A01:2025-Broken Access Control"]},
+                        asset={"type": "web", "application": application, "environment": "authorized",
+                               "target": target_url},
+                        endpoint={"method": "POST", "url": f"{target_url}{post_eps[0].path}", "auth_required": True},
+                        description=("The session cookie lacks SameSite and the app exposes state-changing "
+                                     "endpoints; cross-site requests may be accepted (CSRF)."),
+                        impact="An attacker page could trigger authenticated state-changing actions as the victim.",
+                        root_cause="Cookie-based sessions without SameSite and no anti-CSRF token enforcement.",
+                        reproduction=Reproduction(prerequisites=["Cookie session"],
+                                                  steps=["Observe Set-Cookie without SameSite",
+                                                         "Note state-changing POST endpoints with no CSRF token"],
+                                                  deterministic=False),
+                        remediation=Remediation(summary="Set SameSite on session cookies and require anti-CSRF tokens.",
+                                                type="code_patch",
+                                                guidance="Use SameSite=Lax/Strict, synchronizer/double-submit CSRF "
+                                                "tokens on state-changing requests, and verify Origin (CWE-352).",
+                                                effort="medium"),
+                        references=["https://owasp.org/www-community/attacks/csrf"],
+                        compliance_control_refs=["SOC2:CC6.1"],
+                        dedupe_key=f"{application}:csrf", tags=["csrf", "partial-detector", "needs-human-review"],
+                        verification=Verification(method="passive-detector", validated=False,
+                                                  validated_at=now_iso(), validator="csrf-detector",
+                                                  reproductions=0,
+                                                  false_positive_checks=["PARTIAL: passive signal — modern SameSite=Lax "
+                                                                         "defaults mean a browser is needed to confirm"],
+                                                  confidence_score=0.4))
+                    findings.append(csrf)
+
     # --- Server/software version disclosure (CWE-200) ---
     server = h1.get("server", "")
     if server and _VERSION_RE.search(server) and _VERSION_RE.search(h2.get("server", "")):

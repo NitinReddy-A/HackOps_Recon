@@ -115,6 +115,75 @@ def run_hostheader_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
                          evidence=_collect(probe, control))
 
 
+_MA_ROLE_CANARY = "rampart-admin-canary"
+
+
+def run_mass_assignment_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
+    """Mass assignment / BOPLA: a client-supplied privileged field is accepted and reflected back.
+    Round-trip: POST a privileged field (canary) and confirm it persisted; a control without it does
+    not. Requires the write channel (--active)."""
+    path = hyp["endpoint_path"]
+    hid = hyp.get("id")
+    probe = runner.post(path, {"name": "rampart", "role": _MA_ROLE_CANARY, "is_admin": True},
+                        payload_class="canary", rationale="mass-assignment: inject privileged fields",
+                        hypothesis_id=hid, summary="mass-assign probe")
+    control = runner.post(path, {"name": "rampart"}, payload_class="canary",
+                          rationale="control: no privileged fields", hypothesis_id=hid,
+                          summary="mass-assign control")
+    if not probe.executed or not control.executed:
+        return OracleVerdict(False, "MASS_ASSIGNMENT", reasons=["probe blocked by policy (needs --active)"],
+                             evidence=_collect(probe, control))
+    accepted = _MA_ROLE_CANARY in (probe.body or "")
+    control_clean = _MA_ROLE_CANARY not in (control.body or "")
+    reasons, fp = [], []
+    reasons.append(("PASS" if accepted else "FAIL") + ": client-supplied privileged field was accepted/persisted")
+    reasons.append(("PASS" if control_clean else "FAIL") + ": control without the field did not contain it")
+    decisive = accepted and control_clean
+    repro_ok = 0
+    if decisive:
+        for i in range(reproductions):
+            r = runner.post(path, {"name": "rampart", "role": _MA_ROLE_CANARY, "is_admin": True},
+                            payload_class="canary", rationale=f"reproduction #{i+1}", hypothesis_id=hid,
+                            summary=f"mass-assign repro {i+1}")
+            if r.executed and _MA_ROLE_CANARY in (r.body or ""):
+                repro_ok += 1
+        fp.append(f"reproduced {repro_ok}/{reproductions} times")
+    return OracleVerdict(validated=decisive and repro_ok >= reproductions, vuln_class="MASS_ASSIGNMENT",
+                         reasons=reasons, false_positive_checks=fp, reproductions=repro_ok,
+                         evidence=_collect(probe, control))
+
+
+def run_graphql_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
+    """GraphQL introspection enabled: the schema is returned to an anonymous client."""
+    path = hyp["endpoint_path"]
+    hid = hyp.get("id")
+    probe = runner.post(path, {"query": "{__schema{types{name}}}"}, payload_class="benign-read",
+                        rationale="graphql introspection query", hypothesis_id=hid, summary="graphql probe")
+    control = runner.post(path, {"query": "{health}"}, payload_class="benign-read",
+                          rationale="control: non-introspection query", hypothesis_id=hid,
+                          summary="graphql control")
+    if not probe.executed or not control.executed:
+        return OracleVerdict(False, "GRAPHQL", reasons=["probe blocked by policy (needs --active)"],
+                             evidence=_collect(probe, control))
+    introspects = "__schema" in (probe.body or "")
+    control_clean = "__schema" not in (control.body or "")
+    reasons, fp = [], []
+    reasons.append(("PASS" if introspects else "FAIL") + ": introspection query returned the schema")
+    reasons.append(("PASS" if control_clean else "FAIL") + ": a non-introspection query did not")
+    decisive = introspects and control_clean
+    repro_ok = 0
+    if decisive:
+        for i in range(reproductions):
+            r = runner.post(path, {"query": "{__schema{types{name}}}"}, payload_class="benign-read",
+                            rationale=f"reproduction #{i+1}", hypothesis_id=hid, summary=f"graphql repro {i+1}")
+            if r.executed and "__schema" in (r.body or ""):
+                repro_ok += 1
+        fp.append(f"reproduced {repro_ok}/{reproductions} times")
+    return OracleVerdict(validated=decisive and repro_ok >= reproductions, vuln_class="GRAPHQL",
+                         reasons=reasons, false_positive_checks=fp, reproductions=repro_ok,
+                         evidence=_collect(probe, control))
+
+
 def run_ssti_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
     # Arithmetic differential: {{1337*1338}} evaluates to 1788906 only if the template engine runs it.
     return _marker_oracle(runner, hyp, vuln_class="SSTI",

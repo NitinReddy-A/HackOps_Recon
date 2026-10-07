@@ -52,6 +52,7 @@ class EngagementConfig:
     do_dast: bool = True            # black-box HTTP testing (the oracle classes + misconfig)
     do_sast: bool = False           # white-box source scanning (native AST + adapters)
     do_sca: bool = False            # dependency + secret scanning
+    active: bool = False            # allow gated write/active probes (mass assignment, GraphQL, …)
     llm_chat_path: str = "/chat"
     llm_input_field: str = "message"
     llm_output_field: str = "reply"
@@ -91,8 +92,12 @@ class Engagement:
                             path=config.login_path, token_json_path=config.token_json_path)
         self.sessions = SessionManager(self.scope, self.secrets, login, self.resolver, audit_log=self.audit)
         self.executor = HttpExecutor(self.sessions)
+        # --active authorises gated write/active probes (Tier-2) on the in-scope target.
+        effective_approver = config.approver
+        if effective_approver is None and config.active:
+            effective_approver = lambda req, dec: {"granted": True, "approver_user_id": "cli:--active"}
         self.pipeline = PolicyPipeline(self.scope, self.audit, self.budget, self.executor,
-                                       resolver=self.resolver, approver=config.approver)
+                                       resolver=self.resolver, approver=effective_approver)
 
         self.intel = get_provider(config.intel, budget=self.budget)
         self.appmodel = build_model(self.scope, openapi_path=config.openapi or None,
@@ -103,7 +108,8 @@ class Engagement:
         self.scanner_adapters = build_adapters(config.scanners, repo=config.repo)
         self.supervisor = Supervisor(self.pipeline, self.evidence, self.sessions, self.validator,
                                      self.intel, self.appmodel, self.host, self.port, self.scheme,
-                                     self.target_url, config.application, scanners=self.scanner_adapters)
+                                     self.target_url, config.application, scanners=self.scanner_adapters,
+                                     active=config.active)
 
     # --------------------------------------------------------------- recon
     def recon(self):

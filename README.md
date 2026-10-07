@@ -6,7 +6,7 @@
 ![Tests](https://img.shields.io/badge/tests-100%2B%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/benchmark-100%25%20precision%20%2F%20recall-brightgreen)
 ![Coverage](https://img.shields.io/badge/box-black%20%C2%B7%20grey%20%C2%B7%20white-blue)
-![Status](https://img.shields.io/badge/status-v0.6-orange)
+![Status](https://img.shields.io/badge/status-v0.7-orange)
 
 **Find, _prove_, and help _fix_ web, API, and LLM vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
@@ -128,6 +128,10 @@ Every class below is confirmed by its **own independent deterministic oracle** (
 | API | Excessive data exposure | CWE-213 · API3 | authed response exposes sensitive fields (PII/secrets) |
 | Web | Server-side template injection | CWE-1336 · A03 | `{{1337*1338}}` evaluates to `1788906`; the literal control does not |
 | Auth | JWT no-signature-verification (alg=none) | CWE-347 · API2 | a forged alg=none token is accepted while unauth is still rejected |
+| API | Mass assignment / BOPLA | CWE-915 · API3/6 | client-supplied privileged field persists (round-trip, `--active`) |
+| API | GraphQL introspection | CWE-16 · API8 | `__schema` returned to an anonymous client (`--active`) |
+| Web | Host-header injection | CWE-644 · A02 | crafted Host reflected into links/body; legit Host is not |
+| Web | CSRF *(passive partial)* | CWE-352 · A01 | cookie session w/o SameSite + state-changing endpoints (human-confirm) |
 | Config | Sensitive file exposure | CWE-538 · A02 | `/.env` `/.git/config` `/backup.sql`… served, matched by content signature |
 | Config | Missing security headers | CWE-693 · A02 | header absent on 2/2 observations |
 | Config | Clickjacking | CWE-1021 · A02 | no X-Frame-Options and no CSP `frame-ancestors` |
@@ -318,12 +322,15 @@ Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (
 - ✅ CI matrix + composite GitHub Action + Dockerfile/compose
 - ✅ Reproducible benchmark — **100% precision/recall across all 10 web/API ground-truth classes**, vulnerable and fixed · 63 tests
 
+**Done since:** ✅ DOM & stored XSS (headless browser) · ✅ OOB collaborator (blind SSRF) · ✅ mass
+assignment/BOPLA, GraphQL, host-header injection, CSRF (passive partial) · ✅ GitLab CI template ·
+✅ external vulnerable-app benchmark guide (crAPI/VAmPI/Juice Shop).
+
 **Remaining (next):**
-- ☐ Stored/DOM XSS + stored-XSS confirmation (needs an optional headless browser, e.g. Playwright)
-- ☐ Out-of-band collaborator server (turns blind SSRF/XXE/deserialization deterministic)
-- ☐ Mass assignment / BOPLA write-side, CSRF, GraphQL, host-header injection, request smuggling
-- ☐ GitLab CI template; diff-aware / PR-annotation runs; multi-tenant deploy (Postgres + object store)
-- ☐ Expanded benchmark corpus (OWASP crAPI / VAmPI / Juice Shop fixtures)
+- ☐ Blind XXE / deserialization over the OOB collaborator (infra is in place); stored-XSS write-half wiring
+- ☐ HTTP request smuggling — intentionally **human-only / passive-indicator** (active confirmation poisons shared infrastructure; not automated in a safety-first tool)
+- ☐ Diff-aware / PR-annotation runs; multi-tenant deploy (Postgres + object store) — storage backend abstraction
+- ☐ Automated external-corpus scoring (Docker-based crAPI/VAmPI/Juice Shop fixtures in CI)
 
 ## License
 

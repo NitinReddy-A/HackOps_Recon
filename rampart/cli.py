@@ -93,6 +93,7 @@ def _make_config(args, approver=None):
         do_dast=getattr(args, "do_dast", True),
         do_sast=getattr(args, "do_sast", False),
         do_sca=getattr(args, "do_sca", False),
+        active=getattr(args, "active", False),
         approver=approver,
     )
 
@@ -280,6 +281,7 @@ def cmd_pipeline(args):
     args.exploit = True
     args.agents = True
     args.oob = True
+    args.active = True
     args._pipeline = True
     print(dim("  pipeline: recon + full coverage + OOB blind-SSRF + chains + exploitation + agentic reasoning"))
     return cmd_test(args)
@@ -456,6 +458,7 @@ def build_parser():
     sp.add_argument("--agents", action="store_true", help="run the multi-agent reasoning layer (business-logic / auth flows; needs an LLM intel)")
     sp.add_argument("--oob", action="store_true", help="run an OOB collaborator to confirm blind SSRF out-of-band")
     sp.add_argument("--browser", action="store_true", help="run the headless-browser DOM-XSS pass (needs the [browser] extra)")
+    sp.add_argument("--active", action="store_true", help="allow gated write/active probes (mass assignment, GraphQL); off by default")
     sp.add_argument("--ci", action="store_true", help="nonzero exit if the severity gate is breached")
     sp.add_argument("--fail-on", default="high", help="CI gate severity: low|medium|high|critical")
     sp.add_argument("--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)")
@@ -478,6 +481,7 @@ def build_parser():
     sp.add_argument("--agents", action="store_true")
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
+    sp.add_argument("--active", action="store_true")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")
@@ -536,6 +540,7 @@ def build_parser():
     sp.add_argument("--agents", action="store_true")
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
+    sp.add_argument("--active", action="store_true")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")

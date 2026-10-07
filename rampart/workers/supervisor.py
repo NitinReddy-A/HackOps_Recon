@@ -32,8 +32,11 @@ class ScanResult:
 
 
 class Supervisor:
+    # Classes that send writes/active probes — only tested when --active is set.
+    ACTIVE_CLASSES = {"MASS_ASSIGNMENT", "GRAPHQL", "XXE"}
+
     def __init__(self, pipeline, evidence_store, session_manager, validator, intel, appmodel,
-                 host, port, scheme, target_url, application, scanners=None):
+                 host, port, scheme, target_url, application, scanners=None, active=False):
         self.pipeline = pipeline
         self.evidence = evidence_store
         self.sessions = session_manager
@@ -46,6 +49,7 @@ class Supervisor:
         self.target_url = target_url
         self.application = application
         self.scanners = scanners or []
+        self.active = active
 
     def _log(self, result, phase, msg):
         result.phase_log.append({"ts": now_iso(), "phase": phase, "msg": msg})
@@ -91,6 +95,8 @@ class Supervisor:
         appmodel_d = self.appmodel.to_dict()
         hyps = list(self.intel.propose_hypotheses(appmodel_d))
         hyps += list(self.intel.propose_web_hypotheses(appmodel_d))
+        if not self.active:
+            hyps = [h for h in hyps if h.get("vuln_class") not in self.ACTIVE_CLASSES]
         for h in hyps:
             h.setdefault("id", gen_id("hyp"))
             h["status"] = "planned"

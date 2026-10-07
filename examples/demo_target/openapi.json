@@ -126,6 +126,12 @@
         ],
         "security": []
       }
+    },
+    "/api/account": {
+      "post": { "summary": "Update account profile", "security": [] }
+    },
+    "/graphql": {
+      "post": { "summary": "GraphQL endpoint", "security": [] }
     }
   }
 }
