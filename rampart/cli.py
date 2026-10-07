@@ -282,6 +282,8 @@ def cmd_pipeline(args):
     args.agents = True
     args.oob = True
     args.active = True
+    args.do_sast = True      # white-box runs too when --repo is given (no-op otherwise)
+    args.do_sca = True
     args._pipeline = True
     print(dim("  pipeline: recon + full coverage + OOB blind-SSRF + chains + exploitation + agentic reasoning"))
     return cmd_test(args)
