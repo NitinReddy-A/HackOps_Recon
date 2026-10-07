@@ -32,6 +32,8 @@ _BFLA_PATH_HINTS = ("report", "admin", "manage", "management", "internal", "dash
 _EXPOSURE_PATH_HINTS = ("profile", "account", "/me", "/user", "customer", "details", "/info")
 _JWT_PATH_HINTS = ("/me", "whoami", "/account", "/token", "/session", "/auth", "/profile",
                    "/user", "/dashboard", "/identity")
+_HHI_PATH_HINTS = ("reset", "password", "forgot", "verify", "activate", "invite", "confirm",
+                   "/link", "magic", "recover")
 
 
 class DeterministicProvider(IntelligenceProvider):
@@ -129,6 +131,9 @@ class DeterministicProvider(IntelligenceProvider):
             if any(h in plow0 for h in _JWT_PATH_HINTS) or ep.get("auth_required"):
                 hyps.append({**common_ep, "vuln_class": "JWT", "cwe": ["CWE-347"],
                              "rationale": f"{path} is token-authenticated; test for unverified-signature JWT"})
+            if any(h in plow0 for h in _HHI_PATH_HINTS):
+                hyps.append({**common_ep, "vuln_class": "HOST_HEADER_INJECTION", "cwe": ["CWE-644"],
+                             "rationale": f"{path} likely builds links; test Host-header reflection"})
             qparams = [p for p in (ep.get("parameters") or []) if p.get("in") == "query" and p.get("name")]
             path = ep.get("path", "")
             plow = path.lower()

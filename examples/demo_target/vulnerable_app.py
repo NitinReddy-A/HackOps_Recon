@@ -225,6 +225,13 @@ class Handler(BaseHTTPRequestHandler):
                 "</body></html>")
             return self._send_html(200, page)
 
+        # Host-header injection: a password-reset link built from the incoming Host header.
+        if path == "/api/reset":
+            email = q.get("email", "user@demo.local")
+            host = self.headers.get("Host", "demo.local") if not FIXED else "demo.local"  # VULN uses attacker Host
+            link = f"https://{host}/reset?token=demo-reset-token&email={email}"
+            return self._send(200, {"reset_link": link, "sent_to": email})
+
         # DOM XSS: a page whose client-side JS writes a URL param into the DOM via innerHTML.
         # The sink is in the browser (JS), so only a headless-browser oracle can confirm it.
         if path == "/dom":

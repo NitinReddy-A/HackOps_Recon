@@ -137,6 +137,8 @@ notify:
                 "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}]}},
             "/dom": {"get": {"security": [],
                 "parameters": [{"name": "x", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/reset": {"get": {"security": [],
+                "parameters": [{"name": "email", "in": "query", "schema": {"type": "string"}}]}},
         },
     }), encoding="utf-8")
     (tmp_path / "seed.json").write_text(json.dumps({

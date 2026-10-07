@@ -281,6 +281,31 @@ WEB_CLASS_META = {
         "compliance": ["SOC2:CC6.1", "ISO27001:A.8.5", "PCI-DSS:8.3"],
         "tags": ["jwt", "authentication", "auth-bypass"],
     },
+    "HOST_HEADER_INJECTION": {
+        "title": "Host header injection on {method} {path}",
+        "severity": "medium",
+        "cwe": ["CWE-644"],
+        "owasp": {"web_2025": ["A02:2025-Security Misconfiguration"]},
+        "asvs": {"requirement": "V5.1.3", "level": 1},
+        "cvss": CVSS(version="4.0", base_score=6.1,
+                     vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N",
+                     severity="medium",
+                     v31_fallback={"base_score": 6.1, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"}),
+        "description": ("{method} {path} reflects the client-supplied Host header into generated "
+                        "links/content, enabling password-reset poisoning and web-cache poisoning."),
+        "impact": "Password-reset links / absolute URLs point at an attacker host; account takeover via poisoned links.",
+        "root_cause": "The application trusts the incoming Host (or X-Forwarded-Host) header to build URLs.",
+        "remediation": Remediation(
+            summary="Build absolute URLs from a configured canonical host, not the request Host header.",
+            type="code_patch",
+            guidance=("Use a server-side allow-list of expected hosts; derive links from a fixed canonical "
+                      "base URL; validate Host/X-Forwarded-Host at the edge (CWE-644)."),
+            effort="low"),
+        "references": ["https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/17-Testing_for_Host_Header_Injection",
+                       "https://cwe.mitre.org/data/definitions/644.html"],
+        "compliance": ["SOC2:CC6.1", "ISO27001:A.8.26"],
+        "tags": ["host-header-injection", "misconfiguration"],
+    },
 }
 
 WEB_CLASSES = set(WEB_CLASS_META)

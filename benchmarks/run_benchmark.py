@@ -46,6 +46,7 @@ GROUND_TRUTH = {
         ("SSTI", "/api/greet"),
         ("XSS", "/api/greet"),
         ("JWT", "/api/me"),
+        ("HOST_HEADER_INJECTION", "/api/reset"),
         ("sensitive-file-exposure", "/"),
         ("security-misconfiguration", "/"),
     },
@@ -54,7 +55,7 @@ GROUND_TRUTH = {
 
 _PATH_KEYS = ("/api/reports/orders", "/api/orders/", "/api/search", "/api/products",
               "/api/go", "/api/fetch", "/api/ping", "/api/file", "/api/profile",
-              "/api/greet", "/api/me")
+              "/api/greet", "/api/me", "/api/reset")
 
 
 def _pathkey(url: str) -> str:

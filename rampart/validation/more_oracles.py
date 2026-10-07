@@ -80,6 +80,41 @@ _SENSITIVE_KEY = _re.compile(
     r'access[_-]?token|private[_-]?key|credit[_-]?card|card[_-]?number|cvv|pan)"\s*:')
 
 
+_HHI_CANARY = "rampart-hhi-canary.example"
+
+
+def run_hostheader_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
+    """Host-header injection: a crafted Host header is reflected into links/body (password-reset
+    poisoning, cache poisoning). Deterministic: the attacker host appears for the crafted Host and
+    not for the legitimate one. All over GET — no state change."""
+    path = hyp["endpoint_path"]
+    hid = hyp.get("id")
+    probe = runner.get(path, session=None, headers={"Host": _HHI_CANARY}, payload_class="boundary-probe",
+                       rationale="host-header injection probe", hypothesis_id=hid, summary="hhi probe")
+    control = runner.get(path, session=None, payload_class="benign-read",
+                         rationale="control: legitimate Host", hypothesis_id=hid, summary="hhi control")
+    if not probe.executed or not control.executed:
+        return OracleVerdict(False, "HOST_HEADER_INJECTION", reasons=["probe blocked by policy"],
+                             evidence=_collect(probe, control))
+    reflected = _HHI_CANARY in (probe.body or "")
+    control_clean = _HHI_CANARY not in (control.body or "")
+    reasons, fp = [], []
+    reasons.append(("PASS" if reflected else "FAIL") + ": crafted Host header is reflected into the response")
+    reasons.append(("PASS" if control_clean else "FAIL") + ": legitimate Host does not contain the canary")
+    decisive = reflected and control_clean
+    repro_ok = 0
+    if decisive:
+        for i in range(reproductions):
+            r = runner.get(path, session=None, headers={"Host": _HHI_CANARY}, payload_class="boundary-probe",
+                           rationale=f"reproduction #{i+1}", hypothesis_id=hid, summary=f"hhi repro {i+1}")
+            if r.executed and _HHI_CANARY in (r.body or ""):
+                repro_ok += 1
+        fp.append(f"reproduced {repro_ok}/{reproductions} times")
+    return OracleVerdict(validated=decisive and repro_ok >= reproductions, vuln_class="HOST_HEADER_INJECTION",
+                         reasons=reasons, false_positive_checks=fp, reproductions=repro_ok,
+                         evidence=_collect(probe, control))
+
+
 def run_ssti_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
     # Arithmetic differential: {{1337*1338}} evaluates to 1788906 only if the template engine runs it.
     return _marker_oracle(runner, hyp, vuln_class="SSTI",
