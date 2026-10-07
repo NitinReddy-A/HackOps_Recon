@@ -41,6 +41,9 @@ class EngagementConfig:
     application: str = "target"
     repo: str = ""
     scanners: str = ""              # comma list of external adapters, e.g. "nuclei,semgrep" or "all"
+    crawl: bool = False             # discover endpoints/params by crawling (no OpenAPI needed)
+    crawl_max_pages: int = 40
+    crawl_max_depth: int = 3
     llm_chat_path: str = "/chat"
     llm_input_field: str = "message"
     llm_output_field: str = "reply"
@@ -94,8 +97,29 @@ class Engagement:
                                      self.intel, self.appmodel, self.host, self.port, self.scheme,
                                      self.target_url, config.application, scanners=self.scanner_adapters)
 
+    # --------------------------------------------------------------- recon
+    def recon(self):
+        """Optional crawl to discover endpoints/params and fingerprint tech (scope-gated)."""
+        self.recon_tech = []
+        self.recon_pages = 0
+        if not self.cfg.crawl:
+            return
+        from .recon import Crawler, merge_into_model
+        from .runner import ProbeRunner
+        runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
+                             self.host, self.port, self.scheme,
+                             actor_role="mapper", actor_profile="crawler", phase="recon")
+        crawler = Crawler(runner, self.scope, self.host, self.port, self.scheme,
+                          max_pages=self.cfg.crawl_max_pages, max_depth=self.cfg.crawl_max_depth)
+        crawl = crawler.crawl(["/"])
+        added = merge_into_model(self.appmodel, crawl)
+        self.recon_tech = crawl.tech
+        self.recon_pages = crawl.pages_visited
+        return {"pages": crawl.pages_visited, "added_endpoints": added, "tech": crawl.tech}
+
     # --------------------------------------------------------------- scan
     def run_scan(self):
+        self.recon()
         result = self.supervisor.run()
         self.store.save_appmodel(self.appmodel)
         self.store.save_hypotheses(result.hypotheses)
@@ -107,6 +131,8 @@ class Engagement:
             "classes_tested": result.classes_tested,
             "scanner_runs": result.scanner_runs,
             "plan": result.plan,
+            "recon_tech": getattr(self, "recon_tech", []),
+            "recon_pages": getattr(self, "recon_pages", 0),
             "budget": self.budget.snapshot(),
             "intel_provider": self.intel.name,
         })

@@ -14,7 +14,12 @@ from ..schemas.toolcall import RiskTier, ToolAction
 
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-# Substrings that indicate destructive / prohibited intent (Tier 3), scanned in path+body.
+# Substrings that indicate destructive / state-changing / prohibited intent (Tier 3), scanned
+# in path+body+query. These are things that DAMAGE or change state on the target. Note:
+# reading a sensitive file (e.g. path traversal to /etc/passwd) is *disclosure*, not
+# destruction — that is a Tier-1 read probe and is NOT listed here; the disclosure is the
+# finding, and non-destructive reads on an in-scope target are exactly what we are authorized
+# to test.
 _DESTRUCTIVE_MARKERS = [
     re.compile(r"(?i)\bdrop\s+table\b"),
     re.compile(r"(?i)\btruncate\b"),
@@ -23,7 +28,7 @@ _DESTRUCTIVE_MARKERS = [
     re.compile(r"(?i)\brm\s+-rf\b"),
     re.compile(r"(?i)\b(or|and)\s+1=1\s*;?\s*(--|#)"),  # tautology + statement terminator
     re.compile(r"(?i)\bxp_cmdshell\b"),
-    re.compile(r"(?i)/etc/passwd"),
+    re.compile(r"(?i)\b(mkfs|format\s+[a-z]:|:\(\)\s*\{)"),  # fork-bomb / disk format / mkfs
 ]
 
 _PAYLOAD_TIER = {

@@ -13,10 +13,23 @@ from .base import IntelligenceProvider
 
 _PATH_PARAM = re.compile(r"\{([^}]+)\}")
 
-# Parameter/endpoint name hints for the open-redirect class (where testing every param is noise).
+# Parameter/endpoint name hints (so classes where testing every param is noise stay targeted).
 _REDIRECT_PARAM_HINTS = ("next", "url", "redirect", "redirect_uri", "return", "returnurl",
                          "return_url", "dest", "destination", "to", "continue", "goto", "callback")
 _REDIRECT_PATH_HINTS = ("go", "redirect", "out", "link", "exit", "away")
+_SSRF_PARAM_HINTS = ("url", "uri", "link", "fetch", "callback", "webhook", "dest", "host",
+                     "domain", "feed", "proxy", "target", "load", "page", "src", "image",
+                     "resource", "endpoint", "api", "upstream")
+_SSRF_PATH_HINTS = ("fetch", "proxy", "preview", "webhook", "import", "render", "thumbnail")
+_CMDI_PARAM_HINTS = ("cmd", "command", "exec", "run", "ping", "host", "ip", "domain", "query",
+                     "arg", "args", "do", "action", "process")
+_CMDI_PATH_HINTS = ("ping", "exec", "run", "cmd", "command", "diagnostic", "trace", "lookup", "nslookup")
+_TRAVERSAL_PARAM_HINTS = ("file", "filename", "path", "name", "page", "doc", "document", "template",
+                          "include", "load", "dir", "folder", "download", "attachment", "view", "img")
+_TRAVERSAL_PATH_HINTS = ("file", "download", "read", "view", "static", "assets", "attachment", "doc")
+_BFLA_PATH_HINTS = ("report", "admin", "manage", "management", "internal", "dashboard", "metrics",
+                    "export", "/all", "accounts", "audit", "/config", "/settings")
+_EXPOSURE_PATH_HINTS = ("profile", "account", "/me", "/user", "customer", "details", "/info")
 
 
 class DeterministicProvider(IntelligenceProvider):
@@ -92,23 +105,53 @@ class DeterministicProvider(IntelligenceProvider):
         to redirect-shaped parameter/endpoint names to avoid pointless probes.
         """
         hyps: list[dict] = []
+        principals = appmodel.get("principals", [])
+        actor = principals[0]["id"] if principals else None   # a seeded low-privilege account
         for ep in appmodel.get("endpoints", []):
             if (ep.get("method") or "GET").upper() != "GET":
                 continue
+            path = ep.get("path", "")
+            plow0 = path.lower()
+            common_ep = {"endpoint_id": ep.get("id"), "endpoint_method": ep.get("method", "GET"),
+                         "endpoint_path": path}
+            # function-level authz + data-exposure need a seeded principal to authenticate as
+            if actor:
+                if any(h in plow0 for h in _BFLA_PATH_HINTS):
+                    hyps.append({**common_ep, "vuln_class": "BFLA", "cwe": ["CWE-285"],
+                                 "actor_principal": actor,
+                                 "rationale": f"{path} looks privileged; test access as low-priv '{actor}'"})
+                if any(h in plow0 for h in _EXPOSURE_PATH_HINTS):
+                    hyps.append({**common_ep, "vuln_class": "EXCESSIVE_DATA", "cwe": ["CWE-213"],
+                                 "actor_principal": actor,
+                                 "rationale": f"{path} may over-expose fields; inspect as '{actor}'"})
             qparams = [p for p in (ep.get("parameters") or []) if p.get("in") == "query" and p.get("name")]
             path = ep.get("path", "")
-            path_is_redirecty = any(h in path.lower() for h in _REDIRECT_PATH_HINTS)
+            plow = path.lower()
+            path_is_redirecty = any(h in plow for h in _REDIRECT_PATH_HINTS)
+            path_is_ssrfy = any(h in plow for h in _SSRF_PATH_HINTS)
+            path_is_cmdy = any(h in plow for h in _CMDI_PATH_HINTS)
+            path_is_filey = any(h in plow for h in _TRAVERSAL_PATH_HINTS)
             for p in qparams:
                 name = p["name"]
+                nlow = name.lower()
                 common = {"endpoint_id": ep.get("id"), "endpoint_method": ep.get("method", "GET"),
                           "endpoint_path": path, "selector_param": name}
                 hyps.append({**common, "vuln_class": "XSS", "cwe": ["CWE-79"],
                              "rationale": f"query param '{name}' on {path} may be reflected into HTML unencoded"})
                 hyps.append({**common, "vuln_class": "SQLI", "cwe": ["CWE-89"], "base_value": "1",
                              "rationale": f"query param '{name}' on {path} may reach a SQL sink"})
-                if name.lower() in _REDIRECT_PARAM_HINTS or path_is_redirecty:
+                if nlow in _REDIRECT_PARAM_HINTS or path_is_redirecty:
                     hyps.append({**common, "vuln_class": "OPEN_REDIRECT", "cwe": ["CWE-601"],
                                  "rationale": f"query param '{name}' on {path} looks like a redirect target"})
+                if nlow in _SSRF_PARAM_HINTS or path_is_ssrfy:
+                    hyps.append({**common, "vuln_class": "SSRF", "cwe": ["CWE-918"],
+                                 "rationale": f"query param '{name}' on {path} may trigger a server-side fetch"})
+                if nlow in _CMDI_PARAM_HINTS or path_is_cmdy:
+                    hyps.append({**common, "vuln_class": "CMDI", "cwe": ["CWE-78"],
+                                 "rationale": f"query param '{name}' on {path} may reach an OS command"})
+                if nlow in _TRAVERSAL_PARAM_HINTS or path_is_filey:
+                    hyps.append({**common, "vuln_class": "PATH_TRAVERSAL", "cwe": ["CWE-22"],
+                                 "rationale": f"query param '{name}' on {path} may be used as a file path"})
         return hyps
 
     def draft_finding_narrative(self, ctx: dict) -> dict:

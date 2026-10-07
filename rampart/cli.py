@@ -56,6 +56,7 @@ def _make_config(args, approver=None):
         application=getattr(args, "application", "target"),
         repo=getattr(args, "repo", "") or "",
         scanners=getattr(args, "scanners", "") or "",
+        crawl=getattr(args, "crawl", False),
         approver=approver,
     )
 
@@ -298,6 +299,7 @@ def build_parser():
     sp.add_argument("--token-path", default="token")
     sp.add_argument("--report", default="html,md,json,sarif", help="comma list: html,md,json,sarif,compliance")
     sp.add_argument("--scanners", default="", help="external OSS adapters to run: nuclei,nmap,semgrep,trivy,testssl or 'all'")
+    sp.add_argument("--crawl", action="store_true", help="discover endpoints/params by crawling (no OpenAPI needed)")
     sp.add_argument("--ci", action="store_true", help="nonzero exit if the severity gate is breached")
     sp.add_argument("--fail-on", default="high", help="CI gate severity: low|medium|high|critical")
     sp.add_argument("--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)")
@@ -312,6 +314,7 @@ def build_parser():
     sp.add_argument("--token-path", default="token")
     sp.add_argument("--report", default="html,md,json,sarif")
     sp.add_argument("--scanners", default="")
+    sp.add_argument("--crawl", action="store_true")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")

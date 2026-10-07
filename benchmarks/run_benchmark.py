@@ -38,12 +38,18 @@ GROUND_TRUTH = {
         ("XSS", "/api/search"),
         ("SQLI", "/api/products"),
         ("OPEN_REDIRECT", "/api/go"),
+        ("SSRF", "/api/fetch"),
+        ("CMDI", "/api/ping"),
+        ("PATH_TRAVERSAL", "/api/file"),
+        ("BFLA", "/api/reports/orders"),
+        ("EXCESSIVE_DATA", "/api/profile"),
         ("security-misconfiguration", "/"),
     },
     "fixed": set(),
 }
 
-_PATH_KEYS = ("/api/orders/", "/api/search", "/api/products", "/api/go")
+_PATH_KEYS = ("/api/reports/orders", "/api/orders/", "/api/search", "/api/products",
+              "/api/go", "/api/fetch", "/api/ping", "/api/file", "/api/profile")
 
 
 def _pathkey(url: str) -> str:

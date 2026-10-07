@@ -56,12 +56,33 @@ def test_fixed_target_confirms_nothing(tmp_path, fixed_server):
         assert _dropped(findings, cls), f"{cls} candidate should be dropped on the fixed target"
 
 
+# ---- the deep classes (SSRF / cmd injection / traversal / BFLA / data exposure) ----
+def test_vuln_target_confirms_deep_classes(tmp_path, vuln_server):
+    eng = make_engagement(tmp_path, vuln_server.port)
+    findings = eng.run_scan().findings
+    confirmed = {f.vuln_class for f in findings if f.verification.validated}
+    for cls in ("SSRF", "CMDI", "PATH_TRAVERSAL", "BFLA", "EXCESSIVE_DATA"):
+        assert cls in confirmed, f"{cls} must be confirmed on the vulnerable target"
+    cmdi = next(f for f in findings if f.vuln_class == "CMDI" and f.verification.validated)
+    assert cmdi.severity == "critical"
+
+
+def test_fixed_target_drops_deep_classes(tmp_path, fixed_server):
+    eng = make_engagement(tmp_path, fixed_server.port)
+    findings = eng.run_scan().findings
+    confirmed = [f for f in findings if f.verification.validated]
+    assert not confirmed
+    for cls in ("SSRF", "CMDI", "PATH_TRAVERSAL", "BFLA", "EXCESSIVE_DATA"):
+        assert _dropped(findings, cls), f"{cls} should be dropped on the fixed target"
+
+
 # ---- hypotheses span multiple classes (multi-vector planning) ----
 def test_hypotheses_cover_multiple_classes(tmp_path, vuln_server):
     eng = make_engagement(tmp_path, vuln_server.port)
     result = eng.run_scan()
     classes = {h["vuln_class"] for h in result.hypotheses}
-    assert {"IDOR/BOLA", "XSS", "SQLI", "OPEN_REDIRECT"} <= classes
+    assert {"IDOR/BOLA", "XSS", "SQLI", "OPEN_REDIRECT",
+            "SSRF", "CMDI", "PATH_TRAVERSAL", "BFLA", "EXCESSIVE_DATA"} <= classes
 
 
 # ---- confirmed findings never violate the trust invariant ----

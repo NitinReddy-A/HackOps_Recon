@@ -119,6 +119,14 @@ notify:
                 "parameters": [{"name": "id", "in": "query", "schema": {"type": "string"}}]}},
             "/api/go": {"get": {"security": [],
                 "parameters": [{"name": "next", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/fetch": {"get": {"security": [],
+                "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/ping": {"get": {"security": [],
+                "parameters": [{"name": "host", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/file": {"get": {"security": [],
+                "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}]}},
+            "/api/reports/orders": {"get": {"security": [{"bearerAuth": []}]}},
+            "/api/profile": {"get": {"security": [{"bearerAuth": []}]}},
         },
     }), encoding="utf-8")
     (tmp_path / "seed.json").write_text(json.dumps({

@@ -44,6 +44,39 @@
         ],
         "security": []
       }
+    },
+    "/api/fetch": {
+      "get": {
+        "summary": "Fetch a URL server-side",
+        "parameters": [
+          { "name": "url", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
+    },
+    "/api/ping": {
+      "get": {
+        "summary": "Ping a host",
+        "parameters": [
+          { "name": "host", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
+    },
+    "/api/file": {
+      "get": {
+        "summary": "Read a file by name",
+        "parameters": [
+          { "name": "name", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "security": []
+      }
+    },
+    "/api/reports/orders": {
+      "get": { "summary": "Privileged: all customer orders", "security": [{ "bearerAuth": [] }] }
+    },
+    "/api/profile": {
+      "get": { "summary": "Current user profile", "security": [{ "bearerAuth": [] }] }
     }
   }
 }

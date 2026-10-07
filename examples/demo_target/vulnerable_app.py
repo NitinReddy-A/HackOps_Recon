@@ -57,6 +57,24 @@ SECURITY_HEADERS = {
 }
 
 
+# Inert markers returned by the simulated sinks below (no real shell/network/filesystem).
+SSRF_MARKER = "RAMPART-SSRF-INTERNAL iam-role=demo-admin;token=AKIA-DEMO"
+TRAVERSAL_MARKER = "RAMPART-TRAVERSAL root:x:0:0:root:/root:/bin/bash"
+_INTERNAL_HOSTS = {"127.0.0.1", "localhost", "169.254.169.254", "metadata.google.internal",
+                   "metadata", "0.0.0.0", "[::1]", "::1"}
+
+
+def _is_internal(host: str) -> bool:
+    if not host:
+        return False
+    host = host.lower().strip("[]")
+    if host in _INTERNAL_HOSTS:
+        return True
+    return (host.startswith("10.") or host.startswith("192.168.")
+            or host.startswith("127.") or host.startswith("169.254.")
+            or any(host.startswith(f"172.{n}.") for n in range(16, 32)))
+
+
 class _FakeSQLError(Exception):
     """Stand-in for a backend DB driver error surfaced to the client (error-based SQLi)."""
 
@@ -128,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
         if FIXED:
             for k, v in SECURITY_HEADERS.items():
                 self.send_header(k, v)
+        for k, v in (self._cors()).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -168,9 +188,24 @@ class Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
         if path == "/":
-            return self._send(200, {"service": "demo-shop-api",
-                                    "endpoints": ["/api/login", "/api/orders/{id}",
-                                                  "/api/search", "/api/products", "/api/go"]})
+            # HTML landing page so the recon crawler can discover endpoints + params.
+            page = (
+                "<!doctype html><html><head><title>demo-shop-api</title></head><body>"
+                "<h1>Demo Shop</h1><ul>"
+                '<li><a href="/api/search?q=widget">Search</a></li>'
+                '<li><a href="/api/products?id=1">Products</a></li>'
+                '<li><a href="/api/go?next=/account">Continue</a></li>'
+                '<li><a href="/api/orders/1043">Your order</a></li>'
+                '<li><a href="/api/profile">Profile</a></li>'
+                '<li><a href="/api/reports/orders">Reports</a></li>'
+                '<li><a href="/api/fetch?url=https://example.com">Fetch</a></li>'
+                '<li><a href="/api/ping?host=127.0.0.1">Ping</a></li>'
+                '<li><a href="/api/file?name=readme.txt">File</a></li>'
+                "</ul>"
+                '<form action="/api/search" method="get">'
+                '<input name="q" placeholder="search"><button>Go</button></form>'
+                "</body></html>")
+            return self._send_html(200, page)
 
         # Reflected XSS: q echoed into an HTML page. Vulnerable: raw. Fixed: html-escaped.
         if path == "/api/search":
@@ -200,6 +235,72 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(302, {"redirect": nxt}, {"Location": nxt})
                 return self._send(400, {"error": "invalid redirect target"})
             return self._send(302, {"redirect": nxt}, {"Location": nxt})
+
+        # SSRF: server-side fetch of a user-supplied URL (simulated — no real network call).
+        if path == "/api/fetch":
+            from urllib.parse import urlparse as _up
+            target = q.get("url", "")
+            host = _up(target).hostname or ""
+            scheme = _up(target).scheme or ""
+            internal = _is_internal(host) or scheme == "file"
+            if FIXED:
+                if internal or scheme not in ("http", "https"):
+                    return self._send(400, {"error": "blocked: destination not allowed"})
+                return self._send(200, {"fetched": target, "content": "external resource ok"})
+            if internal:
+                return self._send(200, {"fetched": target, "content": SSRF_MARKER})   # SSRF to internal
+            return self._send(200, {"fetched": target, "content": "external resource ok"})
+
+        # Command injection: simulated `ping <host>` that honours shell metacharacters.
+        if path == "/api/ping":
+            host = q.get("host", "")
+            out = f"PING {host.split(';')[0].split('|')[0].split('&')[0].strip()} 56 bytes"
+            if not FIXED:
+                # naive concatenation: execute an injected `; echo X` / `| echo X` / `&& echo X`
+                for sep in (";", "|", "&&", "&", "`", "$("):
+                    if sep in host and "echo" in host:
+                        injected = host.split("echo", 1)[1].strip(" `)'\"")
+                        out += "\n" + injected
+                        break
+            return self._send(200, {"output": out})
+
+        # Path traversal: simulated file read from a sandbox (markers, not real files).
+        if path == "/api/file":
+            name = q.get("name", "")
+            escapes = ".." in name or name.startswith("/") or name.startswith("\\")
+            if FIXED:
+                if escapes or "/" in name or "\\" in name:
+                    return self._send(400, {"error": "invalid file name"})
+                return self._send(200, {"name": name, "content": "demo file contents"})
+            if escapes:
+                return self._send(200, {"name": name, "content": TRAVERSAL_MARKER})     # traversal!
+            known = {"readme.txt": "demo file contents", "notes.txt": "some notes"}
+            if name in known:
+                return self._send(200, {"name": name, "content": known[name]})
+            return self._send(404, {"error": "file not found"})
+
+        # BFLA: a privileged "all orders" report that should be admin-only.
+        if path == "/api/reports/orders":
+            uid = self._auth_user()
+            if uid is None:
+                return self._send(401, {"error": "authentication required"})
+            if FIXED:
+                # function-level authorization: only admins (none seeded) may call this
+                return self._send(403, {"error": "forbidden: admin role required"})
+            return self._send(200, {"report": "RAMPART-BFLA all-customer-orders",
+                                    "orders": list(ORDERS.values())})            # VULN: no role check
+
+        # Excessive data exposure: profile returns sensitive fields it shouldn't.
+        if path == "/api/profile":
+            uid = self._auth_user()
+            if uid is None:
+                return self._send(401, {"error": "authentication required"})
+            email = next((u["email"] for u in USERS.values() if u["id"] == uid), "user@demo.local")
+            if FIXED:
+                return self._send(200, {"email": email, "role": "customer"})
+            return self._send(200, {"email": email, "role": "customer",
+                                    "ssn": "123-45-6789", "password_hash": "$2b$12$demohashdemohash",
+                                    "api_token": "sk-demo-01HZ0PRIVATE", "credit_card": "4111111111111111"})
 
         if path.startswith("/api/orders/"):
             oid = path.rsplit("/", 1)[-1]
