@@ -28,7 +28,6 @@ yaml = ["PyYAML>=6.0"]
 # Bring-your-own-key LLM path uses stdlib urllib; no extra deps required.
 # Test/dev tooling.
 dev = ["pytest>=7.0"]
-dev = ["pytest>=7.0"]
 
 [project.scripts]
 rampart = "rampart.cli:main"
@@ -36,11 +35,8 @@ rampart = "rampart.cli:main"
 [project.urls]
 Homepage = "https://github.com/your-org/rampart"
 
-[tool.setuptools]
-packages = ["rampart", "rampart.schemas", "rampart.policy", "rampart.audit",
-            "rampart.executor", "rampart.evidence", "rampart.scanners",
-            "rampart.intelligence", "rampart.appmodel", "rampart.workers",
-            "rampart.validation", "rampart.remediation", "rampart.reporting", "rampart.store"]
+[tool.setuptools.packages.find]
+include = ["rampart*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
