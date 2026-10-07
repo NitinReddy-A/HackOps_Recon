@@ -3,9 +3,18 @@
 #
 # On this repo it runs as a SELF-CONTAINED DEMO: it spins up the bundled,
 # intentionally-vulnerable demo target (examples/demo_target), scans it against
-# the demo's own committed SECURITY.md authorization contract, and uploads the
-# findings to the GitHub Security tab as SARIF. Everything stays on loopback —
-# there is no route to any real asset — so it is safe to run on every push.
+# the demo's own committed SECURITY.md authorization contract, and publishes the
+# full report bundle (SARIF + HTML + Markdown + JSON) as a downloadable workflow
+# artifact. Everything stays on loopback — there is no route to any real asset —
+# so it is safe to run on every push.
+#
+# Why an artifact and not the Security tab? Rampart is a DAST tool: its findings
+# are anchored to live endpoint URLs (http://host/path), whereas GitHub code
+# scanning only ingests SARIF whose locations resolve to files in the repo
+# checkout, and rejects the whole upload otherwise. So we publish the SARIF as
+# an artifact. If your findings carry source locations (e.g. you pass `--repo`
+# and the finding maps to a file), you can instead upload to code scanning with
+# github/codeql-action/upload-sarif — see the commented step at the end.
 #
 # TO USE THIS IN YOUR OWN REPOSITORY, copy this file and:
 #   1. Commit a real SECURITY.md authorization contract (see SECURITY.md.example
@@ -32,10 +41,8 @@ on:
         required: true
         default: "http://127.0.0.1:8080"
 
-# Required so the job can upload SARIF to the Security tab.
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   rampart:
@@ -79,14 +86,26 @@ jobs:
             --target "${{ github.event.inputs.target || 'http://127.0.0.1:8080' }}" \
             --secrets examples/demo_target/secrets.json \
             --openapi examples/demo_target/openapi.json \
-            --report sarif \
+            --report sarif,html,md,json \
             --fail-on high
-        # The SARIF lands at <work-dir>/reports/report.sarif (default work-dir: .rampart).
+        # The reports land under <work-dir>/reports/ (default work-dir: .rampart).
 
-      - name: Upload SARIF to code scanning
-        # Upload even if the scan step failed, so findings still show up.
+      - name: Publish report bundle
+        # Upload even if the scan step failed, so the reports are still available.
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: actions/upload-artifact@v4
         with:
-          sarif_file: .rampart/reports/report.sarif
-          category: rampart
+          name: rampart-report
+          path: .rampart/reports/
+          if-no-files-found: error
+
+      # In your own repo, if your findings carry repo source locations (e.g. via
+      # `--repo`), you can upload the SARIF to the Security tab instead. This
+      # needs `permissions: security-events: write` on the job.
+      #
+      # - name: Upload SARIF to code scanning
+      #   if: always()
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   with:
+      #     sarif_file: .rampart/reports/report.sarif
+      #     category: rampart
