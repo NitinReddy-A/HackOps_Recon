@@ -65,6 +65,9 @@ class ReportBuilder:
             "audit_events": self.audit_events,
             "tokens_used": self.budget.get("tokens_used", 0),
             "usd_spent": self.budget.get("usd_spent", 0.0),
+            "risk_score": (self.scan or {}).get("correlation", {}).get("risk_score", 0),
+            "risk_band": (self.scan or {}).get("correlation", {}).get("risk_band", "Informational"),
+            "attack_chains": len((self.scan or {}).get("correlation", {}).get("chains", [])),
         }
 
     # --------------------------------------------------------------- JSON
@@ -114,6 +117,7 @@ class ReportBuilder:
         L.append(f"*Authorized by* **{self.scope.authorization.authorized_by}** · "
                  f"*owner* **{self.scope.authorization.owner}** · tool `rampart {__version__}`")
         L.append("")
+        L.append(self._executive_summary_md(m))
         L.append("## Summary")
         L.append("")
         L.append(f"- **{m['confirmed']}** confirmed finding(s), independently validated with reproducible proof")
@@ -125,8 +129,12 @@ class ReportBuilder:
         if m["external_leads"]:
             L.append(f"- **{m['external_leads']}** external-scanner lead(s) included (unvalidated — "
                      "shown separately, not counted as confirmed)")
+        L.append(f"- **Aggregate risk: {m['risk_score']}/100 ({m['risk_band']})** · "
+                 f"{m['attack_chains']} attack chain(s) identified")
         L.append("")
         L.append(self._coverage_md(m))
+        L.append(self._chains_md())
+        L.append(self._roadmap_md())
         L.append("## Findings")
         for f in self.findings:
             if f.state == State.DROPPED:
@@ -207,6 +215,66 @@ class ReportBuilder:
         L.append("- **Agent pipeline:** " + " → ".join(r["role"] for r in describe_roster()))
         L.append("- **Trust rule:** only findings re-derived by an independent deterministic oracle "
                  "are marked *confirmed*; external-scanner results are unvalidated leads.")
+        L.append("")
+        return "\n".join(L)
+
+    # -------------------------------------------------------- executive summary
+    def executive_summary(self, m=None) -> str:
+        """One-paragraph, plain-English verdict for a decision-maker."""
+        m = m or self.metrics()
+        corr = (self.scan or {}).get("correlation") or {}
+        classes = sorted({f.vuln_class for f in self.findings
+                          if f.verification.validated and f.state != State.DROPPED})
+        if not m["confirmed"]:
+            return ("No vulnerabilities were confirmed. Every candidate was dropped by the "
+                    "independent validation gate, so there are no false positives to triage.")
+        worst = min(corr.get("chains", []),
+                    key=lambda c: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(c["severity"], 4),
+                    default=None)
+        bits = [f"The assessment confirmed {m['confirmed']} vulnerabilit"
+                f"{'y' if m['confirmed'] == 1 else 'ies'} across {len(classes)} class(es) "
+                f"({', '.join(classes)}), each independently validated with reproducible proof "
+                f"(no false positives). Aggregate risk is {m['risk_score']}/100 ({m['risk_band']})."]
+        if worst:
+            bits.append(f"The most serious exposure is \"{worst['title']}\" — "
+                        f"{len(corr.get('chains', []))} attack chain(s) were identified in total.")
+        if corr.get("roadmap"):
+            top = corr["roadmap"][0]
+            bits.append(f"Highest-priority fix: {top['summary']}")
+        return " ".join(bits)
+
+    def _executive_summary_md(self, m) -> str:
+        return "## Executive summary\n\n" + self.executive_summary(m) + "\n"
+
+    # -------------------------------------------------------- chains / roadmap
+    def _chains_md(self) -> str:
+        corr = (self.scan or {}).get("correlation") or {}
+        chains = corr.get("chains") or []
+        if not chains:
+            return ""
+        L = ["## Attack chains (kill-chain)", "",
+             "Confirmed findings composed into realistic multi-step attacks:", ""]
+        for c in chains:
+            L.append(f"### [{c['severity'].upper()}] {c['title']}")
+            L.append(f"- *Why:* {c['rationale']}")
+            for i, step in enumerate(c["steps"], 1):
+                L.append(f"    {i}. {step}")
+            if c.get("contributing"):
+                L.append(f"- *Built from:* {', '.join(c['contributing'])}")
+            L.append("")
+        return "\n".join(L)
+
+    def _roadmap_md(self) -> str:
+        corr = (self.scan or {}).get("correlation") or {}
+        roadmap = corr.get("roadmap") or []
+        if not roadmap:
+            return ""
+        L = ["## Remediation roadmap (prioritized)", ""]
+        for i, r in enumerate(roadmap, 1):
+            fixes = f" — fixes {r['count']} finding(s): {', '.join(r['classes'])}" if r.get("count") else ""
+            L.append(f"{i}. **[{r['severity'].upper()}, {r.get('effort','?')} effort]** {r['summary']}{fixes}")
+            if r.get("guidance"):
+                L.append(f"    - {r['guidance']}")
         L.append("")
         return "\n".join(L)
 

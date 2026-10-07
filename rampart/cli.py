@@ -41,6 +41,35 @@ def _banner():
     print(bold(cyan("  Rampart")) + dim("  — find, prove, fix · authorized, self-hosted AppSec"))
 
 
+def _load_config(args):
+    """Fill UNSET args from a rampart.yaml (or --config) file. CLI flags always win."""
+    path = getattr(args, "config", "") or ("rampart.yaml" if os.path.exists("rampart.yaml") else "")
+    if not path or not os.path.exists(path):
+        return
+    from . import yaml_lite
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = yaml_lite.load(fh.read()) or {}
+    except Exception:  # noqa: BLE001 - a bad config must not crash the CLI
+        print(yellow(f"! could not parse config {path}; ignoring"))
+        return
+    if not isinstance(data, dict):
+        return
+    # argparse defaults we treat as "unset" so a config value may fill them (CLI overrides still win
+    # in practice — a user who types the default value and also sets it in config gets the config one).
+    known_defaults = {"scope_file": "SECURITY.md", "intel": "deterministic", "application": "target",
+                      "login_path": "/api/login", "token_path": "token", "fail_on": "high",
+                      "report": "html,md,json,sarif"}
+    for key, val in data.items():
+        attr = str(key).replace("-", "_")
+        if not hasattr(args, attr):
+            continue
+        cur = getattr(args, attr)
+        unset = cur in ("", None) or cur == known_defaults.get(attr) or (attr == "crawl" and not cur)
+        if unset and val not in (None, ""):
+            setattr(args, attr, val)
+
+
 def _make_config(args, approver=None):
     from .engagement import EngagementConfig
     return EngagementConfig(
@@ -93,6 +122,19 @@ def cmd_init(args):
 def cmd_test(args):
     from .engagement import Engagement
     _banner()
+    _load_config(args)
+    # precedence: explicit CLI flag > rampart.yaml > built-in default
+    args.scope_file = getattr(args, "scope_file", None) or "SECURITY.md"
+    args.intel = getattr(args, "intel", None) or "deterministic"
+    args.application = getattr(args, "application", None) or "target"
+    args.login_path = getattr(args, "login_path", None) or "/api/login"
+    args.token_path = getattr(args, "token_path", None) or "token"
+    args.fail_on = getattr(args, "fail_on", None) or "high"
+    args.report = getattr(args, "report", None) or (
+        "html,md,json,sarif,compliance" if getattr(args, "_pipeline", False) else "html,md,json,sarif")
+    if not getattr(args, "target", None):
+        print(red("✗ no target given (pass --target or set it in rampart.yaml)"))
+        return 2
     approver = None
     if getattr(args, "approve_tier2", False):
         print(yellow("! --approve-tier2: Tier-2 (state-changing) actions will be auto-approved"))
@@ -137,6 +179,9 @@ def _print_summary(rb, chain_ok, eng):
     dropped_txt = f"{m['dropped_candidates']} dropped by FP gate"
     print()
     print(bold("  Results"))
+    riskc = red if m["risk_band"] in ("Critical", "High") else (yellow if m["risk_band"] == "Medium" else green)
+    print(f"   risk {riskc(str(m['risk_score']) + '/100 ' + m['risk_band'])} · "
+          f"{cyan(str(m['attack_chains']))} attack chain(s)")
     print(f"   {green(str(m['confirmed']))} confirmed · {dim(dropped_txt)} · validation rate {bold(vr)}")
     for f in rb.findings:
         if f.state == State.DROPPED:
@@ -159,6 +204,29 @@ def _ci_gate(rb, fail_on):
     if bad:
         return f"{len(bad)} validated finding(s) at or above '{fail_on}'"
     return ""
+
+
+# ------------------------------------------------------------------------- pipeline
+def cmd_pipeline(args):
+    """The full intense pipeline: scope-gate -> crawl -> map -> every class -> correlate -> report."""
+    args.crawl = True
+    args._pipeline = True
+    print(dim("  pipeline: recon crawl + full class coverage + attack-chain correlation"))
+    return cmd_test(args)
+
+
+# ------------------------------------------------------------------------- serve
+def cmd_serve(args):
+    from .server import serve
+    _banner()
+    print(f"{green('✓')} Rampart dashboard on http://{args.host}:{args.port}  "
+          + dim(f"(work-dir {os.path.abspath(args.work_dir)})"))
+    print(dim("  press Ctrl-C to stop"))
+    try:
+        serve(args.host, args.port, args.work_dir)
+    except KeyboardInterrupt:
+        print("\n  stopped")
+    return 0
 
 
 # ------------------------------------------------------------------------- retest
@@ -288,7 +356,8 @@ def build_parser():
     sp.add_argument("--scope-file", default="SECURITY.md")
 
     sp = sub.add_parser("test", help="run an authorized assessment (flagship)")
-    add_common(sp)
+    add_common(sp, need_target=False)
+    sp.add_argument("--config", default="", help="load defaults from a rampart.yaml (CLI flags win)")
     sp.add_argument("--repo", default="", help="repo path for source correlation + advisory patch")
     sp.add_argument("--openapi", default="", help="OpenAPI spec for the app model (grey-box)")
     sp.add_argument("--appmodel-seed", default="", help="seeded object-ownership file")
@@ -304,8 +373,32 @@ def build_parser():
     sp.add_argument("--fail-on", default="high", help="CI gate severity: low|medium|high|critical")
     sp.add_argument("--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)")
 
+    sp = sub.add_parser("pipeline", help="the full intense pipeline (crawl + all classes + chains + report)")
+    add_common(sp, need_target=False)
+    sp.add_argument("--config", default="")
+    sp.add_argument("--repo", default="")
+    sp.add_argument("--openapi", default="")
+    sp.add_argument("--appmodel-seed", default="")
+    sp.add_argument("--secrets", default="")
+    sp.add_argument("--intel", default="deterministic")
+    sp.add_argument("--application", default="target")
+    sp.add_argument("--login-path", default="/api/login")
+    sp.add_argument("--token-path", default="token")
+    sp.add_argument("--report", default="")
+    sp.add_argument("--scanners", default="")
+    sp.add_argument("--crawl", action="store_true")
+    sp.add_argument("--ci", action="store_true")
+    sp.add_argument("--fail-on", default="high")
+    sp.add_argument("--approve-tier2", action="store_true")
+
+    sp = sub.add_parser("serve", help="serve a local web dashboard over a run work-dir (zero-dep)")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8787)
+    sp.add_argument("--work-dir", default=".rampart")
+
     sp = sub.add_parser("scan", help="alias for test")
-    add_common(sp)
+    add_common(sp, need_target=False)
+    sp.add_argument("--config", default="")
     for a in ("--repo", "--openapi", "--appmodel-seed", "--secrets"):
         sp.add_argument(a, default="")
     sp.add_argument("--intel", default="deterministic")
@@ -343,6 +436,8 @@ def build_parser():
 
     sub.add_parser("tools", help="show which external OSS scanners are installed (doctor)")
 
+    sub.add_parser("mcp", help="run the MCP stdio server (scope-guarded tools for Claude Code / agents)")
+
     sp = sub.add_parser("llm-test", help="assess an LLM endpoint against the OWASP LLM Top 10")
     sp.add_argument("--scope-file", default="SECURITY.md")
     sp.add_argument("--target", required=True, help="authorized LLM endpoint base URL")
@@ -369,6 +464,10 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.cmd in ("test", "scan"):
         return cmd_test(args)
+    if args.cmd == "pipeline":
+        return cmd_pipeline(args)
+    if args.cmd == "serve":
+        return cmd_serve(args)
     if args.cmd == "init":
         return cmd_init(args)
     if args.cmd == "retest":
@@ -379,6 +478,10 @@ def main(argv=None):
         return cmd_verify_audit(args)
     if args.cmd == "tools":
         return cmd_tools(args)
+    if args.cmd == "mcp":
+        import sys as _sys
+        from .mcp import serve_stdio
+        return serve_stdio(_sys.stdin, _sys.stdout) or 0
     if args.cmd == "llm-test":
         return cmd_llm_test(args)
     build_parser().print_help()

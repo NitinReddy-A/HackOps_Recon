@@ -94,7 +94,9 @@ def render_html(rb) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     kpis = [
+        (f"{m['risk_score']}/100", f"Risk · {m['risk_band']}"),
         (m["confirmed"], "Confirmed findings"),
+        (m["attack_chains"], "Attack chains"),
         (m["dropped_candidates"], "Dropped (FP gate)"),
         (f"{m['finding_validation_rate']*100:.0f}%", "Validation rate"),
         (f"{m['endpoints_tested']}/{m['endpoints_discovered']}", "Endpoints tested"),
@@ -134,6 +136,39 @@ def render_html(rb) -> str:
     ]
     coverage_html = "".join(
         f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in coverage)
+
+    corr = scan.get("correlation") or {}
+    chains = corr.get("chains") or []
+    chains_html = ""
+    if chains:
+        parts = []
+        for c in chains:
+            color = sev_color.get(c["severity"], "#5b6570")
+            steps = "".join(f"<li>{_esc(s)}</li>" for s in c["steps"])
+            built = (f'<div class="sub">Built from: {_esc(", ".join(c.get("contributing", [])))}</div>'
+                     if c.get("contributing") else "")
+            parts.append(
+                f'<div class="finding" style="border-left-color:{color}"><div class="fbody">'
+                f'<h3 style="margin-top:12px"><span class="sev" style="background:{color}">'
+                f'{_esc(c["severity"])}</span> &nbsp;{_esc(c["title"])}</h3>'
+                f'<div class="sub">{_esc(c["rationale"])}</div><ol class="checks">{steps}</ol>{built}'
+                f'</div></div>')
+        chains_html = ('<div class="panel"><h2>Attack chains (kill-chain)</h2>'
+                       + "".join(parts) + "</div>")
+
+    roadmap = corr.get("roadmap") or []
+    roadmap_html = ""
+    if roadmap:
+        rows = []
+        for i, r in enumerate(roadmap, 1):
+            color = sev_color.get(r["severity"], "#5b6570")
+            classes = ", ".join(r.get("classes", []))
+            rows.append(
+                f'<div class="row"><span><span class="sev" style="background:{color}">{_esc(r["severity"])}'
+                f'</span> &nbsp;{i}. {_esc(r["summary"])} <span class="badge">{_esc(r.get("effort","?"))} effort</span>'
+                f'</span><b>{_esc(classes)}</b></div>')
+        roadmap_html = ('<div class="panel"><h2>Remediation roadmap (prioritized)</h2>'
+                        + "".join(rows) + "</div>")
 
     findings_html = []
     for f in rb.findings:
@@ -231,8 +266,11 @@ def render_html(rb) -> str:
 findings are shown as confirmed; dropped candidates are listed to make the false-positive
 discipline visible.</div>
 <div class="kpis">{kpi_html}</div>
+<div class="panel"><h2>Executive summary</h2><div>{_esc(rb.executive_summary(m))}</div></div>
 <div class="panel"><h2>Safety posture</h2><div class="grid2">{posture_html}</div></div>
 <div class="panel"><h2>Coverage &amp; methodology</h2><div class="grid2">{coverage_html}</div></div>
+{chains_html}
+{roadmap_html}
 <div class="panel"><h2>Findings</h2>
 {''.join(findings_html) if findings_html else '<div class="sub">No findings.</div>'}
 </div>

@@ -27,6 +27,7 @@ class ScanResult:
     classes_tested: list = field(default_factory=list)
     scanner_runs: list = field(default_factory=list)
     plan: dict = field(default_factory=dict)
+    correlation: object = None
 
 
 class Supervisor:

@@ -1,0 +1,41 @@
+# Rampart via Docker Compose.
+#
+# Run the CLI against an authorized target, mounting your working directory so
+# the scope file and generated reports (under .rampart/) live on the host:
+#
+#   docker compose run --rm rampart \
+#     test --scope-file SECURITY.md --target http://host.docker.internal:8080 \
+#          --report html,md,json,sarif
+#
+# Or launch the local dashboard:
+#   docker compose up rampart-dashboard   # then open http://127.0.0.1:8787
+#
+# Only test assets you own or are explicitly authorized to test.
+
+services:
+  rampart:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rampart:local
+    working_dir: /work
+    volumes:
+      # Mount the current directory so SECURITY.md is readable and reports are
+      # written back to the host at ./.rampart/reports/.
+      - .:/work
+    # Reach a target running on the host (Linux may need:
+    #   extra_hosts: ["host.docker.internal:host-gateway"]).
+    # Override the command at `docker compose run` time (see header above).
+
+  # Local web dashboard (zero-dep) at http://127.0.0.1:8787
+  rampart-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rampart:local
+    working_dir: /work
+    volumes:
+      - .:/work
+    command: ["serve", "--host", "0.0.0.0", "--port", "8787", "--work-dir", ".rampart"]
+    ports:
+      - "8787:8787"

@@ -1,0 +1,79 @@
+# ---------------------------------------------------------------------------
+# Rampart AppSec scan — COPY THIS TEMPLATE into your own repository.
+#
+# This workflow runs Rampart against a target you are AUTHORIZED to test and
+# uploads the results to GitHub code scanning (Security tab) as SARIF.
+#
+# Prerequisites:
+#   1. A SECURITY.md authorization contract committed to your repo. It names an
+#      accountable owner, the in-scope host(s), an expiry, and seeded test
+#      accounts. Without a valid, unexpired, in-scope contract Rampart refuses
+#      to run (fail-closed) — this is the authorization gate, by design.
+#   2. A reachable, authorized target (e.g. an ephemeral staging deploy, or a
+#      service you spin up earlier in the job). Point TARGET at it below.
+#
+# Only test assets you own or are explicitly authorized to test.
+# ---------------------------------------------------------------------------
+name: Rampart AppSec Scan
+
+on:
+  # Run on pushes to main. Adjust the triggers to suit your workflow
+  # (e.g. a nightly schedule, or after a staging deploy completes).
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Authorized target base URL to scan"
+        required: true
+        default: "http://127.0.0.1:8080"
+
+# Required so the job can upload SARIF to the Security tab.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  rampart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rampart
+        run: |
+          python -m pip install --upgrade pip
+          # Install from PyPI instead if you are not vendoring the source:
+          #   pip install rampart-appsec
+          pip install -e .
+
+      # OPTIONAL: start / wait for your authorized target here, e.g.
+      #   - name: Start target
+      #     run: |
+      #       python examples/demo_target/vulnerable_app.py --port 8080 &
+      #       sleep 2
+
+      - name: Run Rampart assessment
+        # --ci makes the job fail when a validated finding meets --fail-on.
+        # --report sarif writes SARIF that code scanning can ingest.
+        run: |
+          python -m rampart test \
+            --scope-file SECURITY.md \
+            --target "${{ github.event.inputs.target || 'http://127.0.0.1:8080' }}" \
+            --report sarif \
+            --ci \
+            --fail-on high
+        # The SARIF lands at <work-dir>/reports/report.sarif (default work-dir: .rampart).
+
+      - name: Upload SARIF to code scanning
+        # Upload even if the scan gate failed, so findings still show up.
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .rampart/reports/report.sarif
+          category: rampart

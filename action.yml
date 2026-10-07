@@ -1,0 +1,89 @@
+# Composite GitHub Action for Rampart.
+# Usage in a consumer workflow:
+#
+#   - uses: your-org/rampart@v0.3
+#     with:
+#       target: https://staging.example.com      # authorized target (required)
+#       scope-file: SECURITY.md                   # authorization contract
+#       fail-on: high                             # gate severity
+#   - uses: github/codeql-action/upload-sarif@v3
+#     with:
+#       sarif_file: ${{ steps.<id>.outputs.sarif-path }}
+#
+# Only scan assets you own or are explicitly authorized to test. Rampart
+# refuses to run without a valid, unexpired, in-scope SECURITY.md contract.
+name: "Rampart AppSec Scan"
+description: "Authorized, evidence-first web/API/LLM security scan that emits SARIF for GitHub code scanning."
+author: "Rampart contributors"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  scope-file:
+    description: "Path to the SECURITY.md authorization contract."
+    required: false
+    default: "SECURITY.md"
+  target:
+    description: "Authorized target base URL, e.g. https://staging.example.com."
+    required: true
+  report:
+    description: "Comma list of report formats to generate (html,md,json,sarif,compliance)."
+    required: false
+    default: "sarif"
+  fail-on:
+    description: "CI gate severity: low|medium|high|critical. The action exits nonzero on a validated finding at or above this."
+    required: false
+    default: "high"
+  scanners:
+    description: "Optional external OSS adapters to also run (e.g. nuclei,semgrep or 'all'). Empty uses only the built-in oracles."
+    required: false
+    default: ""
+  work-dir:
+    description: "Run directory for the audit log, evidence, and reports."
+    required: false
+    default: ".rampart"
+
+outputs:
+  sarif-path:
+    description: "Path to the generated SARIF report."
+    value: ${{ steps.sarif.outputs.sarif-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Rampart
+      shell: bash
+      # Install the package that ships with this action (github.action_path is
+      # the action's checked-out directory). Swap for `pip install rampart-appsec`
+      # to pull from PyPI instead.
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e "${{ github.action_path }}"
+
+    - name: Run Rampart assessment
+      id: rampart
+      shell: bash
+      run: |
+        python -m rampart test \
+          --scope-file "${{ inputs.scope-file }}" \
+          --target "${{ inputs.target }}" \
+          --work-dir "${{ inputs.work-dir }}" \
+          --report "${{ inputs.report }}" \
+          ${{ inputs.scanners != '' && format('--scanners {0}', inputs.scanners) || '' }} \
+          --ci \
+          --fail-on "${{ inputs.fail-on }}"
+      # Expose the SARIF path (<work-dir>/reports/report.sarif) for a follow-up
+      # github/codeql-action/upload-sarif step. Always set it, even on gate failure.
+
+    - name: Expose SARIF path
+      id: sarif
+      if: always()
+      shell: bash
+      run: echo "sarif-path=${{ inputs.work-dir }}/reports/report.sarif" >> "$GITHUB_OUTPUT"

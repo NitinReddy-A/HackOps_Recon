@@ -117,14 +117,24 @@ class Engagement:
         self.recon_pages = crawl.pages_visited
         return {"pages": crawl.pages_visited, "added_endpoints": added, "tech": crawl.tech}
 
+    # ------------------------------------------------------- correlation
+    def _correlate(self, findings):
+        from dataclasses import asdict
+        from .correlation import correlate
+        corr = correlate(findings, self.appmodel.to_dict(), getattr(self, "recon_tech", []))
+        return corr, asdict(corr)
+
     # --------------------------------------------------------------- scan
     def run_scan(self):
         self.recon()
         result = self.supervisor.run()
+        corr, corr_dict = self._correlate(result.findings)
+        result.correlation = corr
         self.store.save_appmodel(self.appmodel)
         self.store.save_hypotheses(result.hypotheses)
         self.store.save_findings(result.findings)
         self.store.save_scan({
+            "correlation": corr_dict,
             "endpoints_tested": result.endpoints_tested,
             "hypotheses": result.hypotheses,
             "phase_log": result.phase_log,
@@ -155,8 +165,10 @@ class Engagement:
                                    application=self.cfg.application, target_url=self.target_url,
                                    engagement_id=self.pipeline.engagement_id)
         res = assessment.run()
+        _corr, corr_dict = self._correlate(res.findings)
         self.store.save_findings(res.findings)
         self.store.save_scan({
+            "correlation": corr_dict,
             "endpoints_tested": len(res.probe_log),
             "hypotheses": [],
             "classes_tested": ["LLM"],

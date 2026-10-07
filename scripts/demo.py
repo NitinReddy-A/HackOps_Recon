@@ -167,7 +167,8 @@ def main():
         written, rb, chain_ok = eng.report(["html", "md", "json", "sarif", "compliance"])
 
         m = rb.metrics()
-        print(f"\n  {m['confirmed']} confirmed · {m['dropped_candidates']} dropped by FP gate "
+        print(f"\n  risk {m['risk_score']}/100 ({m['risk_band']}) · {m['attack_chains']} attack chain(s)")
+        print(f"  {m['confirmed']} confirmed · {m['dropped_candidates']} dropped by FP gate "
               f"· validation rate {m['finding_validation_rate']*100:.0f}%")
         for f in rb.findings:
             state = "CONFIRMED" if f.verification.validated else f.state

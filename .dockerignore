@@ -1,0 +1,19 @@
+# Keep the build context (and image) small and free of run artifacts.
+.git
+.gitignore
+**/__pycache__
+*.pyc
+.pytest_cache
+.rampart
+.rampart*
+reports
+research_notes
+*.log
+.venv
+venv
+.env
+.mypy_cache
+.ruff_cache
+dist
+build
+*.egg-info
