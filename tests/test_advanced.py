@@ -45,6 +45,19 @@ def test_active_confirms_mass_assignment_and_graphql(tmp_path, vuln_server):
     ma.assert_consistent()
 
 
+def test_smuggling_indicator_detects_proxy_and_is_never_confirmed():
+    from rampart.scanners.misconfig import proxy_indicators
+    assert proxy_indicators({"via": "1.1 varnish", "server": "nginx"}) == ["via"]
+    assert proxy_indicators({"x-cache": "HIT", "cf-ray": "abc"}) == ["cf-ray", "x-cache"]
+    assert proxy_indicators({"server": "nginx", "content-type": "text/html"}) == []   # no false alarm
+
+
+def test_no_smuggling_indicator_on_plain_demo(tmp_path, vuln_server):
+    # the demo has no intermediary -> no smuggling indicator (fires only on real proxy stacks)
+    findings = make_engagement(tmp_path, vuln_server.port).run_scan().findings
+    assert not [f for f in findings if f.vuln_class == "request-smuggling-indicator"]
+
+
 def test_active_writes_are_approved_and_audited(tmp_path, vuln_server):
     eng = _active_eng(tmp_path, vuln_server.port)
     eng.run_scan()

@@ -141,6 +141,8 @@ notify:
                 "parameters": [{"name": "email", "in": "query", "schema": {"type": "string"}}]}},
             "/api/account": {"post": {"security": []}},
             "/graphql": {"post": {"security": []}},
+            "/api/import": {"post": {"security": []}},
+            "/api/comments": {"get": {"security": []}, "post": {"security": []}},
         },
     }), encoding="utf-8")
     (tmp_path / "seed.json").write_text(json.dumps({

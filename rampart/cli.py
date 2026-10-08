@@ -94,6 +94,8 @@ def _make_config(args, approver=None):
         do_sast=getattr(args, "do_sast", False),
         do_sca=getattr(args, "do_sca", False),
         active=getattr(args, "active", False),
+        store_url=getattr(args, "store", "") or "",
+        sast_since=getattr(args, "since", "") or "",
         approver=approver,
     )
 
@@ -461,6 +463,7 @@ def build_parser():
     sp.add_argument("--oob", action="store_true", help="run an OOB collaborator to confirm blind SSRF out-of-band")
     sp.add_argument("--browser", action="store_true", help="run the headless-browser DOM-XSS pass (needs the [browser] extra)")
     sp.add_argument("--active", action="store_true", help="allow gated write/active probes (mass assignment, GraphQL); off by default")
+    sp.add_argument("--store", default="", help="multi-tenant store URL (sqlite:///runs.db or postgresql://…); default is file-based")
     sp.add_argument("--ci", action="store_true", help="nonzero exit if the severity gate is breached")
     sp.add_argument("--fail-on", default="high", help="CI gate severity: low|medium|high|critical")
     sp.add_argument("--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)")
@@ -484,6 +487,7 @@ def build_parser():
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
     sp.add_argument("--active", action="store_true")
+    sp.add_argument("--store", default="")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")
@@ -508,6 +512,8 @@ def build_parser():
         s.add_argument("--oob", action="store_true")
         s.add_argument("--browser", action="store_true")
         s.add_argument("--active", action="store_true", help="allow gated write/active probes (off by default)")
+        s.add_argument("--store", default="")
+        s.add_argument("--since", default="", help="diff-aware SAST: scan only .py files changed vs this git ref")
         s.add_argument("--ci", action="store_true")
         s.add_argument("--fail-on", default="high")
         s.add_argument("--approve-tier2", action="store_true")
@@ -543,6 +549,7 @@ def build_parser():
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
     sp.add_argument("--active", action="store_true")
+    sp.add_argument("--store", default="")
     sp.add_argument("--ci", action="store_true")
     sp.add_argument("--fail-on", default="high")
     sp.add_argument("--approve-tier2", action="store_true")

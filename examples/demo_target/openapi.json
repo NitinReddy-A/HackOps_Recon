@@ -132,6 +132,13 @@
     },
     "/graphql": {
       "post": { "summary": "GraphQL endpoint", "security": [] }
+    },
+    "/api/import": {
+      "post": { "summary": "Import an XML document", "security": [] }
+    },
+    "/api/comments": {
+      "get": { "summary": "View comments", "security": [] },
+      "post": { "summary": "Post a comment", "security": [] }
     }
   }
 }

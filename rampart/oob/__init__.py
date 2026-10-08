@@ -7,6 +7,6 @@ connected back. A hit is deterministic proof the server made the request. The co
 a tiny stdlib HTTP server you self-host (loopback by default).
 """
 from .collaborator import OOBCollaborator
-from .blind import blind_ssrf_scan
+from .blind import blind_ssrf_scan, blind_xxe_scan
 
-__all__ = ["OOBCollaborator", "blind_ssrf_scan"]
+__all__ = ["OOBCollaborator", "blind_ssrf_scan", "blind_xxe_scan"]

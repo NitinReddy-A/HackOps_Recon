@@ -53,14 +53,17 @@ class ProbeRunner:
         return self._execute(req, action, capture, summary)
 
     def post(self, path, json_body, session=None, payload_class="canary", rationale="",
-             hypothesis_id=None, capture=True, summary="") -> ProbeOutcome:
-        """A gated POST with a JSON body. Still a typed ToolCallRequest through the one
-        choke-point — POST classifies as Tier 2 (state-changing), so it is only permitted
-        when the scope/approver authorizes it (e.g. an authorized LLM-endpoint assessment)."""
+             hypothesis_id=None, capture=True, summary="", headers=None, content_type=None) -> ProbeOutcome:
+        """A gated POST with a JSON (or raw string) body. Still a typed ToolCallRequest through the
+        one choke-point — POST classifies as Tier 2 (state-changing), so it is only permitted when
+        the scope/approver authorizes it (e.g. --active, or an authorized LLM-endpoint assessment)."""
         body = json_body if isinstance(json_body, str) else _json.dumps(json_body)
+        hdrs = dict(headers or {})
+        if content_type:
+            hdrs["Content-Type"] = content_type
         action = ToolAction(method="POST", target_host=self.host, port=self.port, scheme=self.scheme,
                             path=path, body=body, body_class="json", use_session=session,
-                            payload_class=payload_class)
+                            headers=hdrs, payload_class=payload_class)
         req = ToolCallRequest(engagement_id=self.engagement_id, actor_role=self.actor_role,
                               actor_profile=self.actor_profile, action=action, declared_tier=2,
                               rationale=rationale, hypothesis_id=hypothesis_id, phase=self.phase)

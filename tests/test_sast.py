@@ -43,6 +43,17 @@ def test_sast_mode_runs_without_network(tmp_path, vuln_server):
     assert not [f for f in findings if f.verification.validated]   # nothing runtime-confirmed
 
 
+def test_diff_aware_scan_limits_to_changed_files():
+    from rampart.sast.scanner import changed_py_files
+    only = {"src/vulnerable_code.py"}
+    f_diff = scan_source(DEMO, "x", only_files=only)
+    assert f_diff, "should still find sinks in the one changed file"
+    assert all(f.affected_code.file == "src/vulnerable_code.py" for f in f_diff)
+    assert len(f_diff) <= len(scan_source(DEMO, "x"))
+    # graceful when the path is not a git repo / ref unknown
+    assert changed_py_files(os.path.join(DEMO, "__nope__"), "HEAD~1") is None
+
+
 def test_sast_dast_correlation(tmp_path, vuln_server):
     eng = _eng(tmp_path, vuln_server.port, do_dast=True, do_sast=True, do_sca=True)
     findings = eng.run_scan().findings

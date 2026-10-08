@@ -53,6 +53,8 @@ class EngagementConfig:
     do_sast: bool = False           # white-box source scanning (native AST + adapters)
     do_sca: bool = False            # dependency + secret scanning
     active: bool = False            # allow gated write/active probes (mass assignment, GraphQL, …)
+    store_url: str = ""             # multi-tenant store, e.g. sqlite:///runs.db or postgresql://…
+    sast_since: str = ""            # diff-aware SAST: scan only .py files changed vs this git ref
     llm_chat_path: str = "/chat"
     llm_input_field: str = "message"
     llm_output_field: str = "reply"
@@ -81,7 +83,12 @@ class Engagement:
             raise ScopeError(f"target host {self.host!r} is not in the SECURITY.md scope")
 
         self.resolver = config.resolver or default_resolver
-        self.store = RunStore(config.work_dir)
+        if config.store_url:
+            from .store import SqlRunStore
+            self.store = SqlRunStore(config.store_url, config.work_dir,
+                                     engagement=self.scope.authorization.ticket or "engagement")
+        else:
+            self.store = RunStore(config.work_dir)
         self.audit = AuditLog(self.store.audit_path)
         self.evidence = EvidenceStore(self.store.evidence_dir)
         self.budget = BudgetTracker(self.scope.limits)
@@ -133,9 +140,15 @@ class Engagement:
 
     # ------------------------------------------------------------- SAST
     def run_sast(self):
-        """White-box source scan (native AST sink patterns)."""
+        """White-box source scan (native AST sink patterns). Diff-aware when --since is set."""
         from .sast import scan_source
-        return scan_source(self.cfg.repo, self.pipeline.engagement_id)
+        only = None
+        if self.cfg.sast_since:
+            from .sast.scanner import changed_py_files
+            only = changed_py_files(self.cfg.repo, self.cfg.sast_since)
+            if only is not None and not only:
+                return []     # nothing changed vs the base ref
+        return scan_source(self.cfg.repo, self.pipeline.engagement_id, only_files=only)
 
     def run_sca(self):
         """Secret + dependency scanning over the source tree."""
@@ -296,12 +309,69 @@ class Engagement:
                                               confidence_score=0.95))
                 f.assert_consistent()
                 findings.append(f)
+
+        # Stored XSS (write-half): store a canary payload, then render the display page and detect
+        # execution. Writes require --active; render is out-of-pipeline (in-scope URL only).
+        if self.cfg.active:
+            import secrets as _secrets
+
+            from .browser.engine import _canary_payload
+            from .browser import run_stored_xss_oracle
+            from .runner import ProbeRunner
+            store_hints = ("comment", "post", "message", "review", "feedback", "guestbook", "note")
+            runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
+                                 self.host, self.port, self.scheme, actor_role="browser-stored",
+                                 actor_profile="stored-xss", phase="test")
+            for ep in self.appmodel.endpoints:
+                if (ep.method or "GET").upper() not in ("POST", "PUT"):
+                    continue
+                if not any(h in ep.path.lower() for h in store_hints):
+                    continue
+                token = "RAMPART_STORED_" + _secrets.token_hex(6)
+                payload = _canary_payload(token)
+                w = runner.post(ep.path, {"text": payload, "comment": payload, "message": payload,
+                                          "body": payload}, payload_class="boundary-probe",
+                                rationale="stored-XSS: persist a canary payload", summary="stored-xss write")
+                read_url = f"{self.target_url}{ep.path}"
+                v = run_stored_xss_oracle(driver, bool(w.executed), read_url, token)
+                if not v.validated:
+                    continue
+                f = Finding(
+                    engagement_id=self.pipeline.engagement_id,
+                    title=f"Stored XSS via {ep.method} {ep.path}", vuln_class="XSS", severity="high",
+                    confidence="confirmed", state=State.VALIDATED, cwe=["CWE-79"],
+                    owasp={"web_2025": ["A03:2025-Injection"]},
+                    cvss=CVSS(version="4.0", base_score=8.2, severity="high",
+                              vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:L/VA:N/SC:H/SI:L/SA:N"),
+                    asset={"type": "web", "application": self.cfg.application,
+                           "environment": "authorized", "target": self.target_url},
+                    endpoint={"method": ep.method, "url": read_url, "auth_required": False},
+                    description=(f"A payload stored via {ep.method} {ep.path} is rendered unescaped and "
+                                 "executes in every viewer's browser (stored XSS)."),
+                    impact="Persistent script execution against all viewers — mass session theft / account takeover.",
+                    root_cause="Stored user input is rendered without output encoding.",
+                    reproduction=Reproduction(prerequisites=["A headless browser"],
+                                              steps=[f"POST a script payload to {ep.path}",
+                                                     "Load the display page; observe execution"],
+                                              deterministic=True),
+                    references=["https://owasp.org/www-community/attacks/xss/",
+                                "https://cwe.mitre.org/data/definitions/79.html"],
+                    compliance_control_refs=["SOC2:CC6.8", "ISO27001:A.8.26"],
+                    dedupe_key=f"{self.cfg.application}:{ep.method}:{ep.path}:stored-xss",
+                    tags=["xss", "stored", "browser-confirmed"],
+                    verification=Verification(method="headless-browser-execution", validated=True,
+                                              validated_at=now_iso(), validator="browser-oracle",
+                                              independent_reproduction=True, reproductions=v.reproductions,
+                                              false_positive_checks=v.reasons + v.false_positive_checks,
+                                              confidence_score=0.95))
+                f.assert_consistent()
+                findings.append(f)
         return findings
 
     # --------------------------------------------------------------- OOB
     def run_oob(self, timeout: float = 3.0):
         """Start a loopback OOB collaborator and confirm blind SSRF via out-of-band callbacks."""
-        from .oob import OOBCollaborator, blind_ssrf_scan
+        from .oob import OOBCollaborator, blind_ssrf_scan, blind_xxe_scan
         from .runner import ProbeRunner
         collaborator = OOBCollaborator()
         collaborator.start()
@@ -309,8 +379,13 @@ class Engagement:
             runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
                                  self.host, self.port, self.scheme, actor_role="oob-worker",
                                  actor_profile="blind-ssrf", phase="test")
-            return blind_ssrf_scan(runner, collaborator, self.appmodel, self.target_url,
-                                   self.cfg.application, timeout=timeout)
+            out = blind_ssrf_scan(runner, collaborator, self.appmodel, self.target_url,
+                                  self.cfg.application, timeout=timeout)
+            # XXE uses POST (external entity → collaborator) — only when writes are authorized (--active)
+            if self.cfg.active:
+                out += blind_xxe_scan(runner, collaborator, self.appmodel, self.target_url,
+                                      self.cfg.application, timeout=timeout)
+            return out
         finally:
             collaborator.stop()
 

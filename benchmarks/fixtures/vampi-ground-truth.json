@@ -1,0 +1,9 @@
+{
+  "_comment": "Best-effort ground truth for OWASP VAmPI (vulnerable=1). Tune path_keys/expected to your VAmPI version; corpus_runner reports missed/unexpected so you can refine. VAmPI's docs enumerate the intended flaws (BOLA, SQLi-ish user lookup, mass-assignment admin flag on register, broken auth).",
+  "path_keys": ["/users/v1/register", "/users/v1/login", "/users/v1", "/books/v1", "/me"],
+  "expected": [
+    ["MASS_ASSIGNMENT", "/users/v1/register"],
+    ["IDOR/BOLA", "/users/v1"],
+    ["EXCESSIVE_DATA", "/users/v1"]
+  ]
+}

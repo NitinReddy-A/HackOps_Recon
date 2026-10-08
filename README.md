@@ -6,7 +6,7 @@
 ![Tests](https://img.shields.io/badge/tests-100%2B%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/benchmark-100%25%20precision%20%2F%20recall-brightgreen)
 ![Coverage](https://img.shields.io/badge/box-black%20%C2%B7%20grey%20%C2%B7%20white-blue)
-![Status](https://img.shields.io/badge/status-v0.7-orange)
+![Status](https://img.shields.io/badge/status-v0.8-orange)
 
 **Find, _prove_, and help _fix_ web, API, and LLM vulnerabilities in applications you are authorized to test — self-hosted, evidence-first, open source.**
 
@@ -326,11 +326,17 @@ Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (
 assignment/BOPLA, GraphQL, host-header injection, CSRF (passive partial) · ✅ GitLab CI template ·
 ✅ external vulnerable-app benchmark guide (crAPI/VAmPI/Juice Shop).
 
+**Done since:** ✅ **Blind XXE over OOB** (external-entity → collaborator callback, `--active`) ·
+✅ **stored-XSS write-half** (store payload → render in headless browser) · ✅ request-smuggling
+**passive indicator** (intermediary-detected → manual-review; never actively desynced) ·
+✅ **diff-aware SAST** (`--since <ref>` scans only changed files) · ✅ **multi-tenant SQL store**
+(`--store sqlite:///… | postgresql://…`) · ✅ **automated external-corpus scoring**
+(`benchmarks/corpus_runner.py` + VAmPI CI workflow).
+
 **Remaining (next):**
-- ☐ Blind XXE / deserialization over the OOB collaborator (infra is in place); stored-XSS write-half wiring
-- ☐ HTTP request smuggling — intentionally **human-only / passive-indicator** (active confirmation poisons shared infrastructure; not automated in a safety-first tool)
-- ☐ Diff-aware / PR-annotation runs; multi-tenant deploy (Postgres + object store) — storage backend abstraction
-- ☐ Automated external-corpus scoring (Docker-based crAPI/VAmPI/Juice Shop fixtures in CI)
+- ☐ Deserialization: black-box is surfaced white-box (CWE-502 SAST) + OOB class-probe; gadget-chain confirmation stays human-only
+- ☐ Object-store for evidence blobs in the multi-tenant deploy (DB docs done; evidence/audit still file-based)
+- ☐ Richer PR-annotation (inline review comments) beyond the SARIF code-scanning upload
 
 ## License
 

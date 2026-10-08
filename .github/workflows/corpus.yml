@@ -1,0 +1,43 @@
+# External-corpus scoring — runs Rampart against OWASP VAmPI (Dockerised) and scores precision/recall.
+# VAmPI has a vulnerable/secure switch (like Rampart's own demo), so it is ideal for CI scoring.
+# Manual/scheduled (not on every push) since it pulls an image and runs a live assessment.
+
+name: Corpus (VAmPI)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"   # weekly
+
+jobs:
+  vampi:
+    runs-on: ubuntu-latest
+    services:
+      vampi:
+        image: erev0s/vampi:latest
+        ports:
+          - 5000:5000
+        env:
+          vulnerable: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Wait for VAmPI
+        run: |
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:5000/ && break || sleep 2; done
+      - name: Score Rampart against VAmPI
+        run: |
+          python benchmarks/corpus_runner.py \
+            --target http://127.0.0.1:5000 \
+            --scope-file benchmarks/fixtures/vampi-SECURITY.md \
+            --ground-truth benchmarks/fixtures/vampi-ground-truth.json \
+            --crawl --active --min-recall 0.5
+      - name: Upload corpus report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vampi-corpus
+          path: .rampart-corpus/

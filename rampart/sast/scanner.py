@@ -161,7 +161,25 @@ def _finding(engagement_id, repo, rel, lines, hit) -> Finding:
     return f
 
 
-def scan_source(repo_path: str, engagement_id: str = "", max_files: int = 2000) -> list[Finding]:
+def changed_py_files(repo_path: str, base_ref: str) -> set[str] | None:
+    """Repo-relative .py files changed vs base_ref (diff-aware scanning). None if git/ref unavailable."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", repo_path, "diff", "--name-only", f"{base_ref}...HEAD"],
+                             capture_output=True, text=True, timeout=20)
+        if out.returncode != 0:
+            out = subprocess.run(["git", "-C", repo_path, "diff", "--name-only", base_ref],
+                                 capture_output=True, text=True, timeout=20)
+        if out.returncode != 0:
+            return None
+        return {ln.strip().replace("\\", "/") for ln in out.stdout.splitlines()
+                if ln.strip().endswith(".py")}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def scan_source(repo_path: str, engagement_id: str = "", max_files: int = 2000,
+                only_files: set | None = None) -> list[Finding]:
     findings: list[Finding] = []
     if not repo_path or not os.path.isdir(repo_path):
         return findings
@@ -171,10 +189,14 @@ def scan_source(repo_path: str, engagement_id: str = "", max_files: int = 2000) 
         for fn in sorted(files):
             if not fn.endswith(".py"):
                 continue
+            path = os.path.join(root, fn)
+            if only_files is not None:
+                rel = os.path.relpath(path, repo_path).replace("\\", "/")
+                if rel not in only_files:
+                    continue
             seen += 1
             if seen > max_files:
                 return findings
-            path = os.path.join(root, fn)
             try:
                 with open(path, "r", encoding="utf-8") as fh:
                     src = fh.read()

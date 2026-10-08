@@ -12,6 +12,19 @@ from ..schemas.finding import Finding, Reproduction, State, Remediation, Verific
 from ..util import now_iso
 
 _VERSION_RE = re.compile(r"\d+\.\d+")
+# Headers that reveal an intermediary (proxy/CDN/cache) — the precondition for request smuggling
+# and cache poisoning. We NEVER actively test smuggling (a desync poisons a socket/cache shared
+# with real users); we only surface the exposure as a human-review indicator.
+_PROXY_HEADER_HINTS = ("via", "x-cache", "x-served-by", "cf-ray", "x-varnish", "x-proxy-id",
+                       "x-forwarded-server", "fastly-", "x-amz-cf-", "x-envoy-")
+
+
+def proxy_indicators(headers_ci: dict) -> list:
+    hits = []
+    for k in headers_ci:
+        if any(k == h or k.startswith(h) for h in _PROXY_HEADER_HINTS):
+            hits.append(k)
+    return sorted(hits)
 
 
 def _headers_ci(response) -> dict:
@@ -208,6 +221,39 @@ def misconfig_checks(runner, appmodel, target_url, application="target", session
                                                                          "defaults mean a browser is needed to confirm"],
                                                   confidence_score=0.4))
                     findings.append(csrf)
+
+    # --- Request-smuggling exposure (PASSIVE indicator only — never actively tested) ---
+    proxies = proxy_indicators(h1)
+    if proxies:
+        findings.append(Finding(
+            engagement_id=runner.engagement_id,
+            title="Request-smuggling / cache-poisoning exposure (intermediary detected) — manual testing recommended",
+            vuln_class="request-smuggling-indicator", severity="info", confidence="tentative",
+            state=State.EVIDENCE_FOUND, cwe=["CWE-444"],
+            owasp={"web_2025": ["A02:2025-Security Misconfiguration"]},
+            asset={"type": "web", "application": application, "environment": "authorized", "target": target_url},
+            endpoint={"method": "GET", "url": f"{target_url}/", "auth_required": False},
+            description=(f"A front-end intermediary/CDN/cache was detected (headers: {', '.join(proxies)}). "
+                         "Front-end/back-end pairs can be vulnerable to HTTP request smuggling / cache poisoning."),
+            impact="If the proxy and origin disagree on request boundaries: request smuggling, cache poisoning.",
+            root_cause="A multi-hop HTTP path exists; boundary handling must be verified manually.",
+            reproduction=Reproduction(prerequisites=["None"], steps=["Observe proxy/cache response headers"],
+                                      deterministic=True),
+            remediation=Remediation(summary="Normalize ambiguous requests at the edge; keep front-end/back-end HTTP "
+                                    "parsers aligned; prefer HTTP/2 end-to-end.", type="config",
+                                    guidance="Manually test with PortSwigger's HTTP Request Smuggler / Param Miner; "
+                                    "Rampart does NOT auto-test this (a desync would affect real users).",
+                                    effort="medium"),
+            references=["https://portswigger.net/web-security/request-smuggling",
+                        "https://cwe.mitre.org/data/definitions/444.html"],
+            compliance_control_refs=["SOC2:CC7.1"],
+            dedupe_key=f"{application}:request-smuggling-indicator",
+            tags=["request-smuggling", "passive-indicator", "human-only", "needs-human-review"],
+            verification=Verification(method="passive-indicator", validated=False, validated_at=now_iso(),
+                                      validator="smuggling-indicator", reproductions=0,
+                                      false_positive_checks=["INDICATOR ONLY — an intermediary exists; smuggling "
+                                                             "requires expert manual confirmation (not auto-tested)"],
+                                      confidence_score=0.2)))
 
     # --- Server/software version disclosure (CWE-200) ---
     server = h1.get("server", "")

@@ -1,3 +1,4 @@
 from .runstore import RunStore
+from .sql_store import SqlRunStore
 
-__all__ = ["RunStore"]
+__all__ = ["RunStore", "SqlRunStore"]

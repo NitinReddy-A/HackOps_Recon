@@ -51,6 +51,7 @@ PRODUCTS = {
 
 FIXED = os.environ.get("RAMPART_DEMO_FIXED") == "1"
 _TOKENS: dict[str, str] = {}  # token -> user id
+_COMMENTS: list[str] = []     # stored-XSS sink (in-memory)
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -213,6 +214,30 @@ class Handler(BaseHTTPRequestHandler):
                         resp[priv] = data[priv]
             return self._send(200, resp)
 
+        # XXE: parse user XML with external entities enabled (VULN) → fetches SYSTEM URL (blind).
+        if self.path == "/api/import":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = (self.rfile.read(length) or b"").decode("utf-8", "replace")
+            m = re.search(r'SYSTEM\s+["\']([^"\']+)["\']', raw)
+            if (not FIXED) and m:                      # VULN: external entity resolution enabled
+                host = urlparse(m.group(1)).hostname or ""
+                if _is_internal(host):                 # demo only fetches loopback/internal (safe)
+                    try:
+                        urllib.request.urlopen(m.group(1), timeout=2).read(64)
+                    except Exception:  # noqa: BLE001
+                        pass
+            return self._send(200, {"status": "imported"})   # blind: same response either way
+
+        # Stored XSS: persist a comment, rendered back (unescaped in VULN) on GET /api/comments.
+        if self.path == "/api/comments":
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except json.JSONDecodeError:
+                return self._send(400, {"error": "bad json"})
+            _COMMENTS.append(str(data.get("text", ""))[:2000])
+            return self._send(200, {"stored": True, "count": len(_COMMENTS)})
+
         # GraphQL endpoint: introspection enabled in VULN mode.
         if self.path in ("/graphql", "/api/graphql"):
             length = int(self.headers.get("Content-Length", 0))
@@ -254,6 +279,13 @@ class Handler(BaseHTTPRequestHandler):
                 '<input name="q" placeholder="search"><button>Go</button></form>'
                 "</body></html>")
             return self._send_html(200, page)
+
+        # Stored-XSS display page: renders stored comments (unescaped in VULN mode).
+        if path == "/api/comments":
+            items = "".join(
+                (f"<li>{c}</li>" if not FIXED else f"<li>{html.escape(c)}</li>") for c in _COMMENTS)
+            return self._send_html(200, f"<!doctype html><html><body><h1>Comments</h1>"
+                                        f"<ul id='comments'>{items}</ul></body></html>")
 
         # Host-header injection: a password-reset link built from the incoming Host header.
         if path == "/api/reset":
