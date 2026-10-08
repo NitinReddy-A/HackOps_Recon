@@ -186,7 +186,10 @@ class Engagement:
         if not available():
             return []
         grpc_scheme = "grpcs" if self.scheme in ("https", "grpcs") else "grpc"
-        return scan_grpc(self.host, self.port, grpc_scheme, self.cfg.application, self.target_url)
+        # --active enables per-RPC checks: unauthenticated method invocation (read-ish methods only,
+        # with a negative control). Reflection + method enumeration + plaintext check run regardless.
+        return scan_grpc(self.host, self.port, grpc_scheme, self.cfg.application, self.target_url,
+                         active=self.cfg.active)
 
     def run_infra(self):
         """Live, scope-gated, non-destructive infrastructure / exposed-services scan.

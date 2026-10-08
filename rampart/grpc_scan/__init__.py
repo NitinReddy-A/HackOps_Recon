@@ -16,6 +16,7 @@ from .scan import (
     install_hint,
     is_grpc_response,
     scan_grpc,
+    scan_grpc_methods,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "install_hint",
     "is_grpc_response",
     "scan_grpc",
+    "scan_grpc_methods",
 ]

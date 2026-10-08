@@ -87,6 +87,29 @@ def text_severity(vuln: dict) -> str:
     return ds.get("severity", "") or ""
 
 
+def affected_symbols(vuln: dict, ecosystem: str, name: str) -> list[str]:
+    """Best-effort extraction of the vulnerable symbols/functions an advisory names, so a
+    call-graph reachability check can ask 'is THAT symbol actually called?'. Empty when the
+    advisory doesn't say (common for PyPI) — callers fall back to package-level reachability."""
+    syms: list[str] = []
+    for aff in vuln.get("affected", []) or []:
+        pkg = aff.get("package", {}) or {}
+        if pkg.get("ecosystem") != ecosystem or pkg.get("name") != name:
+            continue
+        eco = aff.get("ecosystem_specific", {}) or {}
+        for imp in eco.get("imports", []) or []:
+            path = imp.get("path", "")
+            for s in imp.get("symbols", []) or []:
+                syms.append(f"{path}.{s}" if path else s)
+            if path and not imp.get("symbols"):
+                syms.append(path)
+        ds = aff.get("database_specific", {}) or {}
+        for s in (ds.get("affected_functions") or ds.get("symbols") or []):
+            if isinstance(s, str):
+                syms.append(s)
+    return list(dict.fromkeys(syms))
+
+
 def cwe_ids(vuln: dict) -> list[str]:
     ds = vuln.get("database_specific", {}) or {}
     ids = ds.get("cwe_ids") or []

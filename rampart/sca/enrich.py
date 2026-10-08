@@ -89,26 +89,33 @@ def _py_import_names(pkg: str) -> list[str]:
     return _PY_IMPORT_ALIASES.get(pkg.lower(), [pkg.replace("-", "_").lower()])
 
 
-def reachable(dep, repo_path: str) -> bool | None:
-    """Import-level reachability: is this dependency actually imported by first-party source?
+def reachable(dep, repo_path: str, graph=None, affected_symbols=None):
+    """Reachability of a dependency. For Python this is a **call-graph** analysis (is the package
+    actually called, from a path reachable from an entrypoint, and — when the advisory names the
+    vulnerable symbol — is *that symbol* on a live path?). For npm it is import-level. Returns a
+    ``(bool_or_None, detail_dict)`` pair; ``detail`` is ``{}`` when nothing could be determined.
 
-    Returns True (imported somewhere), False (declared but never imported — likely transitive/unused),
-    or None (ecosystem not analysable here, so unknown — treated as 'assume reachable').
+    bool: True (reachable / vulnerable symbol exercised), False (unimported / transitive / test-only /
+    dead), None (no analysable source → unknown, assume reachable).
     """
     if not repo_path or not os.path.isdir(repo_path):
-        return None
+        return None, {}
     if dep.ecosystem == "PyPI":
-        names = _py_import_names(dep.name)
-        pats = [re.compile(rf"^\s*(?:from\s+{re.escape(n)}(?:\.|\s+import)|import\s+{re.escape(n)}(?:\.|\s|,|$))")
-                for n in names]
-        return _scan_source(repo_path, (".py",), pats)
+        from .reachability import analyze_repo, reachability, tier_to_bool
+        if graph is None:
+            graph = analyze_repo(repo_path)
+        if graph is None:
+            return None, {}
+        detail = reachability(graph, _py_import_names(dep.name), affected_symbols)
+        return tier_to_bool(detail["tier"]), detail
     if dep.ecosystem == "npm":
         n = re.escape(dep.name)
         pats = [re.compile(rf"""require\(\s*['"]{n}(?:/|['"])"""),
                 re.compile(rf"""from\s+['"]{n}(?:/|['"])""" ),
                 re.compile(rf"""import\s+['"]{n}(?:/|['"])""")]
-        return _scan_source(repo_path, (".js", ".ts", ".jsx", ".tsx", ".mjs"), pats)
-    return None       # Go/Maven/RubyGems/crates — not statically analysed here
+        b = _scan_source(repo_path, (".js", ".ts", ".jsx", ".tsx", ".mjs"), pats)
+        return b, ({"tier": "import-level"} if b is not None else {})
+    return None, {}       # Go/Maven/RubyGems/crates — not statically analysed here
 
 
 def _scan_source(repo_path: str, exts: tuple, patterns: list, max_files: int = 4000):
@@ -149,9 +156,22 @@ def _cves_of(finding) -> list[str]:
     return list(dict.fromkeys(out))
 
 
-def adjust(finding, dep, epss_map: dict, kev_set: set, reach) -> None:
+_TIER_REASON = {
+    "function-reachable": "the vulnerable symbol is called on a live (entrypoint-reachable) code path",
+    "reachable": "the package is called on a live (entrypoint-reachable) code path",
+    "imported-not-on-live-path": "used only in non-test code that is not reachable from an entrypoint (likely dead)",
+    "test-only": "used only in test code",
+    "imported-unused": "imported but never called (likely transitive/unused)",
+    "unreachable": "not imported by first-party source (transitive/unused)",
+    "import-level": "imported by first-party source (import-level)",
+}
+
+
+def adjust(finding, dep, epss_map: dict, kev_set: set, reach, reach_detail=None) -> None:
     """Fold EPSS/KEV/reachability into the finding: set exploit_intel, tags, and an ADJUSTED
     severity + priority (P0 critical-now … P3 lowest). Mutates the finding in place."""
+    reach_detail = reach_detail or {}
+    tier = reach_detail.get("tier")
     cves = _cves_of(finding)
     epss_vals = [epss_map[c]["epss"] for c in cves if c in epss_map]
     epss = max(epss_vals) if epss_vals else None
@@ -170,10 +190,15 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach) -> None:
     elif epss is not None and epss >= 0.1:
         reasons.append(f"moderate EPSS {epss:.0%}")
     if reach is False:
-        adj_rank = max(0, adj_rank - 1)                 # declared but not imported => de-prioritise
-        reasons.append("not imported by first-party source (likely transitive/unused)")
+        # not reachable (unimported / transitive / test-only / dead). De-prioritise harder for the
+        # clearly-irrelevant tiers than for a merely-import-level miss.
+        drop = 2 if tier in ("unreachable", "imported-unused", "test-only") else 1
+        adj_rank = max(0, adj_rank - drop)
+        reasons.append(_TIER_REASON.get(tier, "not reachable from first-party source"))
     elif reach is True:
-        reasons.append("reachable: imported by first-party source")
+        if tier == "function-reachable":
+            adj_rank = max(adj_rank, 3)                 # vuln symbol actually exercised => never low
+        reasons.append(_TIER_REASON.get(tier, "reachable from first-party source"))
 
     adjusted_severity = _RANK_SEV[adj_rank]
     # Priority P0..P3: KEV->P0; else by adjusted severity, nudged by reachability.
@@ -193,6 +218,9 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach) -> None:
         "epss_percentile": round(percentile, 4) if percentile is not None else None,
         "kev": kev,
         "reachable": reach,
+        "reachability_tier": tier,
+        "reachable_symbols": reach_detail.get("reachable_symbols", []),
+        "vulnerable_symbol_reachable": reach_detail.get("vulnerable_symbol_reachable"),
         "base_severity": finding.severity,
         "adjusted_severity": adjusted_severity,
         "priority": priority,
@@ -203,10 +231,10 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach) -> None:
         finding.tags.append("kev")
     if epss is not None:
         finding.tags.append(f"epss:{epss:.0%}")
-    if reach is True:
-        finding.tags.append("reachable")
-    elif reach is False:
-        finding.tags.append("transitive-unreachable")
+    if tier:
+        finding.tags.append(f"reach:{tier}")
+    if reach_detail.get("vulnerable_symbol_reachable") is True:
+        finding.tags.append("vuln-symbol-reachable")
     finding.tags.append(f"priority:{priority}")
 
     # Reflect the adjusted severity on the finding (base CVSS stays in finding.cvss.base_score).
@@ -221,40 +249,57 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach) -> None:
     if intel["epss"] is not None:
         bits.append(f"EPSS {intel['epss']:.0%} (pctl {intel['epss_percentile']:.0%})"
                     if intel["epss_percentile"] is not None else f"EPSS {intel['epss']:.0%}")
-    if reach is True:
-        bits.append("reachable in source")
+    if tier == "function-reachable":
+        bits.append("vulnerable symbol reachable (call-graph)")
+    elif reach is True:
+        bits.append("reachable (call-graph)")
     elif reach is False:
-        bits.append("not imported (transitive/unused)")
+        bits.append(f"not reachable ({tier})")
     if bits:
         finding.description += f"  [Exploit intel: {', '.join(bits)} → priority {priority}]"
 
 
 def enrich_findings(findings, deps_by_key: dict, repo_path: str = "", fetch_epss_fn=None,
-                    fetch_kev_fn=None, online: bool = False) -> list:
-    """Enrich SCA findings in place with EPSS/KEV/reachability and re-sort by priority then severity.
+                    fetch_kev_fn=None, online: bool = False, affected_by_key: dict = None) -> list:
+    """Enrich SCA findings in place with EPSS/KEV + call-graph reachability, re-sorted by priority.
 
-    Reachability is always computed (it's local & free). EPSS/KEV are fetched only when ``online``
-    is set or an explicit fetch seam is provided — so callers that don't opt into the extra external
-    services (or tests) never hit the network and severities stay deterministic.
+    Reachability is always computed (it's local & free) via a Python call graph built ONCE for the
+    repo. EPSS/KEV are fetched only when ``online`` is set or an explicit fetch seam is provided — so
+    callers that don't opt into the extra external services (or tests) never hit the network and
+    severities stay deterministic.
     """
     if not findings:
         return findings
+    affected_by_key = affected_by_key or {}
     all_cves = []
     for f in findings:
         all_cves.extend(_cves_of(f))
     want_net = online or fetch_epss_fn is not None or fetch_kev_fn is not None
     epss_map = fetch_epss(all_cves, fetch=fetch_epss_fn) if want_net else {}
     kev_set = fetch_kev(fetch=fetch_kev_fn) if want_net else set()
+    # Build the Python call graph once and reuse it for every PyPI dependency.
+    graph = None
+    if repo_path and os.path.isdir(repo_path):
+        try:
+            from .reachability import analyze_repo
+            graph = analyze_repo(repo_path)
+        except Exception:  # noqa: BLE001 - reachability is best-effort; never break a scan
+            graph = None
     reach_cache: dict = {}
     for f in findings:
         dep = deps_by_key.get(f.dedupe_key)
         if dep is not None:
-            if dep.key() not in reach_cache:
-                reach_cache[dep.key()] = reachable(dep, repo_path)
-            r = reach_cache[dep.key()]
+            affected = affected_by_key.get(f.dedupe_key) or []
+            ckey = (dep.key(), tuple(affected))
+            if ckey not in reach_cache:
+                try:
+                    reach_cache[ckey] = reachable(dep, repo_path, graph=graph, affected_symbols=affected)
+                except Exception:  # noqa: BLE001
+                    reach_cache[ckey] = (None, {})
+            r, detail = reach_cache[ckey]
         else:
-            r = None
-        adjust(f, dep, epss_map, kev_set, r)
+            r, detail = None, {}
+        adjust(f, dep, epss_map, kev_set, r, reach_detail=detail)
     _pr = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     findings.sort(key=lambda f: (_pr.get(f.exploit_intel.get("priority", "P3"), 3),
                                  -_SEV_RANK.get(f.severity, 0), f.title))

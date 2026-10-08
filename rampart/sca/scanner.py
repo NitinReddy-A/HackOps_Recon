@@ -140,6 +140,7 @@ def scan_sca(repo_path: str, engagement_id: str = "", online: bool = False, fetc
         return []
     findings: list[Finding] = []
     deps_by_key: dict = {}
+    affected_by_key: dict = {}
     for dep in deps[:max_packages]:
         advisories = _osv.query_package(dep.ecosystem, dep.name, dep.version, fetch=fetch, timeout=timeout)
         if advisories:
@@ -147,10 +148,15 @@ def scan_sca(repo_path: str, engagement_id: str = "", online: bool = False, fetc
             f.assert_consistent()
             findings.append(f)
             deps_by_key[f.dedupe_key] = dep
+            syms = []
+            for v in advisories:
+                syms.extend(_osv.affected_symbols(v, dep.ecosystem, dep.name))
+            affected_by_key[f.dedupe_key] = list(dict.fromkeys(syms))
     if enrich and findings:
         from .enrich import enrich_findings
         enrich_findings(findings, deps_by_key, repo_path=repo_path, online=intel_online,
-                        fetch_epss_fn=fetch_epss_fn, fetch_kev_fn=fetch_kev_fn)
+                        fetch_epss_fn=fetch_epss_fn, fetch_kev_fn=fetch_kev_fn,
+                        affected_by_key=affected_by_key)
     else:
         _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
         findings.sort(key=lambda f: (_sev_rank.get(f.severity, 5), f.title))
