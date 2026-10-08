@@ -1,0 +1,25 @@
+# Intentionally-insecure Kubernetes manifest fixture for Rampart's IaC scanner tests.
+# DO NOT deploy. Every setting here is a deliberate misconfiguration.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rampart-demo-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      hostNetwork: true
+      containers:
+        - name: web
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+          securityContext:
+            privileged: true
+            runAsNonRoot: false

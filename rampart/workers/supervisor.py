@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..agents import run_planner
+from ..orchestration import Task, TaskGraph, run_graph
 from ..runner import ProbeRunner
 from ..scanners import misconfig_checks, security_headers_check, sensitive_files_check
 from ..schemas.finding import State
@@ -36,7 +37,8 @@ class Supervisor:
     ACTIVE_CLASSES = {"MASS_ASSIGNMENT", "GRAPHQL", "XXE"}
 
     def __init__(self, pipeline, evidence_store, session_manager, validator, intel, appmodel,
-                 host, port, scheme, target_url, application, scanners=None, active=False):
+                 host, port, scheme, target_url, application, scanners=None, active=False,
+                 max_workers=None):
         self.pipeline = pipeline
         self.evidence = evidence_store
         self.sessions = session_manager
@@ -50,6 +52,14 @@ class Supervisor:
         self.application = application
         self.scanners = scanners or []
         self.active = active
+        # Thread-pool cap for the parallel hypothesis fan-out. The per-host rate limit and
+        # total-request budget remain the real throttle on traffic; this only bounds threads.
+        # Default: the scope's max_concurrent_workers (fallback 4) so a sequential-equivalent
+        # run stays polite, while an operator can dial it up for the "hundreds of agents" case.
+        if max_workers is None:
+            limits = getattr(getattr(pipeline, "scope", None), "limits", None)
+            max_workers = getattr(limits, "max_concurrent_workers", 4) or 4
+        self.max_workers = max(1, int(max_workers))
 
     def _log(self, result, phase, msg):
         result.phase_log.append({"ts": now_iso(), "phase": phase, "msg": msg})
@@ -114,37 +124,40 @@ class Supervisor:
         hyps.sort(key=lambda h: order.get(h["vuln_class"], 99))
         self._log(result, "plan", f"planner order: {', '.join(plan.get('order', classes))}")
 
-        # Phase: test + validate (each hypothesis routed to its worker + independent oracle)
+        # Phase: test + validate — fan every hypothesis out across the graph orchestrator so
+        # independent hypotheses are tested and validated in PARALLEL (each on its own worker +
+        # independent oracle). Results are reassembled in planned order below, so a parallel run
+        # yields byte-identical findings to a sequential one; concurrency changes only wall-clock.
+        graph = TaskGraph()
+        for h in hyps:
+            h["_task_id"] = graph.add(Task(
+                name=f"hyp:{h['vuln_class']}:{h['id']}", kind="hypothesis",
+                run=(lambda ctx, hh=h: self._investigate(hh)),
+            ))
+        gres = run_graph(graph, max_workers=self.max_workers)
+        result.plan["parallel"] = {"max_workers": self.max_workers,
+                                   "peak_concurrency": gres.max_concurrency,
+                                   "duration_s": gres.duration_s}
+        self._log(result, "test",
+                  f"fanned {len(hyps)} hypothesis(es) across the orchestrator "
+                  f"(max_workers={self.max_workers}, peak={gres.max_concurrency})")
+
+        # Deterministic reassembly: walk hypotheses in planned order and fold each task's record.
         for h in hyps:
             result.endpoints_tested += 1
-            worker = self._worker_for(h["vuln_class"])
-            if worker is None:
-                h["status"] = "no-worker"
-                self._log(result, "test", f"[{h['id']}] no worker for class {h['vuln_class']} -> skipped")
+            task = graph.tasks.get(h.pop("_task_id", ""))
+            if task is None or task.status == "error":
+                h["status"] = "error"
+                err = (task.error if task else "task missing")
+                self._log(result, "test", f"[{h['id']}] worker error -> skipped ({err})")
                 continue
-            finding = worker.investigate(h, self.target_url)
-            if finding is None:
-                h["status"] = "blocked"
-                self._log(result, "test", f"[{h['id']}] blocked by policy")
-                continue
-            if finding.state != State.EVIDENCE_FOUND:
-                h["status"] = "no-signal"
-                finding.state = State.DROPPED
-                finding.status = "dropped"
+            rec = task.value or {}
+            for phase, msg in rec.get("logs", []):
+                self._log(result, phase, msg)
+            h["status"] = rec.get("status", "error")
+            finding = rec.get("finding")
+            if finding is not None:
                 result.findings.append(finding)
-                self._log(result, "test", f"[{h['id']}] no initial signal -> dropped")
-                continue
-
-            # GATE: independent validation (separate component, clean state)
-            validated = self.validator.validate(finding, h)
-            h["status"] = "validated" if validated else "dropped-by-validator"
-            h["finding_id"] = finding.id
-            if validated and finding.vuln_class == "IDOR/BOLA":
-                self._draft_narrative(finding, h)
-            result.findings.append(finding)
-            self._log(result, "validate",
-                      f"[{h['id']}:{h['vuln_class']}] {'CONFIRMED' if validated else 'dropped'} "
-                      f"({finding.verification.reproductions} reproductions)")
 
         # Phase: external OSS scanner adapters (graceful — skipped if the tool is not installed)
         for adapter in self.scanners:
@@ -167,6 +180,44 @@ class Supervisor:
             result.scanner_runs.append(run_info)
 
         return result
+
+    def _investigate(self, h) -> dict:
+        """Test + independently validate ONE hypothesis. Runs on a worker thread.
+
+        Returns a self-contained record ``{status, finding, logs}``; it never mutates the shared
+        ScanResult. All side effects (requests, evidence, audit) flow through the thread-safe
+        policy pipeline / audit log / evidence store, so N of these run concurrently and safely.
+        """
+        rec = {"status": "error", "finding": None, "logs": []}
+        worker = self._worker_for(h["vuln_class"])
+        if worker is None:
+            rec["status"] = "no-worker"
+            rec["logs"].append(("test", f"[{h['id']}] no worker for class {h['vuln_class']} -> skipped"))
+            return rec
+        finding = worker.investigate(h, self.target_url)
+        if finding is None:
+            rec["status"] = "blocked"
+            rec["logs"].append(("test", f"[{h['id']}] blocked by policy"))
+            return rec
+        if finding.state != State.EVIDENCE_FOUND:
+            rec["status"] = "no-signal"
+            finding.state = State.DROPPED
+            finding.status = "dropped"
+            rec["finding"] = finding
+            rec["logs"].append(("test", f"[{h['id']}] no initial signal -> dropped"))
+            return rec
+
+        # GATE: independent validation (separate component, clean state)
+        validated = self.validator.validate(finding, h)
+        rec["status"] = "validated" if validated else "dropped-by-validator"
+        h["finding_id"] = finding.id
+        if validated and finding.vuln_class == "IDOR/BOLA":
+            self._draft_narrative(finding, h)
+        rec["finding"] = finding
+        rec["logs"].append(("validate",
+                            f"[{h['id']}:{h['vuln_class']}] {'CONFIRMED' if validated else 'dropped'} "
+                            f"({finding.verification.reproductions} reproductions)"))
+        return rec
 
     def _draft_narrative(self, finding, hyp):
         """Reporter role: draft prose from VALIDATED evidence only (never invents evidence)."""

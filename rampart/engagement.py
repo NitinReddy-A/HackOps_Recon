@@ -48,10 +48,14 @@ class EngagementConfig:
     agents: bool = False            # run the multi-agent reasoning layer (business-logic / auth flows)
     oob: bool = False               # run the OOB collaborator for blind SSRF/XXE detection
     browser: bool = False           # run the optional headless-browser DOM-XSS pass ([browser] extra)
+    grpc: bool = False              # probe a gRPC endpoint (server reflection exposure; [grpc] extra)
     # --- scan stages (separation of concerns; a "mode" sets these) ---
     do_dast: bool = True            # black-box HTTP testing (the oracle classes + misconfig)
     do_sast: bool = False           # white-box source scanning (native AST + adapters)
     do_sca: bool = False            # dependency + secret scanning
+    do_iac: bool = False            # white-box IaC / cloud-config scanning (Terraform/CFN/K8s/Docker)
+    sca_online: bool = False        # match pinned deps against OSV.dev (operator opt-in; sends names)
+    parallel: int = 0               # orchestrator worker cap (0 = scope.limits.max_concurrent_workers)
     active: bool = False            # allow gated write/active probes (mass assignment, GraphQL, …)
     store_url: str = ""             # multi-tenant store, e.g. sqlite:///runs.db or postgresql://…
     sast_since: str = ""            # diff-aware SAST: scan only .py files changed vs this git ref
@@ -116,7 +120,8 @@ class Engagement:
         self.supervisor = Supervisor(self.pipeline, self.evidence, self.sessions, self.validator,
                                      self.intel, self.appmodel, self.host, self.port, self.scheme,
                                      self.target_url, config.application, scanners=self.scanner_adapters,
-                                     active=config.active)
+                                     active=config.active,
+                                     max_workers=(config.parallel or None))
 
     # --------------------------------------------------------------- recon
     def recon(self):
@@ -151,10 +156,31 @@ class Engagement:
         return scan_source(self.cfg.repo, self.pipeline.engagement_id, only_files=only)
 
     def run_sca(self):
-        """Secret + dependency scanning over the source tree."""
+        """Software Composition Analysis: secrets + dependency inventory, and — when the operator
+        opts in with --sca-online — full OSV advisory matching with concrete upgrade remediation."""
         from .sast import scan_dependencies, scan_secrets
-        return scan_secrets(self.cfg.repo, self.pipeline.engagement_id) \
+        findings = scan_secrets(self.cfg.repo, self.pipeline.engagement_id) \
             + scan_dependencies(self.cfg.repo, self.pipeline.engagement_id)
+        if self.cfg.sca_online:
+            from .sca import scan_sca
+            findings += scan_sca(self.cfg.repo, self.pipeline.engagement_id, online=True)
+        return findings
+
+    def run_iac(self):
+        """White-box IaC / cloud-config scan (Terraform, CloudFormation, Kubernetes, Dockerfile)."""
+        from .iac import scan_iac
+        return scan_iac(self.cfg.repo, engagement_id=self.pipeline.engagement_id)
+
+    def run_grpc(self):
+        """Probe the target as a gRPC endpoint for server-reflection exposure (CWE-200).
+
+        Trust boundary: like the headless browser, the gRPC channel issues its OWN requests
+        outside the HTTP policy pipeline, so it is only ever pointed at the in-scope target."""
+        from .grpc_scan import available, scan_grpc
+        if not available():
+            return []
+        grpc_scheme = "grpcs" if self.scheme in ("https", "grpcs") else "grpc"
+        return scan_grpc(self.host, self.port, grpc_scheme, self.cfg.application, self.target_url)
 
     def _correlate_sast_dast(self, findings):
         """Link runtime-confirmed DAST findings to a source location sharing the CWE —
@@ -200,12 +226,14 @@ class Engagement:
         else:
             result = ScanResult()
             result.phase_log.append({"phase": "dast", "msg": "skipped (stage disabled)"})
-        # White-box stages (source + dependencies/secrets) feed the same finding set.
+        # White-box stages (source + dependencies/secrets + IaC) feed the same finding set.
         self.sast_findings = []
         if self.cfg.do_sast:
             self.sast_findings += self.run_sast()
         if self.cfg.do_sca:
             self.sast_findings += self.run_sca()
+        if self.cfg.do_iac:
+            self.sast_findings += self.run_iac()
         if self.sast_findings:
             result.findings = result.findings + self.sast_findings
             if "SAST" not in result.classes_tested:
@@ -214,6 +242,11 @@ class Engagement:
             result.findings = result.findings + self.run_oob()
         if self.cfg.browser:
             result.findings = result.findings + self.run_browser()
+        if self.cfg.grpc:
+            gfindings = self.run_grpc()
+            result.findings = result.findings + gfindings
+            if gfindings and "gRPC" not in result.classes_tested:
+                result.classes_tested = list(result.classes_tested) + ["gRPC"]
         # correlate (includes SAST<->DAST correlation below)
         self._correlate_sast_dast(result.findings)
         corr, corr_dict = self._correlate(result.findings)

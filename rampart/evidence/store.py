@@ -7,6 +7,7 @@ reference in a finding resolves to an immutable, verifiable blob. Redaction is o
 from __future__ import annotations
 
 import os
+import secrets as _secrets
 
 from ..schemas.finding import Evidence
 from ..util import redact_headers, scrub_secrets, sha256_hex
@@ -22,8 +23,20 @@ class EvidenceStore:
         path = os.path.join(self.base_dir, digest[:2], digest)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if not os.path.exists(path):
-            with open(path, "w", encoding="utf-8") as fh:
+            # Content-addressed + idempotent: safe for concurrent writers. Write to a unique
+            # temp file then atomically replace, so two threads racing on the same digest can
+            # never leave a torn/half-written blob (os.replace is atomic on POSIX and Windows).
+            tmp = f"{path}.{_secrets.token_hex(4)}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(content)
+            try:
+                os.replace(tmp, path)
+            except OSError:
+                # Lost the race (another thread already produced the identical blob); drop temp.
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
         return digest
 
     def put_text(self, kind: str, summary: str, text: str) -> Evidence:

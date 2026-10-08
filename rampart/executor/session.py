@@ -11,6 +11,7 @@ it is recorded in the audit log as a ``system`` event but does not run as an att
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 
 from ..schemas.audit import AuditEvent
@@ -56,6 +57,18 @@ class SessionManager:
         self.resolver = resolver
         self.audit = audit_log
         self._tokens: dict[str, str] = {}
+        # One lock guards the cache dict; per-account locks let different accounts
+        # authenticate in parallel while the *same* account dedupes to a single login.
+        self._cache_lock = threading.Lock()
+        self._acct_locks: dict[str, threading.Lock] = {}
+
+    def _acct_lock(self, account_id: str) -> threading.Lock:
+        with self._cache_lock:
+            lock = self._acct_locks.get(account_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._acct_locks[account_id] = lock
+            return lock
 
     def _resolve_ip(self, host: str) -> str:
         ips = self.resolver(host)
@@ -64,31 +77,42 @@ class SessionManager:
         return ips[0]
 
     def establish(self, account_id: str, fresh: bool = False) -> str:
-        if not fresh and account_id in self._tokens:
-            return self._tokens[account_id]
-        acct = self.scope.account(account_id)
-        if acct is None:
-            raise SessionError(f"unknown seeded account {account_id!r}")
-        creds = self.secrets.resolve(acct.secret_ref)
-        body = json.dumps({
-            self.login.username_field: creds["username"],
-            self.login.password_field: creds["password"],
-        })
-        ip = self._resolve_ip(self.login.host)
-        headers = {"Content-Type": "application/json", **self.login.extra_headers}
-        resp = raw_request(self.login.scheme, self.login.host, self.login.port, ip,
-                           self.login.method, self.login.path, headers=headers, body=body)
-        if resp.status != 200:
-            raise SessionError(f"login for {account_id!r} failed with HTTP {resp.status}")
-        try:
-            token = _dig(json.loads(resp.body), self.login.token_json_path)
-        except json.JSONDecodeError as exc:
-            raise SessionError(f"login response for {account_id!r} was not JSON: {exc}") from exc
-        if not token:
-            raise SessionError(f"no token at {self.login.token_json_path!r} for {account_id!r}")
-        self._tokens[account_id] = token
-        self._audit_session(account_id, ip, fresh)
-        return token
+        if not fresh:
+            with self._cache_lock:
+                cached = self._tokens.get(account_id)
+            if cached is not None:
+                return cached
+        # Serialize logins for this one account so parallel callers don't all hit /login.
+        with self._acct_lock(account_id):
+            if not fresh:
+                with self._cache_lock:
+                    cached = self._tokens.get(account_id)
+                if cached is not None:
+                    return cached
+            acct = self.scope.account(account_id)
+            if acct is None:
+                raise SessionError(f"unknown seeded account {account_id!r}")
+            creds = self.secrets.resolve(acct.secret_ref)
+            body = json.dumps({
+                self.login.username_field: creds["username"],
+                self.login.password_field: creds["password"],
+            })
+            ip = self._resolve_ip(self.login.host)
+            headers = {"Content-Type": "application/json", **self.login.extra_headers}
+            resp = raw_request(self.login.scheme, self.login.host, self.login.port, ip,
+                               self.login.method, self.login.path, headers=headers, body=body)
+            if resp.status != 200:
+                raise SessionError(f"login for {account_id!r} failed with HTTP {resp.status}")
+            try:
+                token = _dig(json.loads(resp.body), self.login.token_json_path)
+            except json.JSONDecodeError as exc:
+                raise SessionError(f"login response for {account_id!r} was not JSON: {exc}") from exc
+            if not token:
+                raise SessionError(f"no token at {self.login.token_json_path!r} for {account_id!r}")
+            with self._cache_lock:
+                self._tokens[account_id] = token
+            self._audit_session(account_id, ip, fresh)
+            return token
 
     def fresh_session(self, account_id: str) -> str:
         return self.establish(account_id, fresh=True)

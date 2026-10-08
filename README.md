@@ -192,15 +192,19 @@ Rampart separates concerns so each capability runs in isolation; `pipeline` comp
 rampart recon   --target ...                 # discovery only (crawl + map + fingerprint)
 rampart dast    --target ...                 # black-box web/API oracle classes + misconfig
 rampart api     --target ... --openapi ...   # API-focused (grey-box with a spec/seed)
-rampart sast    --target ... --repo .        # white-box: native AST sinks + secrets + deps
-rampart sca     --target ... --repo .        # dependencies + secrets
+rampart sast    --target ... --repo .        # white-box: native AST sinks + secrets + deps + IaC
+rampart sca     --target ... --repo . --sca-online   # full SCA: deps matched against OSV.dev
+rampart iac     --target ... --repo .        # Terraform / CloudFormation / Kubernetes / Dockerfile
+rampart grpc    --target grpc://host:50051   # gRPC server-reflection exposure ([grpc] extra)
 rampart llm-test --target ...                # OWASP LLM Top 10
 rampart agents  --target ... --intel claude-code   # agentic business-logic reasoning
-rampart pipeline --target ... --repo .       # everything, correlated
+rampart pipeline --target ... --repo .       # everything, correlated, run in parallel
 rampart features                             # list every capability + how to run it
 ```
 
-**White-box (SAST/SCA).** A native, zero-dep Python-AST scanner flags high-signal sinks (command/SQL/code injection, insecure deserialization, SSRF, path traversal, weak crypto, debug-mode) — each only when the dangerous argument is non-constant, to keep false positives low — plus a secret scanner and dependency inventory. External SAST/SCA (Opengrep, Bandit, Trivy, gitleaks) plug in via SARIF adapters (Opengrep is the OSS default; Semgrep `--config auto` is avoided for licensing/offline reasons). **SAST↔DAST correlation** is the differentiator: a runtime-`confirmed` finding whose CWE also appears in source is tagged *source-correlated* — "proven at runtime **and** located in source." Static findings are their own tier (never auto-`confirmed`).
+**White-box (SAST / full SCA / IaC).** A native, zero-dep Python-AST scanner flags high-signal sinks (command/SQL/code injection, insecure deserialization, SSRF, path traversal, weak crypto, debug-mode) — each only when the dangerous argument is non-constant, to keep false positives low — plus a secret scanner. **Full SCA** (`--sca-online`) parses pinned manifests across ecosystems (PyPI, npm, Go, Maven, RubyGems, crates.io), matches each `name@version` against the **OSV.dev** advisory database, recomputes CVSS from the advisory vector, and emits one finding per vulnerable package with the **concrete minimum upgrade** that clears it (querying OSV sends package names to an external service, so it stays an explicit opt-in). A native **IaC scanner** (`--iac`) flags Terraform / CloudFormation / Kubernetes / Dockerfile misconfigurations (public buckets, open security groups, wildcard IAM, privileged/root containers, `:latest`, `curl | sh`). External SAST/SCA (Opengrep, Bandit, Trivy, gitleaks) plug in via SARIF adapters. **SAST↔DAST correlation** is the differentiator: a runtime-`confirmed` finding whose CWE also appears in source is tagged *source-correlated* — "proven at runtime **and** located in source." Static findings are their own tier (never auto-`confirmed`).
+
+**Graph orchestrator (parallel multi-agent).** The scan is no longer a fixed, sequential pipeline: hypotheses, workers, and oracles are nodes in a **DAG scheduled across a bounded thread pool**, so independent hypotheses are tested and validated **in parallel**, and a planner node can **spawn new agent/worker tasks at runtime** (decompose-as-you-go) up to hundreds of concurrent tasks. Concurrency is gated by `--parallel N` (default: the scope's `max_concurrent_workers`); the per-host rate limit and total-request budget remain the real throttle on traffic. Every parallel action still flows through the one deterministic policy choke-point and the (thread-safe, hash-chained) audit log — so a parallel run yields the **same confirmed findings** as a sequential one, proven in the test suite. Concurrency changes throughput, never the evidence or safety guarantees.
 
 **Hardened agent harness.** The reasoning agents run under a reliability layer: every LLM decision is schema-validated with one self-repair, repeated actions are detected as loops and halt the objective, and **every planned objective gets a recorded outcome** (coverage) so nothing is silently missed — all auditable in the run record.
 
@@ -286,7 +290,7 @@ CLI / serve / mcp ─► Engagement ─► recon(crawl) ─► Supervisor
                      Validator ──────► (only an independent oracle may mark a finding "confirmed")
 ```
 
-Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (crawler) · [`rampart/agents/`](rampart/agents) (multi-agent orchestration) · [`rampart/exploitation/`](rampart/exploitation) (live impact) · [`rampart/correlation/`](rampart/correlation) (chains + risk) · [`rampart/oob/`](rampart/oob) (blind-SSRF collaborator) · [`rampart/browser/`](rampart/browser) (DOM/stored XSS) · [`rampart/llm/`](rampart/llm) · [`rampart/scanners/adapters/`](rampart/scanners/adapters) · [`rampart/server/`](rampart/server) (dashboard) · [`rampart/mcp/`](rampart/mcp) · [`tests/`](tests) (89 + browser opt-in) · [`benchmarks/`](benchmarks).
+Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (crawler) · [`rampart/orchestration/`](rampart/orchestration) (graph scheduler) · [`rampart/agents/`](rampart/agents) (multi-agent reasoning) · [`rampart/exploitation/`](rampart/exploitation) (live impact) · [`rampart/correlation/`](rampart/correlation) (chains + risk) · [`rampart/oob/`](rampart/oob) (blind-SSRF collaborator) · [`rampart/browser/`](rampart/browser) (DOM/stored XSS) · [`rampart/sca/`](rampart/sca) (OSV SCA) · [`rampart/iac/`](rampart/iac) (cloud-config) · [`rampart/grpc_scan/`](rampart/grpc_scan) (gRPC) · [`rampart/llm/`](rampart/llm) · [`rampart/scanners/adapters/`](rampart/scanners/adapters) · [`rampart/server/`](rampart/server) (dashboard) · [`rampart/mcp/`](rampart/mcp) · [`tests/`](tests) · [`benchmarks/`](benchmarks).
 
 ---
 
@@ -313,6 +317,10 @@ Repo map: [`rampart/`](rampart) (package) · [`rampart/recon/`](rampart/recon) (
 - ✅ **Agentic reasoning layer** (`--agents`) — planner → explorer → adversarial critic for business-logic / auth-flow flaws, tiered `agent-assessed` (never auto-`confirmed`); scripted-brain tested, real LLM wired
 - ✅ **OOB collaborator** (`--oob`) — deterministic **blind-SSRF** confirmation via out-of-band callback
 - ✅ **Headless-browser engine** (`--browser`, optional) — **DOM & stored XSS** via real script-execution detection
+- ✅ **Graph orchestrator** (`--parallel N`) — DAG-scheduled, **parallel** hypothesis/worker/oracle fan-out with runtime subagent spawning (hundreds of concurrent tasks); thread-safe audit chain; parallel ≡ sequential findings
+- ✅ **Full SCA** (`--sca-online`) — pinned deps (PyPI/npm/Go/Maven/RubyGems/crates.io) matched against **OSV.dev**, CVSS recomputed, **concrete upgrade** remediation per package
+- ✅ **IaC / cloud-config scan** (`--iac`) — Terraform / CloudFormation / Kubernetes / Dockerfile misconfig (public buckets, open SGs, wildcard IAM, privileged/root containers)
+- ✅ **gRPC scan** (`--grpc`, optional `[grpc]` extra) — server-reflection exposure (analogous to GraphQL introspection)
 - ✅ **SOC 2 evidence report** — Trust Services Criteria mapping + retest operating-effectiveness evidence (`--report soc2`)
 - ✅ **External OSS scanner adapters** (Nuclei / Nmap / Semgrep / Trivy / testssl → normalized), graceful + `rampart tools` doctor
 - ✅ **Multi-agent pipeline** (mapper → planner → specialists → validator → reporter); Claude Code / BYO-key / deterministic

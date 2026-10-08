@@ -90,9 +90,13 @@ def _make_config(args, approver=None):
         agents=getattr(args, "agents", False),
         oob=getattr(args, "oob", False),
         browser=getattr(args, "browser", False),
+        grpc=getattr(args, "grpc", False),
         do_dast=getattr(args, "do_dast", True),
         do_sast=getattr(args, "do_sast", False),
         do_sca=getattr(args, "do_sca", False),
+        do_iac=getattr(args, "do_iac", False),
+        sca_online=getattr(args, "sca_online", False),
+        parallel=getattr(args, "parallel", 0) or 0,
         active=getattr(args, "active", False),
         store_url=getattr(args, "store", "") or "",
         sast_since=getattr(args, "since", "") or "",
@@ -232,8 +236,10 @@ _MODES = {
     "recon":    {"do_dast": False, "crawl": True, "desc": "crawl + map + fingerprint only"},
     "dast":     {"do_dast": True, "desc": "black-box HTTP/web/API testing (oracle classes + misconfig)"},
     "api":      {"do_dast": True, "desc": "API-focused black-box testing (BOLA/BFLA/mass-assignment/exposure/…)"},
-    "sast":     {"do_dast": False, "do_sast": True, "do_sca": True, "desc": "white-box source + secret/dependency scan"},
-    "sca":      {"do_dast": False, "do_sca": True, "desc": "dependency + secret scan"},
+    "sast":     {"do_dast": False, "do_sast": True, "do_sca": True, "do_iac": True, "desc": "white-box source + secret/dependency + IaC scan"},
+    "sca":      {"do_dast": False, "do_sca": True, "desc": "dependency + secret scan (add --sca-online for OSV CVE matching)"},
+    "iac":      {"do_dast": False, "do_iac": True, "desc": "white-box IaC / cloud-config scan (Terraform/CFN/Kubernetes/Dockerfile)"},
+    "grpc":     {"do_dast": False, "grpc": True, "desc": "gRPC server-reflection exposure probe ([grpc] extra)"},
     "agents":   {"do_dast": True, "agents": True, "desc": "black-box + agentic business-logic reasoning"},
 }
 
@@ -254,8 +260,10 @@ def cmd_features(args):
         ("recon", "Attack-surface discovery (crawl, map, fingerprint)", "rampart recon"),
         ("dast", "Black-box web/API testing — 16 oracle classes, zero false positives", "rampart dast"),
         ("api", "API-focused testing (BOLA, BFLA, mass assignment, data exposure)", "rampart api"),
-        ("sast", "White-box source scan (native AST sinks) + secrets + dependencies", "rampart sast --repo ."),
-        ("sca", "Dependency + secret scanning", "rampart sca --repo ."),
+        ("sast", "White-box source scan (native AST sinks) + secrets + dependencies + IaC", "rampart sast --repo ."),
+        ("sca", "Full SCA — pinned deps matched against OSV.dev with upgrade remediation", "rampart sca --repo . --sca-online"),
+        ("iac", "IaC / cloud-config scan (Terraform, CloudFormation, Kubernetes, Dockerfile)", "rampart iac --repo ."),
+        ("grpc", "gRPC server-reflection exposure probe", "rampart grpc --target grpc://host:50051"),
         ("llm", "OWASP LLM Top 10 (prompt injection, leakage, jailbreak)", "rampart llm-test ..."),
         ("agents", "Agentic reasoning for business-logic / auth-flow flaws (agent-assessed)", "rampart agents --intel claude-code"),
         ("exploit", "Demonstrate bounded, non-destructive impact for confirmed findings", "rampart dast --exploit"),
@@ -286,8 +294,12 @@ def cmd_pipeline(args):
     args.active = True
     args.do_sast = True      # white-box runs too when --repo is given (no-op otherwise)
     args.do_sca = True
+    args.do_iac = True       # IaC/cloud-config scan when --repo is given (no-op otherwise)
+    args.grpc = True         # gRPC reflection probe (no-op unless the [grpc] extra + a gRPC target)
+    # Note: --sca-online stays OFF even in pipeline — it sends dependency names to OSV.dev, an
+    # external service, so it remains an explicit operator opt-in rather than an implicit default.
     args._pipeline = True
-    print(dim("  pipeline: recon + full coverage + OOB blind-SSRF + chains + exploitation + agentic reasoning"))
+    print(dim("  pipeline: recon + full coverage + IaC + gRPC + OOB blind-SSRF + chains + exploitation + agentic reasoning"))
     return cmd_test(args)
 
 
@@ -462,6 +474,10 @@ def build_parser():
     sp.add_argument("--agents", action="store_true", help="run the multi-agent reasoning layer (business-logic / auth flows; needs an LLM intel)")
     sp.add_argument("--oob", action="store_true", help="run an OOB collaborator to confirm blind SSRF out-of-band")
     sp.add_argument("--browser", action="store_true", help="run the headless-browser DOM-XSS pass (needs the [browser] extra)")
+    sp.add_argument("--grpc", action="store_true", help="probe the target as a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)")
+    sp.add_argument("--iac", dest="do_iac", action="store_true", help="scan --repo for IaC/cloud misconfig (Terraform/CloudFormation/Kubernetes/Dockerfile)")
+    sp.add_argument("--sca-online", dest="sca_online", action="store_true", help="full SCA: match pinned deps against OSV.dev (sends package names to an external service)")
+    sp.add_argument("--parallel", type=int, default=0, help="orchestrator worker cap for the parallel hypothesis fan-out (0 = scope limit)")
     sp.add_argument("--active", action="store_true", help="allow gated write/active probes (mass assignment, GraphQL); off by default")
     sp.add_argument("--store", default="", help="multi-tenant store URL (sqlite:///runs.db or postgresql://…); default is file-based")
     sp.add_argument("--ci", action="store_true", help="nonzero exit if the severity gate is breached")
@@ -486,6 +502,10 @@ def build_parser():
     sp.add_argument("--agents", action="store_true")
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
+    sp.add_argument("--grpc", action="store_true")
+    sp.add_argument("--iac", dest="do_iac", action="store_true")
+    sp.add_argument("--sca-online", dest="sca_online", action="store_true")
+    sp.add_argument("--parallel", type=int, default=0)
     sp.add_argument("--active", action="store_true")
     sp.add_argument("--store", default="")
     sp.add_argument("--ci", action="store_true")
@@ -511,6 +531,10 @@ def build_parser():
         s.add_argument("--agents", action="store_true")
         s.add_argument("--oob", action="store_true")
         s.add_argument("--browser", action="store_true")
+        s.add_argument("--grpc", action="store_true", help="probe a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)")
+        s.add_argument("--iac", dest="do_iac", action="store_true", help="scan --repo for IaC/cloud misconfig")
+        s.add_argument("--sca-online", dest="sca_online", action="store_true", help="full SCA via OSV.dev (sends package names externally)")
+        s.add_argument("--parallel", type=int, default=0, help="orchestrator worker cap (0 = scope limit)")
         s.add_argument("--active", action="store_true", help="allow gated write/active probes (off by default)")
         s.add_argument("--store", default="")
         s.add_argument("--since", default="", help="diff-aware SAST: scan only .py files changed vs this git ref")
@@ -522,8 +546,10 @@ def build_parser():
     add_eng_opts("recon", "mode: attack-surface discovery only (crawl + map + fingerprint)", need_target=True)
     add_eng_opts("dast", "mode: black-box web/API testing (oracle classes + misconfig)")
     add_eng_opts("api", "mode: API-focused black-box testing")
-    add_eng_opts("sast", "mode: white-box source scan + secrets + dependencies")
-    add_eng_opts("sca", "mode: dependency + secret scan")
+    add_eng_opts("sast", "mode: white-box source scan + secrets + dependencies + IaC")
+    add_eng_opts("sca", "mode: dependency + secret scan (--sca-online for OSV CVE matching)")
+    add_eng_opts("iac", "mode: white-box IaC / cloud-config scan (Terraform/CFN/Kubernetes/Dockerfile)")
+    add_eng_opts("grpc", "mode: gRPC server-reflection exposure probe", need_target=True)
     add_eng_opts("agents", "mode: black-box + agentic business-logic reasoning")
     sub.add_parser("features", help="list Rampart's capabilities and how to run each in isolation")
 
@@ -548,6 +574,10 @@ def build_parser():
     sp.add_argument("--agents", action="store_true")
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
+    sp.add_argument("--grpc", action="store_true")
+    sp.add_argument("--iac", dest="do_iac", action="store_true")
+    sp.add_argument("--sca-online", dest="sca_online", action="store_true")
+    sp.add_argument("--parallel", type=int, default=0)
     sp.add_argument("--active", action="store_true")
     sp.add_argument("--store", default="")
     sp.add_argument("--ci", action="store_true")
