@@ -7,5 +7,7 @@ bump to). Stdlib-only; the OSV network call is an operator opt-in and fully grac
 """
 from .scanner import scan_sca
 from .parsers import Dep, collect_dependencies
+from .enrich import adjust, enrich_findings, fetch_epss, fetch_kev, reachable
 
-__all__ = ["scan_sca", "collect_dependencies", "Dep"]
+__all__ = ["scan_sca", "collect_dependencies", "Dep",
+           "enrich_findings", "fetch_epss", "fetch_kev", "reachable", "adjust"]

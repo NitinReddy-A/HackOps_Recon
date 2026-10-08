@@ -119,6 +119,9 @@ class Finding:
     dedupe_key: str = ""
     first_seen: str = field(default_factory=now_iso)
     tags: list = field(default_factory=list)
+    # SCA exploit-intelligence context: {epss, epss_percentile, kev, reachable, adjusted_severity,
+    # priority, rationale}. Empty for non-SCA findings.
+    exploit_intel: dict = field(default_factory=dict)
     id: str = ""
     schema_version: str = "1.0.0"
 

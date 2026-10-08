@@ -21,11 +21,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import hmac
 import html
 import json
 import os
 import re
 import secrets
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -50,6 +53,10 @@ PRODUCTS = {
 }
 
 FIXED = os.environ.get("RAMPART_DEMO_FIXED") == "1"
+# HS256 signing key for /api/v2/me. Selected at REQUEST time (see the handler) because --fixed flips
+# FIXED after this module loads: a guessable secret in VULN mode, a strong random one when FIXED.
+_JWT_V2_STRONG = "a7f3c9e1b5d8402e6f1a9c4b7e2d8053a1c6f9b2e4d7018a3c5f8b1d6e9a2c4f7"
+_JWT_V2_WEAK = "secret"
 _TOKENS: dict[str, str] = {}  # token -> user id
 _COMMENTS: list[str] = []     # stored-XSS sink (in-memory)
 
@@ -411,8 +418,10 @@ class Handler(BaseHTTPRequestHandler):
             if FIXED and qty < 1:
                 return self._send(400, {"error": "quantity must be >= 1"})   # the fix
             total = round(qty * float(prod["price"]), 2)                     # VULN: negative qty allowed
-            return self._send(200, {"item": item, "qty": qty, "unit_price": prod["price"],
-                                    "total": f"{total:.2f}"})
+            # total is an unquoted JSON number so the deterministic business-logic oracle can read
+            # the server-computed economic result (a negative/zero total proves the tampering).
+            return self._send(200, {"item": item, "qty": qty, "unit_price": float(prod["price"]),
+                                    "total": total})
 
         # Sensitive file exposure: serve dotfiles/backups/config in VULN mode only.
         if path in SENSITIVE_FILES:
@@ -463,6 +472,33 @@ class Handler(BaseHTTPRequestHandler):
             # VULN: trust the token's claims without verifying the signature
             return self._send(200, {"user": payload.get("sub"),
                                     "data": f"RAMPART-JWT-NOSIG authenticated as {payload.get('sub')}"})
+
+        # JWT v2: /api/v2/me DOES verify the HS256 signature — but VULN signs with a weak, guessable
+        # secret ("secret") and never checks expiry. FIXED uses a long random key and enforces exp.
+        if path == "/api/v2/me":
+            auth = self.headers.get("Authorization", "")
+            if not auth.startswith("Bearer "):
+                return self._send(401, {"error": "authentication required"})
+            parts = auth[7:].split(".")
+            if len(parts) != 3:
+                return self._send(401, {"error": "malformed token"})
+            try:
+                header = json.loads(_b64url_decode(parts[0]))
+                payload = json.loads(_b64url_decode(parts[1]))
+            except Exception:  # noqa: BLE001
+                return self._send(401, {"error": "bad token"})
+            if str(header.get("alg", "")).lower() != "hs256":
+                return self._send(401, {"error": "unsupported alg"})
+            secret = _JWT_V2_STRONG if FIXED else _JWT_V2_WEAK   # selected at request time
+            signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
+            expected = base64.urlsafe_b64encode(
+                hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()).decode().rstrip("=")
+            if not hmac.compare_digest(expected, parts[2]):
+                return self._send(401, {"error": "invalid token signature"})
+            if FIXED and int(payload.get("exp", 0)) < int(time.time()):
+                return self._send(401, {"error": "token expired"})   # the fix: enforce expiry
+            return self._send(200, {"user": payload.get("sub"),
+                                    "data": f"RAMPART-JWT-HS256 authenticated as {payload.get('sub')}"})
 
         # BFLA: a privileged "all orders" report that should be admin-only.
         if path == "/api/reports/orders":

@@ -130,6 +130,7 @@ notify:
             "/api/greet": {"get": {"security": [],
                 "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}]}},
             "/api/me": {"get": {"security": [{"bearerAuth": []}]}},
+            "/api/v2/me": {"get": {"security": [{"bearerAuth": []}]}},
             "/api/checkout": {"get": {"security": [], "parameters": [
                 {"name": "item", "in": "query", "schema": {"type": "string"}},
                 {"name": "qty", "in": "query", "schema": {"type": "integer"}}]}},

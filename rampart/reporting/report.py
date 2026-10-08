@@ -313,24 +313,10 @@ class ReportBuilder:
 
     # -------------------------------------------------------- compliance
     def to_compliance(self) -> str:
-        control_map: dict[str, list] = {}
-        for f in self.findings:
-            if f.state == State.DROPPED:
-                continue
-            for ctrl in f.compliance_control_refs:
-                control_map.setdefault(ctrl, []).append(f)
-        L = ["# Compliance evidence bundle", "",
-             "> This maps **validated** findings to control IDs. It is *evidence of control "
-             "effectiveness*, not a certification. The attestation is issued by a CPA firm "
-             "(SOC 2) or accredited body (ISO 27001).", ""]
-        for ctrl in sorted(control_map):
-            L.append(f"## {ctrl}")
-            for f in control_map[ctrl]:
-                status = "validated" if f.verification.validated else f.confidence
-                L.append(f"- [{f.severity.upper()}] {f.title} — {status} "
-                         f"({', '.join(f.cwe)}) · finding `{f.id}`")
-            L.append("")
-        return "\n".join(L)
+        """Full multi-framework control-coverage matrix (SOC 2, ISO 27001, PCI DSS, NIST
+        800-53/FedRAMP, HIPAA, GDPR, OWASP ASVS, CIS) — every finding mapped by CWE."""
+        from ..compliance import compliance_matrix_report
+        return compliance_matrix_report(self.findings, self.scope, self.scan)
 
     # ---------------------------------------------------------------- SOC 2
     def to_soc2(self) -> str:

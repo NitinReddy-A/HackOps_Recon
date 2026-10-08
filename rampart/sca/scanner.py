@@ -126,9 +126,11 @@ def _finding_for(dep, advisories: list[dict], engagement_id: str) -> Finding:
 
 
 def scan_sca(repo_path: str, engagement_id: str = "", online: bool = False, fetch=None,
-             max_packages: int = 400, timeout: float = 15.0) -> list[Finding]:
+             max_packages: int = 400, timeout: float = 15.0, enrich: bool = True,
+             intel_online: bool = False, fetch_epss_fn=None, fetch_kev_fn=None) -> list[Finding]:
     """Full SCA. Parses manifests and, when ``online`` (operator opt-in), matches each pinned
-    dependency against OSV and emits one upgrade-focused finding per vulnerable package.
+    dependency against OSV and emits one upgrade-focused finding per vulnerable package, then
+    enriches each with EPSS + CISA KEV + import-level reachability and an adjusted P0–P3 priority.
 
     Offline (``online=False``) it returns ``[]`` here — the dependency *inventory* (unpinned deps)
     is handled separately by ``sast.secrets.scan_dependencies`` so SCA never phones home unasked.
@@ -137,13 +139,19 @@ def scan_sca(repo_path: str, engagement_id: str = "", online: bool = False, fetc
     if not deps or not online:
         return []
     findings: list[Finding] = []
+    deps_by_key: dict = {}
     for dep in deps[:max_packages]:
         advisories = _osv.query_package(dep.ecosystem, dep.name, dep.version, fetch=fetch, timeout=timeout)
         if advisories:
             f = _finding_for(dep, advisories, engagement_id)
             f.assert_consistent()
             findings.append(f)
-    # Stable, operator-friendly ordering: worst first, then by package name.
-    _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-    findings.sort(key=lambda f: (_sev_rank.get(f.severity, 5), f.title))
+            deps_by_key[f.dedupe_key] = dep
+    if enrich and findings:
+        from .enrich import enrich_findings
+        enrich_findings(findings, deps_by_key, repo_path=repo_path, online=intel_online,
+                        fetch_epss_fn=fetch_epss_fn, fetch_kev_fn=fetch_kev_fn)
+    else:
+        _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+        findings.sort(key=lambda f: (_sev_rank.get(f.severity, 5), f.title))
     return findings

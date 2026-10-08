@@ -49,6 +49,10 @@ class EngagementConfig:
     oob: bool = False               # run the OOB collaborator for blind SSRF/XXE detection
     browser: bool = False           # run the optional headless-browser DOM-XSS pass ([browser] extra)
     grpc: bool = False              # probe a gRPC endpoint (server reflection exposure; [grpc] extra)
+    infra: bool = False             # live infrastructure / exposed-services scan (scope-gated TCP)
+    authz: bool = False             # deeper auth checks (weak JWT secret, expiry-not-enforced)
+    bizlogic: bool = False          # deterministic business-logic checks (economic/parameter tampering)
+    api_scan: bool = False          # deeper API checks (HTTP verb tampering, GraphQL depth)
     # --- scan stages (separation of concerns; a "mode" sets these) ---
     do_dast: bool = True            # black-box HTTP testing (the oracle classes + misconfig)
     do_sast: bool = False           # white-box source scanning (native AST + adapters)
@@ -163,7 +167,9 @@ class Engagement:
             + scan_dependencies(self.cfg.repo, self.pipeline.engagement_id)
         if self.cfg.sca_online:
             from .sca import scan_sca
-            findings += scan_sca(self.cfg.repo, self.pipeline.engagement_id, online=True)
+            # The operator opted into external SCA network, so also fetch EPSS/KEV exploit intel.
+            findings += scan_sca(self.cfg.repo, self.pipeline.engagement_id, online=True,
+                                 intel_online=True)
         return findings
 
     def run_iac(self):
@@ -181,6 +187,48 @@ class Engagement:
             return []
         grpc_scheme = "grpcs" if self.scheme in ("https", "grpcs") else "grpc"
         return scan_grpc(self.host, self.port, grpc_scheme, self.cfg.application, self.target_url)
+
+    def run_infra(self):
+        """Live, scope-gated, non-destructive infrastructure / exposed-services scan.
+
+        Probes sensitive service ports on the authorized host (TCP connect + passive banner),
+        defence-in-depth gated by the resolver + scope IP allowlist. Trust boundary: it opens its
+        OWN sockets outside the HTTP policy pipeline, so it only ever targets the in-scope host."""
+        from .infra import SENSITIVE_SERVICES, scan_infra
+        ports = sorted(set(SENSITIVE_SERVICES) | {443, 8443, self.port})
+        return scan_infra(self.host, ports, engagement_id=self.pipeline.engagement_id,
+                          target_url=self.target_url, application=self.cfg.application,
+                          resolver=self.resolver, scope=self.scope)
+
+    def run_authz(self):
+        """Deeper authentication checks (weak JWT HMAC secret, expiry-not-enforced) on protected GETs."""
+        from .authz import authz_scan
+        from .runner import ProbeRunner
+        runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
+                             self.host, self.port, self.scheme, actor_role="authz-worker",
+                             actor_profile="authz", phase="test")
+        return authz_scan(runner, self.appmodel, self.target_url, self.cfg.application,
+                          self.pipeline.engagement_id)
+
+    def run_bizlogic(self):
+        """Deterministic business-logic checks (economic/parameter tampering, workflow-step-skip)."""
+        from .bizlogic import bizlogic_scan
+        from .runner import ProbeRunner
+        runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
+                             self.host, self.port, self.scheme, actor_role="bizlogic-worker",
+                             actor_profile="bizlogic", phase="test")
+        return bizlogic_scan(runner, self.appmodel, self.target_url, self.cfg.application,
+                             self.pipeline.engagement_id)
+
+    def run_apiscan(self):
+        """Deeper API checks (HTTP method/verb tampering, GraphQL depth)."""
+        from .apiscan import api_scan
+        from .runner import ProbeRunner
+        runner = ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
+                             self.host, self.port, self.scheme, actor_role="api-worker",
+                             actor_profile="api-scan", phase="test")
+        return api_scan(runner, self.appmodel, self.target_url, self.cfg.application,
+                        self.pipeline.engagement_id)
 
     def _correlate_sast_dast(self, findings):
         """Link runtime-confirmed DAST findings to a source location sharing the CWE —
@@ -247,6 +295,19 @@ class Engagement:
             result.findings = result.findings + gfindings
             if gfindings and "gRPC" not in result.classes_tested:
                 result.classes_tested = list(result.classes_tested) + ["gRPC"]
+        # Deeper opt-in stages: API verb-tampering, business logic, deep auth, and live infra.
+        for flag, runner_fn, label in (
+            (self.cfg.api_scan, self.run_apiscan, "API-SCAN"),
+            (self.cfg.bizlogic, self.run_bizlogic, "BUSINESS-LOGIC"),
+            (self.cfg.authz, self.run_authz, "AUTHZ"),
+            (self.cfg.infra, self.run_infra, "INFRA"),
+        ):
+            if not flag:
+                continue
+            extra = runner_fn()
+            result.findings = result.findings + extra
+            if extra and label not in result.classes_tested:
+                result.classes_tested = list(result.classes_tested) + [label]
         # correlate (includes SAST<->DAST correlation below)
         self._correlate_sast_dast(result.findings)
         corr, corr_dict = self._correlate(result.findings)

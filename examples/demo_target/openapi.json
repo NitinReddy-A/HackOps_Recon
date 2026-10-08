@@ -90,6 +90,9 @@
     "/api/me": {
       "get": { "summary": "Who am I (JWT-authenticated)", "security": [{ "bearerAuth": [] }] }
     },
+    "/api/v2/me": {
+      "get": { "summary": "Who am I (HS256 JWT-authenticated)", "security": [{ "bearerAuth": [] }] }
+    },
     "/api/checkout": {
       "get": {
         "summary": "Price quote for an item and quantity",

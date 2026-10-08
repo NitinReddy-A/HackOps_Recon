@@ -91,6 +91,10 @@ def _make_config(args, approver=None):
         oob=getattr(args, "oob", False),
         browser=getattr(args, "browser", False),
         grpc=getattr(args, "grpc", False),
+        infra=getattr(args, "infra", False),
+        authz=getattr(args, "authz", False),
+        bizlogic=getattr(args, "bizlogic", False),
+        api_scan=getattr(args, "api_scan", False),
         do_dast=getattr(args, "do_dast", True),
         do_sast=getattr(args, "do_sast", False),
         do_sca=getattr(args, "do_sca", False),
@@ -240,6 +244,10 @@ _MODES = {
     "sca":      {"do_dast": False, "do_sca": True, "desc": "dependency + secret scan (add --sca-online for OSV CVE matching)"},
     "iac":      {"do_dast": False, "do_iac": True, "desc": "white-box IaC / cloud-config scan (Terraform/CFN/Kubernetes/Dockerfile)"},
     "grpc":     {"do_dast": False, "grpc": True, "desc": "gRPC server-reflection exposure probe ([grpc] extra)"},
+    "infra":    {"do_dast": False, "infra": True, "desc": "live infrastructure / exposed-services scan (scope-gated TCP)"},
+    "authz":    {"do_dast": False, "authz": True, "desc": "deeper auth checks (weak JWT secret, expiry-not-enforced)"},
+    "bizlogic": {"do_dast": False, "bizlogic": True, "desc": "deterministic business-logic checks (economic/parameter tampering)"},
+    "apiscan":  {"do_dast": False, "api_scan": True, "desc": "deeper API checks (HTTP verb tampering, GraphQL depth)"},
     "agents":   {"do_dast": True, "agents": True, "desc": "black-box + agentic business-logic reasoning"},
 }
 
@@ -296,10 +304,15 @@ def cmd_pipeline(args):
     args.do_sca = True
     args.do_iac = True       # IaC/cloud-config scan when --repo is given (no-op otherwise)
     args.grpc = True         # gRPC reflection probe (no-op unless the [grpc] extra + a gRPC target)
+    args.infra = True        # live exposed-services scan of the in-scope host
+    args.authz = True        # deeper auth (weak JWT secret / expiry)
+    args.bizlogic = True     # deterministic business-logic (economic/parameter tampering)
+    args.api_scan = True     # deeper API checks (verb tampering, GraphQL depth)
     # Note: --sca-online stays OFF even in pipeline — it sends dependency names to OSV.dev, an
     # external service, so it remains an explicit operator opt-in rather than an implicit default.
     args._pipeline = True
-    print(dim("  pipeline: recon + full coverage + IaC + gRPC + OOB blind-SSRF + chains + exploitation + agentic reasoning"))
+    print(dim("  pipeline: recon + full coverage + API/authz/business-logic + IaC + gRPC + infra "
+              "+ OOB blind-SSRF + chains + exploitation + agentic reasoning"))
     return cmd_test(args)
 
 
@@ -475,6 +488,10 @@ def build_parser():
     sp.add_argument("--oob", action="store_true", help="run an OOB collaborator to confirm blind SSRF out-of-band")
     sp.add_argument("--browser", action="store_true", help="run the headless-browser DOM-XSS pass (needs the [browser] extra)")
     sp.add_argument("--grpc", action="store_true", help="probe the target as a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)")
+    sp.add_argument("--infra", action="store_true", help="live infrastructure / exposed-services scan (scope-gated TCP connect)")
+    sp.add_argument("--authz", action="store_true", help="deeper auth checks (weak JWT HMAC secret, expiry-not-enforced)")
+    sp.add_argument("--bizlogic", action="store_true", help="deterministic business-logic checks (economic/parameter tampering)")
+    sp.add_argument("--api-scan", dest="api_scan", action="store_true", help="deeper API checks (HTTP verb tampering, GraphQL depth)")
     sp.add_argument("--iac", dest="do_iac", action="store_true", help="scan --repo for IaC/cloud misconfig (Terraform/CloudFormation/Kubernetes/Dockerfile)")
     sp.add_argument("--sca-online", dest="sca_online", action="store_true", help="full SCA: match pinned deps against OSV.dev (sends package names to an external service)")
     sp.add_argument("--parallel", type=int, default=0, help="orchestrator worker cap for the parallel hypothesis fan-out (0 = scope limit)")
@@ -503,6 +520,10 @@ def build_parser():
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
     sp.add_argument("--grpc", action="store_true")
+    sp.add_argument("--infra", action="store_true")
+    sp.add_argument("--authz", action="store_true")
+    sp.add_argument("--bizlogic", action="store_true")
+    sp.add_argument("--api-scan", dest="api_scan", action="store_true")
     sp.add_argument("--iac", dest="do_iac", action="store_true")
     sp.add_argument("--sca-online", dest="sca_online", action="store_true")
     sp.add_argument("--parallel", type=int, default=0)
@@ -532,6 +553,10 @@ def build_parser():
         s.add_argument("--oob", action="store_true")
         s.add_argument("--browser", action="store_true")
         s.add_argument("--grpc", action="store_true", help="probe a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)")
+        s.add_argument("--infra", action="store_true", help="live infra / exposed-services scan (scope-gated TCP)")
+        s.add_argument("--authz", action="store_true", help="deeper auth checks (weak JWT secret, expiry-not-enforced)")
+        s.add_argument("--bizlogic", action="store_true", help="deterministic business-logic checks")
+        s.add_argument("--api-scan", dest="api_scan", action="store_true", help="deeper API checks (verb tampering, GraphQL depth)")
         s.add_argument("--iac", dest="do_iac", action="store_true", help="scan --repo for IaC/cloud misconfig")
         s.add_argument("--sca-online", dest="sca_online", action="store_true", help="full SCA via OSV.dev (sends package names externally)")
         s.add_argument("--parallel", type=int, default=0, help="orchestrator worker cap (0 = scope limit)")
@@ -550,6 +575,10 @@ def build_parser():
     add_eng_opts("sca", "mode: dependency + secret scan (--sca-online for OSV CVE matching)")
     add_eng_opts("iac", "mode: white-box IaC / cloud-config scan (Terraform/CFN/Kubernetes/Dockerfile)")
     add_eng_opts("grpc", "mode: gRPC server-reflection exposure probe", need_target=True)
+    add_eng_opts("infra", "mode: live infrastructure / exposed-services scan", need_target=True)
+    add_eng_opts("authz", "mode: deeper auth checks (weak JWT secret, expiry-not-enforced)", need_target=True)
+    add_eng_opts("bizlogic", "mode: deterministic business-logic checks (economic/parameter tampering)", need_target=True)
+    add_eng_opts("apiscan", "mode: deeper API checks (HTTP verb tampering, GraphQL depth)", need_target=True)
     add_eng_opts("agents", "mode: black-box + agentic business-logic reasoning")
     sub.add_parser("features", help="list Rampart's capabilities and how to run each in isolation")
 
@@ -575,6 +604,10 @@ def build_parser():
     sp.add_argument("--oob", action="store_true")
     sp.add_argument("--browser", action="store_true")
     sp.add_argument("--grpc", action="store_true")
+    sp.add_argument("--infra", action="store_true")
+    sp.add_argument("--authz", action="store_true")
+    sp.add_argument("--bizlogic", action="store_true")
+    sp.add_argument("--api-scan", dest="api_scan", action="store_true")
     sp.add_argument("--iac", dest="do_iac", action="store_true")
     sp.add_argument("--sca-online", dest="sca_online", action="store_true")
     sp.add_argument("--parallel", type=int, default=0)
