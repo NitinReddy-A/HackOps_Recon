@@ -27,9 +27,10 @@ for f in result.confirmed:
     print(f.severity, f.title)
 ```
 
-`Rampart(...)` raises `rampart.schemas.scope.ScopeError` if the scope contract is missing, invalid,
-expired, or doesn't cover the target — the same fail-closed authorization gate as every other
-surface. The engagement is built lazily on the first `.scan()`.
+The engagement is built lazily: `Rampart(...)` only stores your options, and the first `.scan()`
+raises `rampart.schemas.scope.ScopeError` if the scope contract is missing, invalid, expired, or
+doesn't cover the target's host and port. That's the same fail-closed authorization gate as every
+other surface.
 
 ## The result object
 

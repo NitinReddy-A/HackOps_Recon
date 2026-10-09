@@ -24,7 +24,7 @@ Expected high-value hits: BOLA on vehicle/mechanic endpoints, mass assignment, J
 git clone https://github.com/erev0s/VAmPI && cd VAmPI
 docker build -t vampi . && docker run -d -p 5000:5000 -e vulnerable=1 vampi   # vulnerable
 # re-run with -e vulnerable=0 for the secure build to measure false positives
-python -m rampart pipeline --scope-file vampi-rampart.scope.yaml --target http://127.0.0.1:5000 \
+python -m rampart pipeline --scope-file benchmarks/fixtures/vampi-rampart.scope.yaml --target http://127.0.0.1:5000 \
   --crawl --active --report html,sarif
 ```
 VAmPI's `vulnerable=1/0` switch mirrors Rampart's demo on/off design — ideal for FP/FN scoring.
@@ -36,7 +36,7 @@ python -m rampart pipeline --scope-file juice-rampart.scope.yaml --target http:/
   --crawl --browser --report html,sarif
 ```
 Juice Shop is an Angular SPA — use `--browser` for DOM/stored XSS; much of its content needs the
-headless-browser engine (`pip install rampart-appsec[browser] && python -m playwright install chromium`).
+headless-browser engine (install the `browser` extra, then `python -m playwright install chromium`).
 
 ## Scoring
 Run each app in its vulnerable and (where available) secure mode; compare `report.json` findings to
