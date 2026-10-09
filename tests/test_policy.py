@@ -122,6 +122,7 @@ def test_tier2_allowed_with_human_approval(pipe):
 
 def test_rate_limit_trips(pipe):
     p, _, _ = pipe
+    p.budget.max_rate_wait_s = 0  # no throttling allowed -> over-rate requests are denied
     blocked = False
     for i in range(30):
         r = p.execute(_req(path=f"/api/orders/{i}"))

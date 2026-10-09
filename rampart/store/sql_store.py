@@ -18,6 +18,33 @@ from ..schemas.appmodel import ApplicationModel
 from ..schemas.finding import Finding
 
 
+def sqlite_path_from_url(db_url: str) -> str:
+    """Map a SQLite URL to a filesystem path using the SQLAlchemy convention:
+
+    * ``sqlite:///runs.db``        -> ``runs.db`` (RELATIVE to the current directory)
+    * ``sqlite:////var/rampart.db`` -> ``/var/rampart.db`` (absolute: four slashes)
+    * ``sqlite:///C:/data/runs.db`` -> ``C:/data/runs.db`` (Windows drive letter)
+    * ``sqlite:///:memory:``       -> ``:memory:``
+    * ``sqlite://`` / ``""``       -> ``""`` (caller picks the default in the work dir)
+    * a bare path (no ``://``)     -> returned unchanged
+
+    A URL with a host part (``sqlite://host/x``) is rejected rather than guessed at.
+    """
+    if "://" not in db_url:
+        return db_url
+    scheme, rest = db_url.split("://", 1)
+    if scheme.lower() not in ("sqlite", "sqlite3"):
+        raise ValueError(f"not a sqlite URL: {db_url!r}")
+    rest = rest.split("?", 1)[0]
+    if rest == "":
+        return ""
+    if not rest.startswith("/"):
+        raise ValueError(
+            f"sqlite URL must have an empty host (sqlite:///relative or sqlite:////abs): {db_url!r}"
+        )
+    return rest[1:]  # drop the separator after the empty host; what remains is the path
+
+
 class SqlRunStore:
     def __init__(self, db_url: str, work_dir: str, engagement: str = "engagement"):
         self.db_url = db_url
@@ -50,8 +77,7 @@ class SqlRunStore:
                 return sqlite3.connect(fallback)
         import sqlite3
 
-        path = self.db_url.split("://", 1)[-1] if "://" in self.db_url else self.db_url
-        path = path or os.path.join(self.base, "rampart.db")
+        path = sqlite_path_from_url(self.db_url) or os.path.join(self.base, "rampart.db")
         return sqlite3.connect(path)
 
     def _ph(self) -> str:
