@@ -32,7 +32,7 @@ jobs:
         run: |
           python benchmarks/corpus_runner.py \
             --target http://127.0.0.1:5000 \
-            --scope-file benchmarks/fixtures/vampi-SECURITY.md \
+            --scope-file benchmarks/fixtures/vampi-rampart.scope.yaml \
             --ground-truth benchmarks/fixtures/vampi-ground-truth.json \
             --crawl --active --min-recall 0.5
       - name: Upload corpus report

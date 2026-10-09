@@ -1,4 +1,5 @@
 """Scope contract parsing + validation (the R1 gate)."""
+
 from rampart.schemas.scope import EngagementScope
 
 VALID = """
@@ -42,14 +43,14 @@ def test_parses_and_validates():
 def test_ip_allowlist_and_hard_block():
     s = EngagementScope.from_text(VALID)
     assert s.ip_allowed("127.0.0.1") is True
-    assert s.ip_allowed("10.0.0.5") is False              # not in allowlist
-    assert s.ip_allowed("169.254.169.254") is False       # cloud-metadata hard block
+    assert s.ip_allowed("10.0.0.5") is False  # not in allowlist
+    assert s.ip_allowed("169.254.169.254") is False  # cloud-metadata hard block
     assert s.ip_allowed("not-an-ip") is False
 
 
 def test_excluded_host_glob():
     s = EngagementScope.from_text(VALID)
-    assert s.host_scope("api.prod.example.com") is None   # excluded by *.prod.example.com
+    assert s.host_scope("api.prod.example.com") is None  # excluded by *.prod.example.com
 
 
 def test_missing_fields_fail_closed():
@@ -65,7 +66,8 @@ def test_expired_scope_is_rejected():
 
 
 def test_missing_ip_allowlist_rejected():
-    s = EngagementScope.from_text(VALID.replace('resolved_ip_allowlist: ["127.0.0.1/32"]',
-                                                "resolved_ip_allowlist: []"))
+    s = EngagementScope.from_text(
+        VALID.replace('resolved_ip_allowlist: ["127.0.0.1/32"]', "resolved_ip_allowlist: []")
+    )
     errs = s.validate()
     assert any("resolved_ip_allowlist" in e for e in errs)

@@ -6,7 +6,7 @@ vulnerable and fixed). To validate against the community's standard intentionall
 point Rampart at them locally. These are **not bundled** (they require Docker/Node and carry their
 own licenses); run them yourself on an isolated host you own.
 
-> Only ever test these on localhost / an isolated lab you control, with a matching `SECURITY.md`
+> Only ever test these on localhost / an isolated lab you control, with a matching `rampart.scope.yaml`
 > whose `resolved_ip_allowlist` and `in_scope` cover the app. Never point Rampart at a shared host.
 
 ## OWASP crAPI (API security — BOLA/BFLA/mass assignment/JWT)
@@ -14,7 +14,7 @@ own licenses); run them yourself on an isolated host you own.
 git clone https://github.com/OWASP/crAPI && cd crAPI/deploy/docker
 docker compose up -d                      # app on http://localhost:8888
 # scope: host 127.0.0.1, port 8888, paths /** ; seed two accounts in secrets.json
-python -m rampart pipeline --scope-file crapi-SECURITY.md --target http://127.0.0.1:8888 \
+python -m rampart pipeline --scope-file crapi-rampart.scope.yaml --target http://127.0.0.1:8888 \
   --openapi crapi-openapi.json --active --report html,sarif,soc2
 ```
 Expected high-value hits: BOLA on vehicle/mechanic endpoints, mass assignment, JWT, BFLA.
@@ -24,7 +24,7 @@ Expected high-value hits: BOLA on vehicle/mechanic endpoints, mass assignment, J
 git clone https://github.com/erev0s/VAmPI && cd VAmPI
 docker build -t vampi . && docker run -d -p 5000:5000 -e vulnerable=1 vampi   # vulnerable
 # re-run with -e vulnerable=0 for the secure build to measure false positives
-python -m rampart pipeline --scope-file vampi-SECURITY.md --target http://127.0.0.1:5000 \
+python -m rampart pipeline --scope-file vampi-rampart.scope.yaml --target http://127.0.0.1:5000 \
   --crawl --active --report html,sarif
 ```
 VAmPI's `vulnerable=1/0` switch mirrors Rampart's demo on/off design — ideal for FP/FN scoring.
@@ -32,7 +32,7 @@ VAmPI's `vulnerable=1/0` switch mirrors Rampart's demo on/off design — ideal f
 ## OWASP Juice Shop (web — XSS/SQLi/auth, heavy client-side)
 ```bash
 docker run -d -p 3000:3000 bkimminich/juice-shop   # http://localhost:3000
-python -m rampart pipeline --scope-file juice-SECURITY.md --target http://127.0.0.1:3000 \
+python -m rampart pipeline --scope-file juice-rampart.scope.yaml --target http://127.0.0.1:3000 \
   --crawl --browser --report html,sarif
 ```
 Juice Shop is an Angular SPA — use `--browser` for DOM/stored XSS; much of its content needs the

@@ -4,6 +4,7 @@ Closes the business-logic gap against LLM-reasoning competitors by *deterministi
 confirming the classic, high-value logic bugs with oracles (probe + negative control +
 reproductions), rather than reasoning about them.
 """
+
 from .scanner import (
     bizlogic_scan,
     economic_tampering_scan,

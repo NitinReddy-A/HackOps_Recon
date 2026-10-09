@@ -4,6 +4,7 @@ Each adapter separates *parsing* (pure, unit-tested on recorded output) from *ex
 (shelling the tool). When the tool is not installed, the supervisor skips it via
 :meth:`ScannerAdapter.is_available`. All findings are unvalidated external leads.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,8 +14,14 @@ from urllib.parse import urlparse
 from .base import ScannerAdapter
 from .sarif import sarif_to_findings
 
-_NUCLEI_SEV = {"critical": "critical", "high": "high", "medium": "medium",
-               "low": "low", "info": "info", "unknown": "info"}
+_NUCLEI_SEV = {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "info": "info",
+    "unknown": "info",
+}
 
 
 class NucleiAdapter(ScannerAdapter):
@@ -39,22 +46,40 @@ class NucleiAdapter(ScannerAdapter):
             sev = _NUCLEI_SEV.get(str(info.get("severity", "info")).lower(), "info")
             cwes = []
             classif = info.get("classification") or {}
-            for c in (classif.get("cwe-id") or []):
+            for c in classif.get("cwe-id") or []:
                 cwes.append(c.upper().replace("CWE_", "CWE-") if "cwe" in c.lower() else f"CWE-{c}")
-            out.append(self._external_finding(
-                engagement_id="", application=application, target_url=target_url,
-                title=f"[nuclei] {info.get('name', ev.get('template-id', 'match'))}",
-                severity=sev, vuln_class=str(ev.get("template-id") or "nuclei"),
-                cwe=cwes, description=info.get("description", "") or info.get("name", ""),
-                endpoint_url=ev.get("matched-at") or ev.get("host") or target_url,
-                help_uri=(info.get("reference") or [""])[0] if isinstance(info.get("reference"), list) else "",
-                tags=[str(t) for t in (info.get("tags") or [])][:6],
-                rule_id=str(ev.get("template-id") or info.get("name"))))
+            out.append(
+                self._external_finding(
+                    engagement_id="",
+                    application=application,
+                    target_url=target_url,
+                    title=f"[nuclei] {info.get('name', ev.get('template-id', 'match'))}",
+                    severity=sev,
+                    vuln_class=str(ev.get("template-id") or "nuclei"),
+                    cwe=cwes,
+                    description=info.get("description", "") or info.get("name", ""),
+                    endpoint_url=ev.get("matched-at") or ev.get("host") or target_url,
+                    help_uri=(info.get("reference") or [""])[0]
+                    if isinstance(info.get("reference"), list)
+                    else "",
+                    tags=[str(t) for t in (info.get("tags") or [])][:6],
+                    rule_id=str(ev.get("template-id") or info.get("name")),
+                )
+            )
         return out
 
     def run(self, appmodel, target_url, application) -> list:
-        r = self._exec([self.resolved_binary(), "-u", target_url, "-jsonl", "-silent",
-                        "-disable-update-check", *self.extra_args])
+        r = self._exec(
+            [
+                self.resolved_binary(),
+                "-u",
+                target_url,
+                "-jsonl",
+                "-silent",
+                "-disable-update-check",
+                *self.extra_args,
+            ]
+        )
         return self._parse(r.stdout, application, target_url)
 
 
@@ -80,23 +105,36 @@ class NmapAdapter(ScannerAdapter):
                 svc = port.find("service")
                 portid = port.get("portid")
                 name = svc.get("name", "") if svc is not None else ""
-                product = " ".join(x for x in [svc.get("product", ""), svc.get("version", "")]
-                                   if x) if svc is not None else ""
-                desc = f"Open port {portid}/{port.get('protocol','tcp')} — {name} {product}".strip()
-                out.append(self._external_finding(
-                    engagement_id="", application=application, target_url=target_url,
-                    title=f"[nmap] open port {portid} ({name or 'unknown'})",
-                    severity="info", vuln_class="exposed-service", cwe=[],
-                    description=desc, endpoint_url=target_url,
-                    tags=["port", name] if name else ["port"], rule_id=f"port-{portid}"))
+                product = (
+                    " ".join(x for x in [svc.get("product", ""), svc.get("version", "")] if x)
+                    if svc is not None
+                    else ""
+                )
+                desc = f"Open port {portid}/{port.get('protocol', 'tcp')} — {name} {product}".strip()
+                out.append(
+                    self._external_finding(
+                        engagement_id="",
+                        application=application,
+                        target_url=target_url,
+                        title=f"[nmap] open port {portid} ({name or 'unknown'})",
+                        severity="info",
+                        vuln_class="exposed-service",
+                        cwe=[],
+                        description=desc,
+                        endpoint_url=target_url,
+                        tags=["port", name] if name else ["port"],
+                        rule_id=f"port-{portid}",
+                    )
+                )
         return out
 
     def run(self, appmodel, target_url, application) -> list:
         u = urlparse(target_url)
         host = u.hostname or "127.0.0.1"
         port = u.port or (443 if u.scheme == "https" else 80)
-        r = self._exec([self.resolved_binary(), "-sV", "-Pn", "-p", str(port), "-oX", "-",
-                        host, *self.extra_args])
+        r = self._exec(
+            [self.resolved_binary(), "-sV", "-Pn", "-p", str(port), "-oX", "-", host, *self.extra_args]
+        )
         return self._parse(r.stdout, application, target_url)
 
 
@@ -129,6 +167,7 @@ class SemgrepAdapter(_SarifRepoAdapter):
         # NOTE: `--config auto` pulls Semgrep's registry rules (restrictive license since 2024-12)
         # and needs network. Default to a local/offline config; override via RAMPART_SEMGREP_CONFIG.
         import os
+
         config = os.environ.get("RAMPART_SEMGREP_CONFIG", "p/default")
         return [self.resolved_binary(), "scan", "--config", config, "--sarif", "-q", repo, *self.extra_args]
 
@@ -143,6 +182,7 @@ class OpengrepAdapter(_SarifRepoAdapter):
 
     def _cmd(self, repo):
         import os
+
         config = os.environ.get("RAMPART_OPENGREP_CONFIG", "auto")
         return [self.resolved_binary(), "scan", "--config", config, "--sarif", "-q", repo, *self.extra_args]
 
@@ -168,8 +208,19 @@ class GitleaksAdapter(_SarifRepoAdapter):
     help_uri = "https://gitleaks.io"
 
     def _cmd(self, repo):
-        return [self.resolved_binary(), "detect", "--source", repo, "--no-git",
-                "--report-format", "sarif", "--report-path", "/dev/stdout", "--redact", *self.extra_args]
+        return [
+            self.resolved_binary(),
+            "detect",
+            "--source",
+            repo,
+            "--no-git",
+            "--report-format",
+            "sarif",
+            "--report-path",
+            "/dev/stdout",
+            "--redact",
+            *self.extra_args,
+        ]
 
 
 class TrivyAdapter(_SarifRepoAdapter):
@@ -204,17 +255,26 @@ class TestsslAdapter(ScannerAdapter):
             if sev in ("ok", "info", "debug", "warn"):
                 continue
             sev = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}.get(sev, "low")
-            out.append(self._external_finding(
-                engagement_id="", application=application, target_url=target_url,
-                title=f"[testssl] {row.get('id', 'tls-issue')}",
-                severity=sev, vuln_class="tls-misconfiguration", cwe=["CWE-326"],
-                description=row.get("finding", ""), endpoint_url=target_url,
-                tags=["tls"], rule_id=str(row.get("id"))))
+            out.append(
+                self._external_finding(
+                    engagement_id="",
+                    application=application,
+                    target_url=target_url,
+                    title=f"[testssl] {row.get('id', 'tls-issue')}",
+                    severity=sev,
+                    vuln_class="tls-misconfiguration",
+                    cwe=["CWE-326"],
+                    description=row.get("finding", ""),
+                    endpoint_url=target_url,
+                    tags=["tls"],
+                    rule_id=str(row.get("id")),
+                )
+            )
         return out
 
     def run(self, appmodel, target_url, application) -> list:
         if urlparse(target_url).scheme != "https":
-            return []    # TLS checks only apply to https targets
+            return []  # TLS checks only apply to https targets
         u = urlparse(target_url)
         hostport = f"{u.hostname}:{u.port or 443}"
         r = self._exec([self.resolved_binary(), "--jsonfile", "-", "--quiet", "--color", "0", hostport])

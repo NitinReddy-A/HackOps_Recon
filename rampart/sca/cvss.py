@@ -5,6 +5,7 @@ numeric score. We recompute the base score from the vector ourselves — determi
 published formula — so a finding's severity is derived from evidence (the advisory's own metrics),
 never guessed. If the vector is missing or malformed we fall back to the advisory's text severity.
 """
+
 from __future__ import annotations
 
 import math
@@ -12,8 +13,8 @@ import math
 # Metric weights from the CVSS v3.1 specification (section 7.4).
 _AV = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
 _AC = {"L": 0.77, "H": 0.44}
-_PR_U = {"N": 0.85, "L": 0.62, "H": 0.27}          # scope unchanged
-_PR_C = {"N": 0.85, "L": 0.68, "H": 0.5}           # scope changed
+_PR_U = {"N": 0.85, "L": 0.62, "H": 0.27}  # scope unchanged
+_PR_C = {"N": 0.85, "L": 0.68, "H": 0.5}  # scope changed
 _UI = {"N": 0.85, "R": 0.62}
 _CIA = {"N": 0.0, "L": 0.22, "H": 0.56}
 
@@ -80,9 +81,12 @@ def severity_band(score: float | None) -> str:
 
 # Text severity (GHSA-style) -> (severity, representative score) when no CVSS vector is present.
 _TEXT = {
-    "CRITICAL": ("critical", 9.5), "HIGH": ("high", 8.0),
-    "MODERATE": ("medium", 5.5), "MEDIUM": ("medium", 5.5),
-    "LOW": ("low", 3.0), "NONE": ("info", 0.0),
+    "CRITICAL": ("critical", 9.5),
+    "HIGH": ("high", 8.0),
+    "MODERATE": ("medium", 5.5),
+    "MEDIUM": ("medium", 5.5),
+    "LOW": ("low", 3.0),
+    "NONE": ("info", 0.0),
 }
 
 

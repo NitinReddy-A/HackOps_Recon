@@ -8,6 +8,7 @@ a specific dangerous literal (e.g. ``"0.0.0.0/0"``, ``public-read``, ``privilege
 Deeper coverage plugs in via scanner adapters (Checkov, Trivy-config, tfsec) that normalise
 to the same Finding shape.
 """
+
 from .scanner import scan_iac
 
 __all__ = ["scan_iac"]

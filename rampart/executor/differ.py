@@ -4,6 +4,7 @@ Kept deliberately simple and dependency-free: status/length/similarity deltas pl
 signature check. These are the *code* signals the false-positive gate relies on, never
 an LLM guess.
 """
+
 from __future__ import annotations
 
 import difflib

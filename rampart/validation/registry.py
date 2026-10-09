@@ -6,11 +6,21 @@ the same signature ``(runner, sessions, hyp, reproductions) -> OracleVerdict`` s
 validator stays class-agnostic. Classes with no registered oracle cannot be confirmed
 (fail-closed): only an oracle may grant ``confidence=confirmed``.
 """
+
 from __future__ import annotations
 
-from .more_oracles import (run_bfla_oracle, run_cmdi_oracle, run_exposure_oracle, run_graphql_oracle,
-                           run_hostheader_oracle, run_jwt_oracle, run_mass_assignment_oracle,
-                           run_ssrf_oracle, run_ssti_oracle, run_traversal_oracle)
+from .more_oracles import (
+    run_bfla_oracle,
+    run_cmdi_oracle,
+    run_exposure_oracle,
+    run_graphql_oracle,
+    run_hostheader_oracle,
+    run_jwt_oracle,
+    run_mass_assignment_oracle,
+    run_ssrf_oracle,
+    run_ssti_oracle,
+    run_traversal_oracle,
+)
 from .oracle import run_bola_oracle
 from .web_oracles import run_redirect_oracle, run_sqli_oracle, run_xss_oracle
 
@@ -71,7 +81,7 @@ ORACLES = {
     "SSRF": _ssrf,
     "CMDI": _cmdi,
     "PATH_TRAVERSAL": _traversal,
-    "BFLA": run_bfla_oracle,            # already (runner, sessions, hyp, reproductions)
+    "BFLA": run_bfla_oracle,  # already (runner, sessions, hyp, reproductions)
     "EXCESSIVE_DATA": run_exposure_oracle,
     "SSTI": _ssti,
     "JWT": _jwt,

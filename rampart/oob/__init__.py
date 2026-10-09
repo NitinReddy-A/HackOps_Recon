@@ -6,7 +6,8 @@ at a collaborator we control with a unique token, then observe whether the targe
 connected back. A hit is deterministic proof the server made the request. The collaborator is
 a tiny stdlib HTTP server you self-host (loopback by default).
 """
-from .collaborator import OOBCollaborator
+
 from .blind import blind_ssrf_scan, blind_xxe_scan
+from .collaborator import OOBCollaborator
 
 __all__ = ["OOBCollaborator", "blind_ssrf_scan", "blind_xxe_scan"]

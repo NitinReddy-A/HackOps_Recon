@@ -5,6 +5,7 @@ its own risk. The effective tier is the MAXIMUM of what the HTTP method implies,
 declared payload class implies, and what destructive-marker scanning finds — so mislabeling
 a ``DELETE`` as ``benign-read`` cannot lower the tier (blueprint section 12).
 """
+
 from __future__ import annotations
 
 import re
@@ -76,4 +77,6 @@ def classify(action: ToolAction, declared_tier: int = 0) -> RiskResult:
     downgrade = declared_tier < tier
     if downgrade:
         reasons.append(f"declared_tier={declared_tier} < effective_tier={tier} (declaration ignored)")
-    return RiskResult(tier=tier, reason="; ".join(reasons), declared_tier=declared_tier, downgrade_attempt=downgrade)
+    return RiskResult(
+        tier=tier, reason="; ".join(reasons), declared_tier=declared_tier, downgrade_attempt=downgrade
+    )

@@ -10,6 +10,7 @@ Rampart's scope choke-point, so a driver must only ever be pointed at an already
 authorized URL — the caller guarantees this. A browser-execution finding is proof that
 attacker-controlled JavaScript ran in the live DOM.
 """
+
 from __future__ import annotations
 
 from .engine import (

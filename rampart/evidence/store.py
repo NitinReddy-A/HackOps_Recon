@@ -4,6 +4,7 @@ Every artifact is secret-scrubbed, hashed, and written under its own sha256 so a
 reference in a finding resolves to an immutable, verifiable blob. Redaction is on by default
 (blueprint section 23, threats #7/#9).
 """
+
 from __future__ import annotations
 
 import os
@@ -42,14 +43,17 @@ class EvidenceStore:
     def put_text(self, kind: str, summary: str, text: str) -> Evidence:
         safe = scrub_secrets(text or "")
         digest = self._write(safe)
-        return Evidence(type=kind, summary=summary,
-                        storage_uri=f"evidence://{digest}", sha256=digest, redacted=True)
+        return Evidence(
+            type=kind, summary=summary, storage_uri=f"evidence://{digest}", sha256=digest, redacted=True
+        )
 
     def put_request(self, action, resolved_ip: str, summary: str = "") -> Evidence:
-        lines = [f"{action.method} {action.path} HTTP/1.1",
-                 f"Host: {action.target_host}:{action.port}",
-                 f"(resolved-ip: {resolved_ip})",
-                 f"(session: {action.use_session}, payload_class: {action.payload_class})"]
+        lines = [
+            f"{action.method} {action.path} HTTP/1.1",
+            f"Host: {action.target_host}:{action.port}",
+            f"(resolved-ip: {resolved_ip})",
+            f"(session: {action.use_session}, payload_class: {action.payload_class})",
+        ]
         if action.query:
             lines.append(f"Query: {action.query}")
         if action.body:
@@ -66,5 +70,5 @@ class EvidenceStore:
     def read(self, uri_or_digest: str) -> str:
         digest = uri_or_digest.replace("evidence://", "")
         path = os.path.join(self.base_dir, digest[:2], digest)
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return fh.read()

@@ -1,6 +1,6 @@
 ---
-# SECURITY.md — the machine-readable scope & authorization contract Rampart parses BEFORE any run.
-# Copy to SECURITY.md, fill it in, and keep it under version control. Rampart refuses to run if this
+# rampart.scope.yaml — the machine-readable scope & authorization contract Rampart parses BEFORE any run.
+# Copy to rampart.scope.yaml, fill it in, and keep it under version control. Rampart refuses to run if this
 # is missing, invalid, expired, or if the target resolves outside the allowlist (fail-closed).
 apiVersion: security-agent/v1
 kind: EngagementScope

@@ -7,6 +7,7 @@ the zero-dependency default and is fully tested; pass a ``postgresql://`` URL to
 (needs the optional ``psycopg`` driver). Evidence blobs, reports and the hash-chained audit log
 remain on the local filesystem under ``work_dir`` (content-addressed / append-only by design).
 """
+
 from __future__ import annotations
 
 import json
@@ -38,14 +39,17 @@ class SqlRunStore:
         if self._pg:
             try:
                 import psycopg  # type: ignore
+
                 return psycopg.connect(self.db_url)
             except Exception as exc:  # noqa: BLE001 - fall back to a local sqlite mirror, fail-safe
                 import sqlite3
+
                 self._pg = False
                 fallback = os.path.join(self.base, "rampart.db")
                 print(f"[rampart] psycopg unavailable ({exc}); using sqlite at {fallback}")
                 return sqlite3.connect(fallback)
         import sqlite3
+
         path = self.db_url.split("://", 1)[-1] if "://" in self.db_url else self.db_url
         path = path or os.path.join(self.base, "rampart.db")
         return sqlite3.connect(path)
@@ -55,20 +59,25 @@ class SqlRunStore:
 
     def _init_schema(self):
         cur = self._conn.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS rampart_documents ("
-                    "engagement TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, "
-                    "updated_at TEXT, PRIMARY KEY (engagement, kind))")
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS rampart_documents ("
+            "engagement TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, "
+            "updated_at TEXT, PRIMARY KEY (engagement, kind))"
+        )
         self._conn.commit()
 
     # ---- document get/put (upsert on (engagement, kind)) ----
     def _put(self, kind: str, obj):
         from ..util import now_iso
+
         body = json.dumps(obj, default=str)
         ph = self._ph()
-        sql = (f"INSERT INTO rampart_documents (engagement, kind, body, updated_at) "
-               f"VALUES ({ph}, {ph}, {ph}, {ph}) "
-               f"ON CONFLICT (engagement, kind) DO UPDATE SET body = EXCLUDED.body, "
-               f"updated_at = EXCLUDED.updated_at")
+        sql = (
+            f"INSERT INTO rampart_documents (engagement, kind, body, updated_at) "
+            f"VALUES ({ph}, {ph}, {ph}, {ph}) "
+            f"ON CONFLICT (engagement, kind) DO UPDATE SET body = EXCLUDED.body, "
+            f"updated_at = EXCLUDED.updated_at"
+        )
         cur = self._conn.cursor()
         cur.execute(sql, (self.engagement, kind, body, now_iso()))
         self._conn.commit()
@@ -76,8 +85,10 @@ class SqlRunStore:
     def _get(self, kind: str, default=None):
         ph = self._ph()
         cur = self._conn.cursor()
-        cur.execute(f"SELECT body FROM rampart_documents WHERE engagement = {ph} AND kind = {ph}",
-                    (self.engagement, kind))
+        cur.execute(
+            f"SELECT body FROM rampart_documents WHERE engagement = {ph} AND kind = {ph}",
+            (self.engagement, kind),
+        )
         row = cur.fetchone()
         return json.loads(row[0]) if row else default
 

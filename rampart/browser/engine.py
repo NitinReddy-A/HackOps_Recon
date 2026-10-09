@@ -25,6 +25,7 @@ True only when the ``playwright`` package imports AND a browser binary is instal
 the engine degrades to a no-op (``render`` returns an empty :class:`RenderResult`, never raises)
 and the oracles simply fail to confirm. The zero-dependency core is unaffected.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -247,7 +248,7 @@ def _executed(render: RenderResult, token: str) -> bool:
     """Execution proof: the token reached the binding, or appeared in a console message."""
     if token in (getattr(render, "executed_markers", None) or []):
         return True
-    for c in (getattr(render, "console", None) or []):
+    for c in getattr(render, "console", None) or []:
         try:
             if token in str(c):
                 return True
@@ -257,8 +258,9 @@ def _executed(render: RenderResult, token: str) -> bool:
 
 
 # --------------------------------------------------------------------------- oracles
-def run_dom_xss_oracle(driver: BrowserDriver, base_url: str, path: str, param: str,
-                       reproductions: int = 2) -> OracleVerdict:
+def run_dom_xss_oracle(
+    driver: BrowserDriver, base_url: str, path: str, param: str, reproductions: int = 2
+) -> OracleVerdict:
     """Confirm DOM/reflected XSS by *execution*, not reflection.
 
     Renders ``base_url + path?param=<executing canary>`` in a real browser. CONFIRMED only if the
@@ -275,7 +277,8 @@ def run_dom_xss_oracle(driver: BrowserDriver, base_url: str, path: str, param: s
 
     if not driver.is_available():
         return OracleVerdict(
-            validated=False, vuln_class="DOM_XSS",
+            validated=False,
+            vuln_class="DOM_XSS",
             reasons=[f"FAIL: headless-browser engine unavailable ({getattr(driver, 'install_hint', '')})"],
             false_positive_checks=["no browser engine; cannot prove DOM execution"],
             controls={"token": token, "engine_available": False},
@@ -284,38 +287,53 @@ def run_dom_xss_oracle(driver: BrowserDriver, base_url: str, path: str, param: s
     # negative control: a markup-free value must not execute the canary
     control = driver.render(benign_url)
     control_executed = _executed(control, token)
-    reasons.append(("PASS" if not control_executed else "FAIL")
-                   + ": benign control value does NOT execute the canary in the DOM")
+    reasons.append(
+        ("PASS" if not control_executed else "FAIL")
+        + ": benign control value does NOT execute the canary in the DOM"
+    )
     fp.append(f"control executed_markers={list(control.executed_markers or [])}")
 
     # the payload must actually execute, reproduced N times from fresh renders
     repro_ok = 0
     consoles: list = []
-    for i in range(max(1, reproductions)):
+    for _ in range(max(1, reproductions)):
         r = driver.render(mal_url)
         consoles.extend(r.console or [])
         if _executed(r, token):
             repro_ok += 1
     payload_executes = repro_ok >= reproductions
-    reasons.append(("PASS" if payload_executes else "FAIL")
-                   + f": injected canary EXECUTED in the DOM on {repro_ok}/{reproductions} renders")
-    fp.append("execution proven by a JS binding/console callback in the live DOM, "
-              "not by the payload merely appearing in the HTML source")
+    reasons.append(
+        ("PASS" if payload_executes else "FAIL")
+        + f": injected canary EXECUTED in the DOM on {repro_ok}/{reproductions} renders"
+    )
+    fp.append(
+        "execution proven by a JS binding/console callback in the live DOM, "
+        "not by the payload merely appearing in the HTML source"
+    )
     fp.append(f"reproduced {repro_ok}/{reproductions} times via headless render")
 
     validated = payload_executes and not control_executed
     return OracleVerdict(
-        validated=validated, vuln_class="DOM_XSS",
-        reasons=reasons, false_positive_checks=fp, reproductions=repro_ok,
+        validated=validated,
+        vuln_class="DOM_XSS",
+        reasons=reasons,
+        false_positive_checks=fp,
+        reproductions=repro_ok,
         evidence=list(consoles),
-        controls={"token": token, "engine_available": True,
-                  "control_executed": control_executed, "payload_executes": payload_executes,
-                  "probe_url": mal_url, "control_url": benign_url},
+        controls={
+            "token": token,
+            "engine_available": True,
+            "control_executed": control_executed,
+            "payload_executes": payload_executes,
+            "probe_url": mal_url,
+            "control_url": benign_url,
+        },
     )
 
 
-def run_stored_xss_oracle(driver: BrowserDriver, write_outcome_bool: bool, read_url: str,
-                          token: str, reproductions: int = 2) -> OracleVerdict:
+def run_stored_xss_oracle(
+    driver: BrowserDriver, write_outcome_bool: bool, read_url: str, token: str, reproductions: int = 2
+) -> OracleVerdict:
     """Confirm *stored* XSS — the read/verify half only.
 
     The caller is responsible for the write (it already stored a payload that, if executed, calls
@@ -326,14 +344,17 @@ def run_stored_xss_oracle(driver: BrowserDriver, write_outcome_bool: bool, read_
     reasons: list = []
     fp: list = []
 
-    reasons.append(("PASS" if write_outcome_bool else "FAIL")
-                   + ": payload was successfully stored by the caller (write precondition)")
+    reasons.append(
+        ("PASS" if write_outcome_bool else "FAIL")
+        + ": payload was successfully stored by the caller (write precondition)"
+    )
 
     if not driver.is_available():
         return OracleVerdict(
-            validated=False, vuln_class="STORED_XSS",
-            reasons=reasons + [f"FAIL: headless-browser engine unavailable "
-                               f"({getattr(driver, 'install_hint', '')})"],
+            validated=False,
+            vuln_class="STORED_XSS",
+            reasons=reasons
+            + [f"FAIL: headless-browser engine unavailable ({getattr(driver, 'install_hint', '')})"],
             false_positive_checks=["no browser engine; cannot prove DOM execution"],
             controls={"token": token, "engine_available": False, "write_ok": write_outcome_bool},
         )
@@ -341,24 +362,35 @@ def run_stored_xss_oracle(driver: BrowserDriver, write_outcome_bool: bool, read_
     repro_ok = 0
     consoles: list = []
     if write_outcome_bool:
-        for i in range(max(1, reproductions)):
+        for _ in range(max(1, reproductions)):
             r = driver.render(read_url)
             consoles.extend(r.console or [])
             if _executed(r, token):
                 repro_ok += 1
 
     executes = bool(write_outcome_bool) and repro_ok >= reproductions
-    reasons.append(("PASS" if executes else "FAIL")
-                   + f": stored payload EXECUTED in the DOM on {repro_ok}/{reproductions} fresh reads")
-    fp.append("execution proven by a browser JS callback on a fresh page load "
-              "(persistent/stored, not a one-off reflection)")
+    reasons.append(
+        ("PASS" if executes else "FAIL")
+        + f": stored payload EXECUTED in the DOM on {repro_ok}/{reproductions} fresh reads"
+    )
+    fp.append(
+        "execution proven by a browser JS callback on a fresh page load "
+        "(persistent/stored, not a one-off reflection)"
+    )
     fp.append(f"reproduced {repro_ok}/{reproductions} times")
 
     return OracleVerdict(
-        validated=executes, vuln_class="STORED_XSS",
-        reasons=reasons, false_positive_checks=fp, reproductions=repro_ok,
+        validated=executes,
+        vuln_class="STORED_XSS",
+        reasons=reasons,
+        false_positive_checks=fp,
+        reproductions=repro_ok,
         evidence=list(consoles),
-        controls={"token": token, "engine_available": True,
-                  "write_ok": bool(write_outcome_bool), "renders_executed": repro_ok,
-                  "read_url": read_url},
+        controls={
+            "token": token,
+            "engine_available": True,
+            "write_ok": bool(write_outcome_bool),
+            "renders_executed": repro_ok,
+            "read_url": read_url,
+        },
     )

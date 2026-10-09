@@ -4,6 +4,7 @@ All against a MOCK runner (no live server). The FakeRunner returns a fake ProbeO
 path + query params, mirroring the real ProbeRunner.get/.post surface and the real
 ApplicationModel/Endpoint shape (``.path``/``.method``/``.parameters`` = list of {name,in,type}).
 """
+
 import json
 
 from rampart.bizlogic import (
@@ -34,15 +35,36 @@ class FakeRunner:
         self.engagement_id = engagement_id
         self.calls = []
 
-    def get(self, path, session=None, payload_class="boundary-probe", rationale="",
-            hypothesis_id=None, capture=True, summary="", query=None, headers=None):
+    def get(
+        self,
+        path,
+        session=None,
+        payload_class="boundary-probe",
+        rationale="",
+        hypothesis_id=None,
+        capture=True,
+        summary="",
+        query=None,
+        headers=None,
+    ):
         q = dict(query or {})
         self.calls.append(("GET", path, q))
         status, body = self._handler(path, q, session)
         return ProbeOutcome(executed=True, response=_FakeResponse(status, body))
 
-    def post(self, path, json_body, session=None, payload_class="canary", rationale="",
-             hypothesis_id=None, capture=True, summary="", headers=None, content_type=None):
+    def post(
+        self,
+        path,
+        json_body,
+        session=None,
+        payload_class="canary",
+        rationale="",
+        hypothesis_id=None,
+        capture=True,
+        summary="",
+        headers=None,
+        content_type=None,
+    ):
         self.calls.append(("POST", path, json_body))
         status, body = self._handler(path, {}, session)
         return ProbeOutcome(executed=True, response=_FakeResponse(status, body))
@@ -54,9 +76,14 @@ def _appmodel(*endpoints):
 
 def _checkout_ep():
     return Endpoint(
-        id="ep_checkout", method="GET", path="/api/checkout",
-        parameters=[{"name": "item", "in": "query", "type": "string"},
-                    {"name": "qty", "in": "query", "type": "integer"}])
+        id="ep_checkout",
+        method="GET",
+        path="/api/checkout",
+        parameters=[
+            {"name": "item", "in": "query", "type": "string"},
+            {"name": "qty", "in": "query", "type": "integer"},
+        ],
+    )
 
 
 def _confirm_ep():
@@ -98,8 +125,11 @@ def _workflow_vuln(path, query, session):
 
 def _combined_vuln(path, query, session):
     if path == "/api/checkout/confirm":
-        return (200, json.dumps({"status": "confirmed", "order": 123})) if not session \
+        return (
+            (200, json.dumps({"status": "confirmed", "order": 123}))
+            if not session
             else (403, json.dumps({"error": "forbidden"}))
+        )
     return _vuln_checkout(path, query, session)
 
 
@@ -157,6 +187,7 @@ def test_workflow_blanket_200_is_not_flagged():
     # must be dropped as a false positive.
     def blanket(path, query, session):
         return 200, json.dumps({"status": "confirmed"})
+
     runner = FakeRunner(blanket)
     findings = workflow_skip_scan(runner, _appmodel(_confirm_ep()), TARGET)
     assert findings == [], "blanket-200 servers must not produce a workflow finding"

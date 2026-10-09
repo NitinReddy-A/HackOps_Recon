@@ -3,6 +3,7 @@
 Everything here is deterministic (no randomness in hashing, canonical JSON with
 sorted keys) so that an engagement can be replayed and audited byte-for-byte.
 """
+
 from __future__ import annotations
 
 import hashlib

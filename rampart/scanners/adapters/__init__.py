@@ -1,9 +1,18 @@
 """External OSS scanner adapters — optional, opt-in, graceful when not installed."""
+
 from __future__ import annotations
 
 from .base import ScannerAdapter, docker_available
-from .tools import (BanditAdapter, GitleaksAdapter, NmapAdapter, NucleiAdapter, OpengrepAdapter,
-                    SemgrepAdapter, TestsslAdapter, TrivyAdapter)
+from .tools import (
+    BanditAdapter,
+    GitleaksAdapter,
+    NmapAdapter,
+    NucleiAdapter,
+    OpengrepAdapter,
+    SemgrepAdapter,
+    TestsslAdapter,
+    TrivyAdapter,
+)
 
 ADAPTERS = {
     "nuclei": NucleiAdapter,
@@ -39,11 +48,17 @@ def doctor() -> dict:
     for name, cls in ADAPTERS.items():
         a = cls()
         avail = a.is_available()
-        rows.append({
-            "name": name, "category": a.category, "network": a.network,
-            "available": avail, "version": a.version() if avail else "",
-            "install_hint": a.install_hint, "help_uri": a.help_uri,
-        })
+        rows.append(
+            {
+                "name": name,
+                "category": a.category,
+                "network": a.network,
+                "available": avail,
+                "version": a.version() if avail else "",
+                "install_hint": a.install_hint,
+                "help_uri": a.help_uri,
+            }
+        )
     return {"docker": docker_available(), "adapters": rows}
 
 

@@ -6,6 +6,7 @@ technology fingerprint from headers/body. Everything is deterministic and bounde
 ``max_pages``/``max_depth`` and the engagement budget; out-of-scope links are simply never
 followed (and would be denied by the pipeline anyway).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -21,16 +22,22 @@ _TECH_HEADER_SIGS = {
     "x-generator": "generator",
 }
 _TECH_BODY_SIGS = [
-    ("wp-content", "WordPress"), ("/_next/", "Next.js"), ("ng-version", "Angular"),
-    ("react", "React"), ("__NUXT__", "Nuxt"), ("Django", "Django"),
-    ("csrfmiddlewaretoken", "Django"), ("laravel_session", "Laravel"),
-    ("data-drupal", "Drupal"), ("X-Flash-Version", "Flash"),
+    ("wp-content", "WordPress"),
+    ("/_next/", "Next.js"),
+    ("ng-version", "Angular"),
+    ("react", "React"),
+    ("__NUXT__", "Nuxt"),
+    ("Django", "Django"),
+    ("csrfmiddlewaretoken", "Django"),
+    ("laravel_session", "Laravel"),
+    ("data-drupal", "Drupal"),
+    ("X-Flash-Version", "Flash"),
 ]
 
 
 @dataclass
 class CrawlResult:
-    endpoints: list = field(default_factory=list)      # Endpoint objects (provenance=crawl)
+    endpoints: list = field(default_factory=list)  # Endpoint objects (provenance=crawl)
     pages_visited: int = 0
     tech: list = field(default_factory=list)
     urls: list = field(default_factory=list)
@@ -50,11 +57,13 @@ class _LinkFormParser(HTMLParser):
         elif tag in ("script", "link") and a.get("src"):
             self.links.append(a["src"])
         elif tag == "form":
-            self._cur = {"action": a.get("action", ""), "method": (a.get("method") or "GET").upper(),
-                         "inputs": []}
-        elif tag in ("input", "textarea", "select") and self._cur is not None:
-            if a.get("name"):
-                self._cur["inputs"].append(a["name"])
+            self._cur = {
+                "action": a.get("action", ""),
+                "method": (a.get("method") or "GET").upper(),
+                "inputs": [],
+            }
+        elif tag in ("input", "textarea", "select") and self._cur is not None and a.get("name"):
+            self._cur["inputs"].append(a["name"])
 
     def handle_endtag(self, tag):
         if tag == "form" and self._cur is not None:
@@ -64,6 +73,7 @@ class _LinkFormParser(HTMLParser):
 
 def _slug(method: str, path: str) -> str:
     import re
+
     core = re.sub(r"[^a-z0-9]+", "_", path.lower()).strip("_") or "root"
     return f"ep_{core}_{method.lower()}"
 
@@ -83,6 +93,7 @@ class Crawler:
         if hs is None or self.scope.path_excluded(path):
             return False
         from ..schemas.scope import path_glob_match
+
         return any(path_glob_match(p, path) for p in hs.paths_include)
 
     def _same_host(self, url: str, base_path: str) -> str | None:
@@ -109,8 +120,9 @@ class Crawler:
             key = (method, path)
             ep = endpoints.get(key)
             if ep is None:
-                ep = Endpoint(id=_slug(method, path), method=method, path=path,
-                              provenance="crawl", parameters=[])
+                ep = Endpoint(
+                    id=_slug(method, path), method=method, path=path, provenance="crawl", parameters=[]
+                )
                 endpoints[key] = ep
             have = {(p["name"], p["in"]) for p in ep.parameters}
             for name, loc in params:
@@ -126,8 +138,14 @@ class Crawler:
             seen_paths.add(base_path)
 
             query = {k: v[0] for k, v in parse_qs(urlparse(path_q).query).items()}
-            outcome = self.runner.get(base_path, session=None, query=query, payload_class="benign-read",
-                                      rationale="recon crawl", summary=f"crawl {base_path}")
+            outcome = self.runner.get(
+                base_path,
+                session=None,
+                query=query,
+                payload_class="benign-read",
+                rationale="recon crawl",
+                summary=f"crawl {base_path}",
+            )
             if not outcome.executed:
                 continue
             result.pages_visited += 1

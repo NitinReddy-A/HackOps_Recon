@@ -4,6 +4,7 @@ Stdlib only. A throwaway loopback TCP server on an ephemeral port stands in for 
 service; the ephemeral port is injected as "sensitive" via the ``service_map`` override so no
 real backend is required. No network egress beyond 127.0.0.1 / unroutable TEST-NET addresses.
 """
+
 import socket
 import threading
 
@@ -77,9 +78,13 @@ def test_is_sensitive_port_and_catalogue():
 def test_open_sensitive_port_yields_one_confirmed_finding():
     svc = _FakeService(banner=b"SSH-2.0-OpenSSH_8.9p1\r\n")
     try:
-        findings = scan_infra("127.0.0.1", [svc.port], engagement_id="eng-1",
-                              application="demo",
-                              service_map={svc.port: ("ssh", "high")})
+        findings = scan_infra(
+            "127.0.0.1",
+            [svc.port],
+            engagement_id="eng-1",
+            application="demo",
+            service_map={svc.port: ("ssh", "high")},
+        )
     finally:
         svc.close()
 
@@ -109,8 +114,9 @@ def test_silent_service_is_still_confirmed_by_reachability():
     # Many sensitive services (redis/mongo/postgres) stay silent: accepting the connect is enough.
     svc = _FakeService(banner=b"")
     try:
-        findings = scan_infra("127.0.0.1", [svc.port], connect_timeout=0.4,
-                              service_map={svc.port: ("test-redis", "high")})
+        findings = scan_infra(
+            "127.0.0.1", [svc.port], connect_timeout=0.4, service_map={svc.port: ("test-redis", "high")}
+        )
     finally:
         svc.close()
     assert len(findings) == 1
@@ -121,8 +127,7 @@ def test_silent_service_is_still_confirmed_by_reachability():
 # --------------------------------------------------------------------------- no false positives
 def test_closed_port_yields_no_finding():
     port = _free_closed_port()
-    findings = scan_infra("127.0.0.1", [port], connect_timeout=0.4,
-                          service_map={port: ("test-svc", "high")})
+    findings = scan_infra("127.0.0.1", [port], connect_timeout=0.4, service_map={port: ("test-svc", "high")})
     assert findings == []
 
 
@@ -139,9 +144,12 @@ def test_open_but_non_sensitive_port_is_ignored():
 # --------------------------------------------------------------------------- graceful degradation
 def test_unreachable_host_returns_empty_and_never_raises():
     # 192.0.2.0/24 is TEST-NET-1 (RFC 5737): guaranteed unroutable. Tiny timeout keeps it quick.
-    findings = scan_infra("192.0.2.1", [22, 3306, 6379], connect_timeout=0.2,
-                          service_map={22: ("ssh", "medium"), 3306: ("mysql", "high"),
-                                       6379: ("redis", "high")})
+    findings = scan_infra(
+        "192.0.2.1",
+        [22, 3306, 6379],
+        connect_timeout=0.2,
+        service_map={22: ("ssh", "medium"), 3306: ("mysql", "high"), 6379: ("redis", "high")},
+    )
     assert findings == []
 
 
@@ -157,8 +165,13 @@ def test_fail_closed_when_scope_disallows_ip():
             return False
 
     # Even though 127.0.0.1 would be reachable, an out-of-scope IP must yield nothing (no socket).
-    findings = scan_infra("app.example.test", [22], resolver=lambda h: ["127.0.0.1"],
-                          scope=_DenyScope(), service_map={22: ("ssh", "medium")})
+    findings = scan_infra(
+        "app.example.test",
+        [22],
+        resolver=lambda h: ["127.0.0.1"],
+        scope=_DenyScope(),
+        service_map={22: ("ssh", "medium")},
+    )
     assert findings == []
 
 
@@ -167,8 +180,7 @@ def test_scope_given_without_resolver_fails_closed():
         def ip_allowed(self, ip):
             return True
 
-    findings = scan_infra("127.0.0.1", [22], scope=_AllowScope(),
-                          service_map={22: ("ssh", "medium")})
+    findings = scan_infra("127.0.0.1", [22], scope=_AllowScope(), service_map={22: ("ssh", "medium")})
     assert findings == []
 
 
@@ -179,9 +191,14 @@ def test_scope_allowed_ip_is_probed_and_confirmed():
 
     svc = _FakeService(banner=b"")
     try:
-        findings = scan_infra("host.example.test", [svc.port], connect_timeout=0.4,
-                              resolver=lambda h: ["127.0.0.1"], scope=_AllowScope(),
-                              service_map={svc.port: ("test-svc", "high")})
+        findings = scan_infra(
+            "host.example.test",
+            [svc.port],
+            connect_timeout=0.4,
+            resolver=lambda h: ["127.0.0.1"],
+            scope=_AllowScope(),
+            service_map={svc.port: ("test-svc", "high")},
+        )
     finally:
         svc.close()
     assert len(findings) == 1

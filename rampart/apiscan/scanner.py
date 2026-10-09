@@ -16,6 +16,7 @@ Non-destructive by default: the only transport used is a GET carrying an
 WITHOUT us issuing a destructive one). Real state-changing verbs (PUT/PATCH/DELETE) are
 tunnelled over a gated Tier-2 POST and run ONLY when ``active=True``.
 """
+
 from __future__ import annotations
 
 import re
@@ -35,7 +36,8 @@ _STATE_CHANGING = {"POST", "PUT", "PATCH", "DELETE"}
 _ADMIN_RE = re.compile(r"(?i)(/admin|/internal|/manage|/actuator|/config|/_)")
 _DENIAL = re.compile(
     r"(?i)\b(forbidden|unauthori[sz]ed|access denied|not authori[sz]ed|login required|"
-    r"permission denied|authentication required)\b")
+    r"permission denied|authentication required)\b"
+)
 _PLACEHOLDER = re.compile(r"\{[^}/]+\}")
 _REPRO = 2
 
@@ -68,7 +70,7 @@ def _is_protected(e) -> bool:
     method = (getattr(e, "method", "GET") or "GET").upper()
     if getattr(e, "auth_required", False):
         return True
-    if getattr(e, "security", None):          # OpenAPI-derived models may carry a security block
+    if getattr(e, "security", None):  # OpenAPI-derived models may carry a security block
         return True
     if getattr(e, "observed_roles", None):
         return True
@@ -79,30 +81,54 @@ def _is_protected(e) -> bool:
 
 def _canonical_control(runner, transport, path):
     """The negative control: the canonical request, unauthenticated, that MUST be denied."""
-    rationale = (f"negative control: canonical {transport} to a protected path, "
-                 "unauthenticated — must be denied (401/403)")
+    rationale = (
+        f"negative control: canonical {transport} to a protected path, "
+        "unauthenticated — must be denied (401/403)"
+    )
     if transport == "POST":
-        return runner.post(path, {}, session=None, payload_class="boundary-probe",
-                           rationale=rationale, summary="method-tamper control")
-    return runner.get(path, session=None, payload_class="benign-read",
-                      rationale=rationale, summary="method-tamper control")
+        return runner.post(
+            path,
+            {},
+            session=None,
+            payload_class="boundary-probe",
+            rationale=rationale,
+            summary="method-tamper control",
+        )
+    return runner.get(
+        path, session=None, payload_class="benign-read", rationale=rationale, summary="method-tamper control"
+    )
 
 
 def _tamper_probe(runner, transport, path, override_method, repro=0):
     tag = f" reproduction #{repro}" if repro else ""
-    rationale = (f"verb-tampering probe: {transport} with {_OVERRIDE_HEADER}: {override_method}, "
-                 f"unauthenticated{tag}")
+    rationale = (
+        f"verb-tampering probe: {transport} with {_OVERRIDE_HEADER}: {override_method}, unauthenticated{tag}"
+    )
     headers = {_OVERRIDE_HEADER: override_method}
     summary = f"method-tamper probe {override_method}{tag}"
     if transport == "POST":
-        return runner.post(path, {}, session=None, headers=headers, payload_class="boundary-probe",
-                           rationale=rationale, summary=summary)
-    return runner.get(path, session=None, headers=headers, payload_class="boundary-probe",
-                      rationale=rationale, summary=summary)
+        return runner.post(
+            path,
+            {},
+            session=None,
+            headers=headers,
+            payload_class="boundary-probe",
+            rationale=rationale,
+            summary=summary,
+        )
+    return runner.get(
+        path,
+        session=None,
+        headers=headers,
+        payload_class="boundary-probe",
+        rationale=rationale,
+        summary=summary,
+    )
 
 
-def _method_tamper_finding(eng, application, target_url, canon, path, transport, alt,
-                           control, probe, repro_ok) -> Finding:
+def _method_tamper_finding(
+    eng, application, target_url, canon, path, transport, alt, control, probe, repro_ok
+) -> Finding:
     url = f"{target_url}{path}"
     f = Finding(
         engagement_id=eng,
@@ -114,47 +140,72 @@ def _method_tamper_finding(eng, application, target_url, canon, path, transport,
         cwe=["CWE-650", "CWE-285"],
         owasp={"api_2023": ["API5:2023-BFLA"]},
         asvs={"requirement": "V4.1.1", "level": 1},
-        cvss=CVSS(version="4.0", base_score=8.2,
-                  vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:N/SC:N/SI:N/SA:N",
-                  severity="high",
-                  v31_fallback={"base_score": 8.1,
-                                "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N"}),
-        asset={"type": "api_endpoint", "application": application,
-               "environment": "authorized", "target": target_url},
-        endpoint={"method": canon, "url": url, "override_method": alt,
-                  "override_header": _OVERRIDE_HEADER, "transport": transport,
-                  "auth_required": True},
-        description=(f"{canon} {path} enforces authentication for the canonical request, but an "
-                     f"unauthenticated {transport} carrying '{_OVERRIDE_HEADER}: {alt}' is served a "
-                     f"{probe.status} response with real/privileged content. The HTTP method/verb is "
-                     "trusted for the access-control decision, so tampering with it via the override "
-                     "header bypasses authorization."),
-        impact=("An anonymous attacker reaches a protected function/resource by changing the HTTP "
-                "method through an override header — broken function-level authorization (BFLA)."),
-        root_cause=("Authorization is keyed on the HTTP method (or on an override header the server "
-                    "re-dispatches on) rather than on the authenticated principal; a security filter "
-                    "guards only the canonical verb and is bypassed when the verb is overridden."),
+        cvss=CVSS(
+            version="4.0",
+            base_score=8.2,
+            vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:N/SC:N/SI:N/SA:N",
+            severity="high",
+            v31_fallback={"base_score": 8.1, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N"},
+        ),
+        asset={
+            "type": "api_endpoint",
+            "application": application,
+            "environment": "authorized",
+            "target": target_url,
+        },
+        endpoint={
+            "method": canon,
+            "url": url,
+            "override_method": alt,
+            "override_header": _OVERRIDE_HEADER,
+            "transport": transport,
+            "auth_required": True,
+        },
+        description=(
+            f"{canon} {path} enforces authentication for the canonical request, but an "
+            f"unauthenticated {transport} carrying '{_OVERRIDE_HEADER}: {alt}' is served a "
+            f"{probe.status} response with real/privileged content. The HTTP method/verb is "
+            "trusted for the access-control decision, so tampering with it via the override "
+            "header bypasses authorization."
+        ),
+        impact=(
+            "An anonymous attacker reaches a protected function/resource by changing the HTTP "
+            "method through an override header — broken function-level authorization (BFLA)."
+        ),
+        root_cause=(
+            "Authorization is keyed on the HTTP method (or on an override header the server "
+            "re-dispatches on) rather than on the authenticated principal; a security filter "
+            "guards only the canonical verb and is bypassed when the verb is overridden."
+        ),
         reproduction=Reproduction(
             prerequisites=["None (unauthenticated)"],
-            steps=[f"{transport} {path} with no session -> {control.status} (denied; auth enforced)",
-                   f"{transport} {path} with '{_OVERRIDE_HEADER}: {alt}' and no session -> "
-                   f"{probe.status} (allowed)",
-                   "Observe real/privileged content returned without authentication"],
-            deterministic=True),
+            steps=[
+                f"{transport} {path} with no session -> {control.status} (denied; auth enforced)",
+                f"{transport} {path} with '{_OVERRIDE_HEADER}: {alt}' and no session -> "
+                f"{probe.status} (allowed)",
+                "Observe real/privileged content returned without authentication",
+            ],
+            deterministic=True,
+        ),
         remediation=Remediation(
             summary="Authorize on the authenticated principal, not the HTTP method; ignore "
-                    "method-override headers unless strictly required.",
+            "method-override headers unless strictly required.",
             type="code_patch",
-            guidance=("Apply deny-by-default, centralized function-level authorization keyed on the "
-                      "authenticated identity/role for EVERY method (including HEAD/OPTIONS and any "
-                      "X-HTTP-Method-Override/X-HTTP-Method/X-Method-Override header). Disable "
-                      "method-override handling where it is not needed, and ensure the auth filter "
-                      "runs after method normalization so an override cannot route around it "
-                      "(CWE-650, CWE-285, OWASP API5:2023)."),
-            effort="medium"),
-        references=["https://cwe.mitre.org/data/definitions/650.html",
-                    "https://cwe.mitre.org/data/definitions/285.html",
-                    "https://owasp.org/API-Security/editions/2023/en/0xa5-broken-function-level-authorization/"],
+            guidance=(
+                "Apply deny-by-default, centralized function-level authorization keyed on the "
+                "authenticated identity/role for EVERY method (including HEAD/OPTIONS and any "
+                "X-HTTP-Method-Override/X-HTTP-Method/X-Method-Override header). Disable "
+                "method-override handling where it is not needed, and ensure the auth filter "
+                "runs after method normalization so an override cannot route around it "
+                "(CWE-650, CWE-285, OWASP API5:2023)."
+            ),
+            effort="medium",
+        ),
+        references=[
+            "https://cwe.mitre.org/data/definitions/650.html",
+            "https://cwe.mitre.org/data/definitions/285.html",
+            "https://owasp.org/API-Security/editions/2023/en/0xa5-broken-function-level-authorization/",
+        ],
         compliance_control_refs=["SOC2:CC6.3", "ISO27001:A.8.2", "PCI-DSS:7.1"],
         dedupe_key=f"{application}:method-tamper:{canon}:{path}",
         tags=["method-tampering", "verb-tampering", "access-control", "bfla", "api"],
@@ -171,14 +222,18 @@ def _method_tamper_finding(eng, application, target_url, canon, path, transport,
                 "auth check)",
                 f"override probe unauthenticated returned {probe.status} with real content distinct "
                 "from the denial body",
-                f"reproduced {repro_ok}/{_REPRO} times from clean, unauthenticated requests"],
-            confidence_score=0.9))
+                f"reproduced {repro_ok}/{_REPRO} times from clean, unauthenticated requests",
+            ],
+            confidence_score=0.9,
+        ),
+    )
     f.assert_consistent()
     return f
 
 
-def method_tampering_scan(runner, appmodel, target_url, application, engagement_id="",
-                          active=False) -> list[Finding]:
+def method_tampering_scan(
+    runner, appmodel, target_url, application, engagement_id="", active=False
+) -> list[Finding]:
     """Detect method/verb-tampering authorization bypass (CWE-650/CWE-285, OWASP API5:2023).
 
     For each access-controlled or state-changing endpoint, prove that an ``X-HTTP-Method-Override``
@@ -191,7 +246,7 @@ def method_tampering_scan(runner, appmodel, target_url, application, engagement_
     eng = engagement_id or getattr(runner, "engagement_id", "")
     findings: list[Finding] = []
     seen: set = set()
-    for e in (getattr(appmodel, "endpoints", []) or []):
+    for e in getattr(appmodel, "endpoints", []) or []:
         if not _is_protected(e):
             continue
         canon = (getattr(e, "method", "GET") or "GET").upper()
@@ -222,13 +277,17 @@ def method_tampering_scan(runner, appmodel, target_url, application, engagement_
                 repro_ok = 0
                 for i in range(_REPRO):
                     r = _tamper_probe(runner, transport, path, alt, repro=i + 1)
-                    if (getattr(r, "executed", False) and _is_2xx(r.status)
-                            and _looks_real(r.body, control.body)):
+                    if (
+                        getattr(r, "executed", False)
+                        and _is_2xx(r.status)
+                        and _looks_real(r.body, control.body)
+                    ):
                         repro_ok += 1
                 if repro_ok < _REPRO:
                     continue  # not decisively reproducible -> DROP (fail-closed)
-                finding = _method_tamper_finding(eng, application, target_url, canon, path,
-                                                 transport, alt, control, probe, repro_ok)
+                finding = _method_tamper_finding(
+                    eng, application, target_url, canon, path, transport, alt, control, probe, repro_ok
+                )
                 break
             if finding is not None:
                 break
@@ -245,13 +304,15 @@ _GQL_BATCH = [{"query": "{ __typename }"}, {"query": "{ __typename }"}]
 _GQL_ALIAS_QUERY = "query { a0: __typename a1: __typename }"
 # Tolerate JSON/backslash-escaped quotes around the suggested field, e.g. Did you mean \"user\"?
 _DID_YOU_MEAN = re.compile(r"(?i)did you mean\s+[\"'\\]*([A-Za-z_][A-Za-z0-9_]*)")
-_GQL_REJECTED = re.compile(r"(?i)(not allowed|not permitted|disabled|not supported|too many|"
-                           r"forbidden|rejected|limit exceeded)")
+_GQL_REJECTED = re.compile(
+    r"(?i)(not allowed|not permitted|disabled|not supported|too many|"
+    r"forbidden|rejected|limit exceeded)"
+)
 
 
 def _gql_endpoints(appmodel) -> list:
     paths, seen = [], set()
-    for e in (getattr(appmodel, "endpoints", []) or []):
+    for e in getattr(appmodel, "endpoints", []) or []:
         p = getattr(e, "path", "") or ""
         if "graphql" in p.lower() and p not in seen:
             seen.add(p)
@@ -259,31 +320,70 @@ def _gql_endpoints(appmodel) -> list:
     return paths
 
 
-def _firm_graphql_finding(eng, application, target_url, path, *, vuln_class, severity, cwe,
-                          owasp, title, description, impact, root_cause, remediation, references,
-                          checks, method_name, score, tags) -> Finding:
+def _firm_graphql_finding(
+    eng,
+    application,
+    target_url,
+    path,
+    *,
+    vuln_class,
+    severity,
+    cwe,
+    owasp,
+    title,
+    description,
+    impact,
+    root_cause,
+    remediation,
+    references,
+    checks,
+    method_name,
+    score,
+    tags,
+) -> Finding:
     f = Finding(
-        engagement_id=eng, title=title, vuln_class=vuln_class, severity=severity,
-        confidence="firm", state=State.EVIDENCE_FOUND, cwe=cwe, owasp=owasp,
-        asset={"type": "api_endpoint", "application": application,
-               "environment": "authorized", "target": target_url},
+        engagement_id=eng,
+        title=title,
+        vuln_class=vuln_class,
+        severity=severity,
+        confidence="firm",
+        state=State.EVIDENCE_FOUND,
+        cwe=cwe,
+        owasp=owasp,
+        asset={
+            "type": "api_endpoint",
+            "application": application,
+            "environment": "authorized",
+            "target": target_url,
+        },
         endpoint={"method": "POST", "url": f"{target_url}{path}", "auth_required": False},
-        description=description, impact=impact, root_cause=root_cause,
-        reproduction=Reproduction(prerequisites=["None (unauthenticated POST)"],
-                                  steps=checks, deterministic=True),
-        remediation=remediation, references=references,
+        description=description,
+        impact=impact,
+        root_cause=root_cause,
+        reproduction=Reproduction(
+            prerequisites=["None (unauthenticated POST)"], steps=checks, deterministic=True
+        ),
+        remediation=remediation,
+        references=references,
         compliance_control_refs=["SOC2:CC7.1", "ISO27001:A.8.9"],
-        dedupe_key=f"{application}:{vuln_class}:{path}", tags=tags,
-        verification=Verification(method=method_name, validated=False, validated_at=now_iso(),
-                                  validator="apiscan-graphql", independent_reproduction=False,
-                                  reproductions=0, false_positive_checks=checks,
-                                  confidence_score=score))
+        dedupe_key=f"{application}:{vuln_class}:{path}",
+        tags=tags,
+        verification=Verification(
+            method=method_name,
+            validated=False,
+            validated_at=now_iso(),
+            validator="apiscan-graphql",
+            independent_reproduction=False,
+            reproductions=0,
+            false_positive_checks=checks,
+            confidence_score=score,
+        ),
+    )
     f.assert_consistent()  # firm (not confirmed) — always consistent
     return f
 
 
-def graphql_depth_scan(runner, appmodel, target_url, application,
-                       engagement_id="") -> list[Finding]:
+def graphql_depth_scan(runner, appmodel, target_url, application, engagement_id="") -> list[Finding]:
     """Safe GraphQL depth signals, tiered as ``firm`` indicators (never ``confirmed``).
 
     * GRAPHQL_FIELD_SUGGESTION (CWE-200): a misspelled field triggers a 'Did you mean "<field>"?'
@@ -297,100 +397,148 @@ def graphql_depth_scan(runner, appmodel, target_url, application,
     findings: list[Finding] = []
     for path in _gql_endpoints(appmodel):
         # --- field-suggestion leakage -------------------------------------------------
-        sug = runner.post(path, {"query": _GQL_TYPO_QUERY}, session=None, payload_class="benign-read",
-                          rationale="graphql field-suggestion probe: misspelled field name",
-                          summary="graphql field-suggestion probe")
+        sug = runner.post(
+            path,
+            {"query": _GQL_TYPO_QUERY},
+            session=None,
+            payload_class="benign-read",
+            rationale="graphql field-suggestion probe: misspelled field name",
+            summary="graphql field-suggestion probe",
+        )
         if getattr(sug, "executed", False):
             m = _DID_YOU_MEAN.search(sug.body or "")
             if m:
                 suggested = m.group(1).strip()
-                findings.append(_firm_graphql_finding(
-                    eng, application, target_url, path,
-                    vuln_class="GRAPHQL_FIELD_SUGGESTION", severity="low", cwe=["CWE-200"],
-                    owasp={"api_2023": ["API8:2023-Security Misconfiguration"]},
-                    title=f"GraphQL field-suggestion leakage on POST {path}",
-                    description=("The GraphQL endpoint returns field suggestions "
-                                 f"('Did you mean \"{suggested}\"?') for a misspelled field, "
-                                 "leaking schema field names even if introspection is disabled."),
-                    impact="An attacker can enumerate schema field names (and infer the data model) "
-                           "without introspection, aiding targeted queries/mutations.",
-                    root_cause="GraphQL field-suggestion ('did you mean') hints are enabled on an "
-                               "endpoint exposed to untrusted clients.",
-                    remediation=Remediation(
-                        summary="Disable field suggestions / verbose errors for untrusted clients.",
-                        type="config",
-                        guidance="Turn off 'did you mean' field suggestions in production (e.g. "
-                                 "disable in the GraphQL server config or mask errors at the edge), "
-                                 "alongside disabling introspection (CWE-200).",
-                        effort="low"),
-                    references=["https://cwe.mitre.org/data/definitions/200.html",
-                                "https://owasp.org/www-project-web-security-testing-guide/latest/"
-                                "4-Web_Application_Security_Testing/12-API_Testing/01-Testing_GraphQL"],
-                    checks=[f"POST {path} with a misspelled field returned a "
+                findings.append(
+                    _firm_graphql_finding(
+                        eng,
+                        application,
+                        target_url,
+                        path,
+                        vuln_class="GRAPHQL_FIELD_SUGGESTION",
+                        severity="low",
+                        cwe=["CWE-200"],
+                        owasp={"api_2023": ["API8:2023-Security Misconfiguration"]},
+                        title=f"GraphQL field-suggestion leakage on POST {path}",
+                        description=(
+                            "The GraphQL endpoint returns field suggestions "
+                            f"('Did you mean \"{suggested}\"?') for a misspelled field, "
+                            "leaking schema field names even if introspection is disabled."
+                        ),
+                        impact="An attacker can enumerate schema field names (and infer the data model) "
+                        "without introspection, aiding targeted queries/mutations.",
+                        root_cause="GraphQL field-suggestion ('did you mean') hints are enabled on an "
+                        "endpoint exposed to untrusted clients.",
+                        remediation=Remediation(
+                            summary="Disable field suggestions / verbose errors for untrusted clients.",
+                            type="config",
+                            guidance="Turn off 'did you mean' field suggestions in production (e.g. "
+                            "disable in the GraphQL server config or mask errors at the edge), "
+                            "alongside disabling introspection (CWE-200).",
+                            effort="low",
+                        ),
+                        references=[
+                            "https://cwe.mitre.org/data/definitions/200.html",
+                            "https://owasp.org/www-project-web-security-testing-guide/latest/"
+                            "4-Web_Application_Security_Testing/12-API_Testing/01-Testing_GraphQL",
+                        ],
+                        checks=[
+                            f"POST {path} with a misspelled field returned a "
                             f"'Did you mean \"{suggested}\"?' suggestion",
                             "FIRM indicator — schema leakage via error hints (not a confirmed "
-                            "exploit); confirm the endpoint is production and the field is real"],
-                    method_name="graphql-field-suggestion", score=0.6,
-                    tags=["graphql", "field-suggestion", "information-disclosure",
-                          "needs-human-review"]))
+                            "exploit); confirm the endpoint is production and the field is real",
+                        ],
+                        method_name="graphql-field-suggestion",
+                        score=0.6,
+                        tags=["graphql", "field-suggestion", "information-disclosure", "needs-human-review"],
+                    )
+                )
 
         # --- batching / alias amplification indicator ---------------------------------
-        batch = runner.post(path, _GQL_BATCH, session=None, payload_class="benign-read",
-                            rationale="graphql batching probe: array of 2 trivial queries",
-                            summary="graphql batching probe")
-        accepted = (getattr(batch, "executed", False) and batch.status == 200
-                    and not _GQL_REJECTED.search(batch.body or ""))
+        batch = runner.post(
+            path,
+            _GQL_BATCH,
+            session=None,
+            payload_class="benign-read",
+            rationale="graphql batching probe: array of 2 trivial queries",
+            summary="graphql batching probe",
+        )
+        accepted = (
+            getattr(batch, "executed", False)
+            and batch.status == 200
+            and not _GQL_REJECTED.search(batch.body or "")
+        )
         mech = "array batching (2 queries in one request)"
         if not accepted:
-            alias = runner.post(path, {"query": _GQL_ALIAS_QUERY}, session=None,
-                               payload_class="benign-read",
-                               rationale="graphql alias-amplification probe: multiple aliases",
-                               summary="graphql alias probe")
-            if (getattr(alias, "executed", False) and alias.status == 200
-                    and not _GQL_REJECTED.search(alias.body or "")):
+            alias = runner.post(
+                path,
+                {"query": _GQL_ALIAS_QUERY},
+                session=None,
+                payload_class="benign-read",
+                rationale="graphql alias-amplification probe: multiple aliases",
+                summary="graphql alias probe",
+            )
+            if (
+                getattr(alias, "executed", False)
+                and alias.status == 200
+                and not _GQL_REJECTED.search(alias.body or "")
+            ):
                 accepted = True
                 mech = "alias amplification (multiple aliases in one query)"
         if accepted:
-            findings.append(_firm_graphql_finding(
-                eng, application, target_url, path,
-                vuln_class="GRAPHQL_BATCHING", severity="medium", cwe=["CWE-770"],
-                owasp={"api_2023": ["API4:2023-Unrestricted Resource Consumption"]},
-                title=f"GraphQL query batching / alias amplification accepted on POST {path}",
-                description=(f"The GraphQL endpoint accepts {mech}, letting a single request fan out "
-                             "into many resolver executions — a resource-amplification / "
-                             "denial-of-service vector."),
-                impact="A single unauthenticated request can be amplified into many operations, "
-                       "enabling denial-of-service and brute-force/rate-limit evasion.",
-                root_cause="Query batching and/or alias fan-out are accepted without depth, "
-                           "complexity, or batch-size limits.",
-                remediation=Remediation(
-                    summary="Enforce query cost/depth/complexity limits and cap or disable batching.",
-                    type="config",
-                    guidance="Add query depth and complexity/cost limits, cap the number of aliases, "
-                             "and disable or bound array batching for untrusted clients; apply "
-                             "per-client rate limiting (CWE-770, OWASP API4:2023).",
-                    effort="medium"),
-                references=["https://cwe.mitre.org/data/definitions/770.html",
-                            "https://owasp.org/API-Security/editions/2023/en/"
-                            "0xa4-unrestricted-resource-consumption/"],
-                checks=[f"POST {path} accepted {mech} with HTTP 200",
+            findings.append(
+                _firm_graphql_finding(
+                    eng,
+                    application,
+                    target_url,
+                    path,
+                    vuln_class="GRAPHQL_BATCHING",
+                    severity="medium",
+                    cwe=["CWE-770"],
+                    owasp={"api_2023": ["API4:2023-Unrestricted Resource Consumption"]},
+                    title=f"GraphQL query batching / alias amplification accepted on POST {path}",
+                    description=(
+                        f"The GraphQL endpoint accepts {mech}, letting a single request fan out "
+                        "into many resolver executions — a resource-amplification / "
+                        "denial-of-service vector."
+                    ),
+                    impact="A single unauthenticated request can be amplified into many operations, "
+                    "enabling denial-of-service and brute-force/rate-limit evasion.",
+                    root_cause="Query batching and/or alias fan-out are accepted without depth, "
+                    "complexity, or batch-size limits.",
+                    remediation=Remediation(
+                        summary="Enforce query cost/depth/complexity limits and cap or disable batching.",
+                        type="config",
+                        guidance="Add query depth and complexity/cost limits, cap the number of aliases, "
+                        "and disable or bound array batching for untrusted clients; apply "
+                        "per-client rate limiting (CWE-770, OWASP API4:2023).",
+                        effort="medium",
+                    ),
+                    references=[
+                        "https://cwe.mitre.org/data/definitions/770.html",
+                        "https://owasp.org/API-Security/editions/2023/en/"
+                        "0xa4-unrestricted-resource-consumption/",
+                    ],
+                    checks=[
+                        f"POST {path} accepted {mech} with HTTP 200",
                         "FIRM indicator — amplification is accepted (not a demonstrated DoS); "
-                        "confirm absence of depth/complexity/rate limits"],
-                method_name="graphql-batching", score=0.55,
-                tags=["graphql", "batching", "resource-amplification", "dos",
-                      "needs-human-review"]))
+                        "confirm absence of depth/complexity/rate limits",
+                    ],
+                    method_name="graphql-batching",
+                    score=0.55,
+                    tags=["graphql", "batching", "resource-amplification", "dos", "needs-human-review"],
+                )
+            )
     return findings
 
 
 # ---------------------------------------------------------------------------- convenience
-def api_scan(runner, appmodel, target_url, application, engagement_id="",
-             active=False) -> list[Finding]:
+def api_scan(runner, appmodel, target_url, application, engagement_id="", active=False) -> list[Finding]:
     """Run both API-depth scans and return the combined findings.
 
     = ``method_tampering_scan(...)`` (confirmed) + ``graphql_depth_scan(...)`` (firm indicators).
     Non-destructive by default; ``active=True`` enables the gated real-verb method-tamper probes.
     """
-    return (method_tampering_scan(runner, appmodel, target_url, application,
-                                  engagement_id=engagement_id, active=active)
-            + graphql_depth_scan(runner, appmodel, target_url, application,
-                                 engagement_id=engagement_id))
+    return method_tampering_scan(
+        runner, appmodel, target_url, application, engagement_id=engagement_id, active=active
+    ) + graphql_depth_scan(runner, appmodel, target_url, application, engagement_id=engagement_id)

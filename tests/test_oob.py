@@ -1,15 +1,22 @@
 """OOB collaborator + blind SSRF/XXE — out-of-band callback is deterministic proof."""
+
 from conftest import make_engagement, write_engagement
+
 from rampart.engagement import Engagement, EngagementConfig
 from rampart.oob import OOBCollaborator
 
 
 def _active_eng(tmp_path, port):
     scope = write_engagement(tmp_path, port)
-    cfg = EngagementConfig(scope_file=scope, target=f"http://127.0.0.1:{port}",
-                           work_dir=str(tmp_path / ".rampart"),
-                           openapi=str(tmp_path / "openapi.json"), appmodel_seed=str(tmp_path / "seed.json"),
-                           application="demo-shop-api", active=True)
+    cfg = EngagementConfig(
+        scope_file=scope,
+        target=f"http://127.0.0.1:{port}",
+        work_dir=str(tmp_path / ".rampart"),
+        openapi=str(tmp_path / "openapi.json"),
+        appmodel_seed=str(tmp_path / "seed.json"),
+        application="demo-shop-api",
+        active=True,
+    )
     return Engagement(cfg)
 
 
@@ -18,12 +25,13 @@ def test_collaborator_records_hits():
     c.start()
     try:
         import urllib.request
+
         tok, url = c.new_token()
         assert not c.received(tok)
         urllib.request.urlopen(url, timeout=2).read()
         assert c.wait_for(tok, timeout=2)
         other, _ = c.new_token()
-        assert not c.wait_for(other, timeout=0.3)   # a token never hit stays clean
+        assert not c.wait_for(other, timeout=0.3)  # a token never hit stays clean
     finally:
         c.stop()
 

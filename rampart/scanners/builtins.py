@@ -8,6 +8,7 @@ response header is directly and reproducibly verifiable), so they can carry
 Note: this is deliberately narrow. The MVP does not bundle offensive scanners; external
 tools (Nuclei/ZAP/Semgrep/Trivy) plug in as separate-process adapters that emit SARIF.
 """
+
 from __future__ import annotations
 
 from ..schemas.finding import Finding, Reproduction, State, Verification
@@ -22,11 +23,16 @@ _EXPECTED = {
 }
 
 
-def security_headers_check(runner, path: str, target_url: str, application: str = "target",
-                           environment: str = "authorized") -> list[Finding]:
-    first = runner.get(path, session=None, payload_class="benign-read",
-                       rationale="passive check: inspect security response headers",
-                       summary="security-headers")
+def security_headers_check(
+    runner, path: str, target_url: str, application: str = "target", environment: str = "authorized"
+) -> list[Finding]:
+    first = runner.get(
+        path,
+        session=None,
+        payload_class="benign-read",
+        rationale="passive check: inspect security response headers",
+        summary="security-headers",
+    )
     if not first.executed:
         return []
     present = {k.lower() for k in (first.response.headers or {})}
@@ -35,8 +41,13 @@ def security_headers_check(runner, path: str, target_url: str, application: str 
         return []
 
     # deterministic reproduction: re-observe once more
-    second = runner.get(path, session=None, payload_class="benign-read",
-                        rationale="reproduction: re-inspect headers", summary="security-headers repro")
+    second = runner.get(
+        path,
+        session=None,
+        payload_class="benign-read",
+        rationale="reproduction: re-inspect headers",
+        summary="security-headers repro",
+    )
     present2 = {k.lower() for k in (getattr(second.response, "headers", {}) or {})}
     reproduced = all(h not in present2 for h, _, _ in missing)
 

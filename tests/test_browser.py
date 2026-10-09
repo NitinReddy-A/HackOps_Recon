@@ -4,6 +4,7 @@ No real browser is used: the oracle logic is driven entirely through StubDriver,
 "Playwright absent" degradation path is exercised deterministically by simulating the lazy
 import failing. These pass whether or not Playwright happens to be installed on the host.
 """
+
 import rampart.browser.engine as engine
 from rampart.browser.engine import (
     DOMXSS_TOKEN,

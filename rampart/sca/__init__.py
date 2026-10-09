@@ -5,9 +5,18 @@ matches each ``name@version`` against the OSV.dev advisory database, and emits o
 upgrade-focused finding per vulnerable package (worst CVSS severity + the minimum safe version to
 bump to). Stdlib-only; the OSV network call is an operator opt-in and fully graceful offline.
 """
-from .scanner import scan_sca
-from .parsers import Dep, collect_dependencies
-from .enrich import adjust, enrich_findings, fetch_epss, fetch_kev, reachable
 
-__all__ = ["scan_sca", "collect_dependencies", "Dep",
-           "enrich_findings", "fetch_epss", "fetch_kev", "reachable", "adjust"]
+from .enrich import adjust, enrich_findings, fetch_epss, fetch_kev, reachable
+from .parsers import Dep, collect_dependencies
+from .scanner import scan_sca
+
+__all__ = [
+    "scan_sca",
+    "collect_dependencies",
+    "Dep",
+    "enrich_findings",
+    "fetch_epss",
+    "fetch_kev",
+    "reachable",
+    "adjust",
+]

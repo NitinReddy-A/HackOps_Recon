@@ -1,5 +1,7 @@
 """P0 coverage wave: JWT (alg=none), SSTI, sensitive-file exposure, clickjacking, insecure cookie."""
+
 from conftest import make_engagement
+
 from rampart.schemas.finding import State
 
 
@@ -54,5 +56,5 @@ def test_soc2_report_generates(tmp_path, vuln_server):
     assert "soc2" in written
     text = rb.to_soc2()
     assert "Trust Services Criteria" in text or "TSC" in text
-    assert "attestation" in text and "licensed CPA firm" in text   # honest disclaimer present
-    assert "CC6.1" in text                                         # control mapping present
+    assert "attestation" in text and "licensed CPA firm" in text  # honest disclaimer present
+    assert "CC6.1" in text  # control mapping present

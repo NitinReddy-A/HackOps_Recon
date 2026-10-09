@@ -4,6 +4,7 @@ Given the effective risk tier, the engagement's ``action_policy``, and the curre
 emit ALLOW / ALLOW_WITH_INTERRUPT / DENY. Declarative and versioned so a review can
 reconstruct exactly why an action was permitted.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,17 +27,22 @@ def decide(tier: int, policy: ActionPolicy, phase: str = "test") -> EngineResult
 
     if tier >= RiskTier.PROHIBITED:
         rules.append("policy.tier3=deny")
-        return EngineResult(Decision.DENY, "Tier 3 (prohibited): DoS/destructive/exfil are denied by default", rules)
+        return EngineResult(
+            Decision.DENY, "Tier 3 (prohibited): DoS/destructive/exfil are denied by default", rules
+        )
 
     if tier <= policy.default_tier_ceiling:
         rules.append(f"policy.tier_ceiling>={tier}")
-        return EngineResult(Decision.ALLOW, f"Tier {tier} within ceiling {policy.default_tier_ceiling}", rules)
+        return EngineResult(
+            Decision.ALLOW, f"Tier {tier} within ceiling {policy.default_tier_ceiling}", rules
+        )
 
     if tier == RiskTier.HIGH_RISK:
         if policy.tier2_requires_approval:
             rules.append("policy.tier2_requires_approval=true")
-            return EngineResult(Decision.ALLOW_WITH_INTERRUPT,
-                                "Tier 2 (high-risk): requires human approval (HITL)", rules)
+            return EngineResult(
+                Decision.ALLOW_WITH_INTERRUPT, "Tier 2 (high-risk): requires human approval (HITL)", rules
+            )
         rules.append("policy.tier2_requires_approval=false;tier>ceiling")
         return EngineResult(Decision.DENY, "Tier 2 above ceiling and approval disabled", rules)
 

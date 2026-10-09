@@ -5,6 +5,7 @@ test -> validate. The supervisor is the only component that decides "what to tes
 always subject to the policy engine. It keeps a PTT-like plan (the hypothesis list with
 status) as auditable working memory rather than a free-text scratchpad.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -36,9 +37,23 @@ class Supervisor:
     # Classes that send writes/active probes — only tested when --active is set.
     ACTIVE_CLASSES = {"MASS_ASSIGNMENT", "GRAPHQL", "XXE"}
 
-    def __init__(self, pipeline, evidence_store, session_manager, validator, intel, appmodel,
-                 host, port, scheme, target_url, application, scanners=None, active=False,
-                 max_workers=None):
+    def __init__(
+        self,
+        pipeline,
+        evidence_store,
+        session_manager,
+        validator,
+        intel,
+        appmodel,
+        host,
+        port,
+        scheme,
+        target_url,
+        application,
+        scanners=None,
+        active=False,
+        max_workers=None,
+    ):
         self.pipeline = pipeline
         self.evidence = evidence_store
         self.sessions = session_manager
@@ -65,17 +80,31 @@ class Supervisor:
         result.phase_log.append({"ts": now_iso(), "phase": phase, "msg": msg})
 
     def _runner(self, phase, role="test-worker", profile="supervisor"):
-        return ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
-                           self.host, self.port, self.scheme, actor_role=role,
-                           actor_profile=profile, phase=phase)
+        return ProbeRunner(
+            self.pipeline,
+            self.evidence,
+            self.pipeline.engagement_id,
+            self.host,
+            self.port,
+            self.scheme,
+            actor_role=role,
+            actor_profile=profile,
+            phase=phase,
+        )
 
     def _worker_for(self, vuln_class):
         if vuln_class in WEB_CLASSES:
-            return WebWorker(self._runner("test", profile=vuln_class),
-                             application=self.application, environment="authorized")
+            return WebWorker(
+                self._runner("test", profile=vuln_class),
+                application=self.application,
+                environment="authorized",
+            )
         if vuln_class == "IDOR/BOLA":
-            return BolaIdorWorker(self._runner("test", profile="bola-idor"),
-                                  application=self.application, environment="authorized")
+            return BolaIdorWorker(
+                self._runner("test", profile="bola-idor"),
+                application=self.application,
+                environment="authorized",
+            )
         return None
 
     def run(self) -> ScanResult:
@@ -83,23 +112,31 @@ class Supervisor:
 
         # Phase: recon / liveness (Tier 0)
         recon = self._runner("recon")
-        live = recon.get("/", session=None, payload_class="benign-read",
-                         rationale="liveness probe", summary="liveness")
+        live = recon.get(
+            "/", session=None, payload_class="benign-read", rationale="liveness probe", summary="liveness"
+        )
         self._log(result, "recon", f"liveness GET / -> {live.status if live.executed else 'blocked'}")
 
         # Phase: map (already built) — record surface
         ownable = self.appmodel.ownable_endpoints()
-        self._log(result, "map", f"{len(self.appmodel.endpoints)} endpoints, {len(ownable)} ownable, "
-                                 f"{len(self.appmodel.principals)} seeded principals")
+        self._log(
+            result,
+            "map",
+            f"{len(self.appmodel.endpoints)} endpoints, {len(ownable)} ownable, "
+            f"{len(self.appmodel.principals)} seeded principals",
+        )
 
         # Phase: built-in safe checks (security misconfiguration — observation IS the oracle)
         misc_runner = self._runner("test", profile="misconfig")
         misc_findings = security_headers_check(misc_runner, "/", self.target_url, self.application)
-        misc_findings += misconfig_checks(misc_runner, self.appmodel, self.target_url,
-                                          self.application, self.sessions)
+        misc_findings += misconfig_checks(
+            misc_runner, self.appmodel, self.target_url, self.application, self.sessions
+        )
         misc_findings += sensitive_files_check(misc_runner, self.target_url, self.application)
         result.findings.extend(misc_findings)
-        self._log(result, "test", f"built-in misconfiguration checks produced {len(misc_findings)} finding(s)")
+        self._log(
+            result, "test", f"built-in misconfiguration checks produced {len(misc_findings)} finding(s)"
+        )
 
         # Phase: hypotheses — access-control (LLM/deterministic) + input-fuzzing (deterministic enum)
         appmodel_d = self.appmodel.to_dict()
@@ -113,9 +150,12 @@ class Supervisor:
         result.hypotheses = hyps
         classes = sorted({h["vuln_class"] for h in hyps})
         result.classes_tested = classes
-        self._log(result, "hypothesize",
-                  f"{len(hyps)} hypothesis(es) across {len(classes)} class(es) [{', '.join(classes)}] "
-                  f"via {self.intel.name}")
+        self._log(
+            result,
+            "hypothesize",
+            f"{len(hyps)} hypothesis(es) across {len(classes)} class(es) [{', '.join(classes)}] "
+            f"via {self.intel.name}",
+        )
 
         # Phase: plan — the planner agent prioritises classes (reasoning backend; deterministic fallback)
         plan = run_planner(self.intel, appmodel_d, result.scanner_runs, classes)
@@ -130,17 +170,25 @@ class Supervisor:
         # yields byte-identical findings to a sequential one; concurrency changes only wall-clock.
         graph = TaskGraph()
         for h in hyps:
-            h["_task_id"] = graph.add(Task(
-                name=f"hyp:{h['vuln_class']}:{h['id']}", kind="hypothesis",
-                run=(lambda ctx, hh=h: self._investigate(hh)),
-            ))
+            h["_task_id"] = graph.add(
+                Task(
+                    name=f"hyp:{h['vuln_class']}:{h['id']}",
+                    kind="hypothesis",
+                    run=(lambda ctx, hh=h: self._investigate(hh)),
+                )
+            )
         gres = run_graph(graph, max_workers=self.max_workers)
-        result.plan["parallel"] = {"max_workers": self.max_workers,
-                                   "peak_concurrency": gres.max_concurrency,
-                                   "duration_s": gres.duration_s}
-        self._log(result, "test",
-                  f"fanned {len(hyps)} hypothesis(es) across the orchestrator "
-                  f"(max_workers={self.max_workers}, peak={gres.max_concurrency})")
+        result.plan["parallel"] = {
+            "max_workers": self.max_workers,
+            "peak_concurrency": gres.max_concurrency,
+            "duration_s": gres.duration_s,
+        }
+        self._log(
+            result,
+            "test",
+            f"fanned {len(hyps)} hypothesis(es) across the orchestrator "
+            f"(max_workers={self.max_workers}, peak={gres.max_concurrency})",
+        )
 
         # Deterministic reassembly: walk hypotheses in planned order and fold each task's record.
         for h in hyps:
@@ -148,7 +196,7 @@ class Supervisor:
             task = graph.tasks.get(h.pop("_task_id", ""))
             if task is None or task.status == "error":
                 h["status"] = "error"
-                err = (task.error if task else "task missing")
+                err = task.error if task else "task missing"
                 self._log(result, "test", f"[{h['id']}] worker error -> skipped ({err})")
                 continue
             rec = task.value or {}
@@ -165,7 +213,9 @@ class Supervisor:
             try:
                 if not adapter.is_available():
                     run_info["note"] = adapter.install_hint
-                    self._log(result, "scan", f"{adapter.name}: not installed — skipped ({adapter.install_hint})")
+                    self._log(
+                        result, "scan", f"{adapter.name}: not installed — skipped ({adapter.install_hint})"
+                    )
                 else:
                     run_info["available"] = True
                     sfindings = adapter.run(self.appmodel, self.target_url, self.application)
@@ -214,18 +264,24 @@ class Supervisor:
         if validated and finding.vuln_class == "IDOR/BOLA":
             self._draft_narrative(finding, h)
         rec["finding"] = finding
-        rec["logs"].append(("validate",
-                            f"[{h['id']}:{h['vuln_class']}] {'CONFIRMED' if validated else 'dropped'} "
-                            f"({finding.verification.reproductions} reproductions)"))
+        rec["logs"].append(
+            (
+                "validate",
+                f"[{h['id']}:{h['vuln_class']}] {'CONFIRMED' if validated else 'dropped'} "
+                f"({finding.verification.reproductions} reproductions)",
+            )
+        )
         return rec
 
     def _draft_narrative(self, finding, hyp):
         """Reporter role: draft prose from VALIDATED evidence only (never invents evidence)."""
-        narr = self.intel.draft_finding_narrative({
-            "endpoint_method": hyp["endpoint_method"],
-            "endpoint_path": hyp["endpoint_path"],
-            "object_type": hyp["object_type"],
-        })
+        narr = self.intel.draft_finding_narrative(
+            {
+                "endpoint_method": hyp["endpoint_method"],
+                "endpoint_path": hyp["endpoint_path"],
+                "object_type": hyp["object_type"],
+            }
+        )
         finding.description = narr.get("description", finding.description)
         finding.impact = narr.get("impact", finding.impact)
         finding.root_cause = narr.get("root_cause", finding.root_cause)

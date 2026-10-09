@@ -1,10 +1,11 @@
-"""The ``SECURITY.md`` scope & authorization contract (blueprint section 30.1).
+"""The ``rampart.scope.yaml`` scope & authorization contract (blueprint section 30.1).
 
 This is the R1 gate made concrete: an engagement will not start unless this parses,
 an owner is named, the attestation is present, the contract has not expired, and the
 target resolves inside ``in_scope`` with a ``resolved_ip_allowlist`` entry. It is data
 the deterministic policy engine reads — never something the LLM can edit mid-run.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -17,11 +18,11 @@ from .. import yaml_lite
 # IP ranges that must never be reachable regardless of the operator's allowlist
 # (cloud metadata, link-local, multicast, unspecified). Anti-SSRF, blueprint section 23.
 _HARD_BLOCK_NETS = [
-    ipaddress.ip_network("169.254.0.0/16"),   # link-local incl. 169.254.169.254 metadata
-    ipaddress.ip_network("fe80::/10"),        # IPv6 link-local
-    ipaddress.ip_network("224.0.0.0/4"),      # multicast
-    ipaddress.ip_network("0.0.0.0/8"),        # "this network"
-    ipaddress.ip_network("::/128"),           # unspecified
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local incl. 169.254.169.254 metadata
+    ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
+    ipaddress.ip_network("224.0.0.0/4"),  # multicast
+    ipaddress.ip_network("0.0.0.0/8"),  # "this network"
+    ipaddress.ip_network("::/128"),  # unspecified
 ]
 
 
@@ -57,7 +58,7 @@ class TestAccount:
     secret_ref: str = ""
 
     @classmethod
-    def from_dict(cls, d: dict) -> "TestAccount":
+    def from_dict(cls, d: dict) -> TestAccount:
         return cls(id=str(d["id"]), role=str(d.get("role", "")), secret_ref=str(d.get("secret_ref", "")))
 
 
@@ -69,7 +70,7 @@ class HostScope:
     methods: list[str] = field(default_factory=lambda: ["GET"])
 
     @classmethod
-    def from_dict(cls, d: dict) -> "HostScope":
+    def from_dict(cls, d: dict) -> HostScope:
         return cls(
             host=str(d["host"]).lower(),
             ports=[int(p) for p in (d.get("ports") or [443])],
@@ -120,9 +121,9 @@ class EngagementScope:
 
     # ------------------------------------------------------------------ parse
     @classmethod
-    def from_file(cls, path: str) -> "EngagementScope":
+    def from_file(cls, path: str) -> EngagementScope:
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 text = fh.read()
         except FileNotFoundError as exc:
             raise ScopeError(f"scope contract not found: {path}") from exc
@@ -131,7 +132,7 @@ class EngagementScope:
         return obj
 
     @classmethod
-    def from_text(cls, text: str) -> "EngagementScope":
+    def from_text(cls, text: str) -> EngagementScope:
         front = _extract_front_matter(text)
         try:
             data = yaml_lite.load(front)
@@ -142,20 +143,34 @@ class EngagementScope:
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "EngagementScope":
+    def from_dict(cls, d: dict) -> EngagementScope:
         scope = d.get("scope") or {}
         in_scope = [HostScope.from_dict(h) for h in (scope.get("in_scope") or [])]
         out = scope.get("out_of_scope") or {}
         return cls(
             api_version=str(d.get("apiVersion", "")),
             kind=str(d.get("kind", "")),
-            authorization=Authorization(**{k: str(v) for k, v in (d.get("authorization") or {}).items() if k in Authorization.__annotations__}),
+            authorization=Authorization(
+                **{
+                    k: str(v)
+                    for k, v in (d.get("authorization") or {}).items()
+                    if k in Authorization.__annotations__
+                }
+            ),
             in_scope=in_scope,
             paths_exclude=[str(p) for p in (out.get("paths_exclude") or [])],
             hosts_exclude=[str(h).lower() for h in (out.get("hosts_exclude") or [])],
             resolved_ip_allowlist=[str(c) for c in (scope.get("resolved_ip_allowlist") or [])],
-            limits=Limits(**{k: v for k, v in (d.get("limits") or {}).items() if k in Limits.__annotations__}),
-            action_policy=ActionPolicy(**{k: v for k, v in (d.get("action_policy") or {}).items() if k in ActionPolicy.__annotations__}),
+            limits=Limits(
+                **{k: v for k, v in (d.get("limits") or {}).items() if k in Limits.__annotations__}
+            ),
+            action_policy=ActionPolicy(
+                **{
+                    k: v
+                    for k, v in (d.get("action_policy") or {}).items()
+                    if k in ActionPolicy.__annotations__
+                }
+            ),
             test_accounts=[TestAccount.from_dict(a) for a in (d.get("test_accounts") or [])],
             notify=d.get("notify") or {},
         )
@@ -184,7 +199,9 @@ class EngagementScope:
                     errs.append(f"resolved_ip_allowlist entry is not a valid CIDR/IP: {cidr!r}")
         if self.authorization.expires:
             if self.is_expired():
-                errs.append(f"authorization.expires is in the past ({self.authorization.expires}); scope auto-expired")
+                errs.append(
+                    f"authorization.expires is in the past ({self.authorization.expires}); scope auto-expired"
+                )
         else:
             errs.append("authorization.expires is required (scope must auto-expire, fail-closed)")
         if self.action_policy.default_tier_ceiling not in (0, 1, 2):

@@ -4,6 +4,7 @@
 replay evidence. That coupling is the trust primitive separating this from a raw scanner
 alert. The finding lifecycle (section 21) is enforced by the states below.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -12,16 +13,16 @@ from ..util import gen_id, now_iso
 
 
 class State:
-    CANDIDATE = "Candidate"          # LLM hypothesis exists; no evidence
+    CANDIDATE = "Candidate"  # LLM hypothesis exists; no evidence
     INVESTIGATING = "Investigating"  # worker running Tier 0/1 probes
     EVIDENCE_FOUND = "EvidenceFound"  # a deterministic oracle fired; bundle assembled
-    VALIDATED = "Validated"          # GATE passed: independent re-derivation from clean state
+    VALIDATED = "Validated"  # GATE passed: independent re-derivation from clean state
     REPORTED = "Reported"
     FIX_PROPOSED = "FixProposed"
     RETEST = "Retest"
     FIXED = "Fixed"
     REGRESSION = "Regression"
-    DROPPED = "Dropped"              # gate failed / demoted
+    DROPPED = "Dropped"  # gate failed / demoted
 
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")
@@ -30,7 +31,7 @@ CONFIDENCES = ("tentative", "firm", "confirmed")
 
 @dataclass
 class Evidence:
-    type: str                        # http_request|http_response|response_diff|screenshot|note
+    type: str  # http_request|http_response|response_diff|screenshot|note
     summary: str
     storage_uri: str = ""
     sha256: str = ""
@@ -69,9 +70,9 @@ class Remediation:
     summary: str = ""
     type: str = "code_patch"
     guidance: str = ""
-    proposed_diff: str = ""          # advisory only — never auto-applied (R7)
+    proposed_diff: str = ""  # advisory only — never auto-applied (R7)
     effort: str = "low"
-    fix_status: str = "proposed"     # proposed|applied
+    fix_status: str = "proposed"  # proposed|applied
     tests_run: bool = False
     tests_passed: bool | None = None
     pr_ref: str = ""
@@ -79,10 +80,10 @@ class Remediation:
 
 @dataclass
 class Verification:
-    method: str = ""                 # e.g. active-exploit-replay
+    method: str = ""  # e.g. active-exploit-replay
     validated: bool = False
     validated_at: str = ""
-    validator: str = ""              # a component DIFFERENT from the discoverer (separation of duties)
+    validator: str = ""  # a component DIFFERENT from the discoverer (separation of duties)
     independent_reproduction: bool = False
     reproductions: int = 0
     false_positive_checks: list = field(default_factory=list)
@@ -144,7 +145,7 @@ class Finding:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Finding":
+    def from_dict(cls, d: dict) -> Finding:
         d = {k: v for k, v in d.items() if not k.startswith("$")}
 
         def _sub(klass, val, default):
@@ -166,17 +167,20 @@ class Finding:
 
     # --------------------------------------------------------------- SARIF
     def to_sarif_result(self) -> dict:
-        level = {"critical": "error", "high": "error", "medium": "warning",
-                 "low": "note", "info": "note"}.get(self.severity, "warning")
+        level = {
+            "critical": "error",
+            "high": "error",
+            "medium": "warning",
+            "low": "note",
+            "info": "note",
+        }.get(self.severity, "warning")
         rule_id = (self.cwe[0] if self.cwe else self.vuln_class) or "finding"
         loc_uri = self.endpoint.get("url") or self.asset.get("target", "")
         result = {
             "ruleId": rule_id,
             "level": level,
             "message": {"text": f"{self.title} — {self.description}"},
-            "locations": [{
-                "physicalLocation": {"artifactLocation": {"uri": loc_uri}}
-            }],
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": loc_uri}}}],
             "partialFingerprints": {"dedupeKey/v1": self.dedupe_key or self.id},
             "properties": {
                 "vuln_class": self.vuln_class,
@@ -191,11 +195,15 @@ class Finding:
             },
         }
         if self.affected_code and self.affected_code.file:
-            result["locations"].append({
-                "physicalLocation": {
-                    "artifactLocation": {"uri": self.affected_code.file},
-                    "region": {"startLine": self.affected_code.start_line,
-                               "endLine": self.affected_code.end_line},
+            result["locations"].append(
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": self.affected_code.file},
+                        "region": {
+                            "startLine": self.affected_code.start_line,
+                            "endLine": self.affected_code.end_line,
+                        },
+                    }
                 }
-            })
+            )
         return result

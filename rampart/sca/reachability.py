@@ -18,21 +18,37 @@ The call graph is name-resolved (no type inference), so it over-approximates edg
 safe direction for reachability (we would rather call something reachable than wrongly drop it). We
 say so in the finding; this is a static heuristic call graph, not a sound whole-program analysis.
 """
+
 from __future__ import annotations
 
 import ast
 import os
 
-_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".rampart", "dist", "build",
-              ".tox", ".eggs", "site-packages"}
+_SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".rampart",
+    "dist",
+    "build",
+    ".tox",
+    ".eggs",
+    "site-packages",
+}
 _TEST_HINTS = ("test", "tests", "conftest", "_spec", "fixture")
 
 
 def _is_test_path(rel: str) -> bool:
     low = rel.lower().replace("\\", "/")
     base = low.rsplit("/", 1)[-1]
-    return (base.startswith("test_") or base.endswith("_test.py") or base == "conftest.py"
-            or any(seg in low.split("/") for seg in ("test", "tests")))
+    return (
+        base.startswith("test_")
+        or base.endswith("_test.py")
+        or base == "conftest.py"
+        or any(seg in low.split("/") for seg in ("test", "tests"))
+    )
 
 
 class _Node:
@@ -40,8 +56,8 @@ class _Node:
 
     def __init__(self, qual, file, is_test, is_entry=False):
         self.qual = qual
-        self.calls: set[str] = set()         # simple callee names
-        self.dep_uses: set[str] = set()      # full dependency symbols, e.g. "flask.render_template"
+        self.calls: set[str] = set()  # simple callee names
+        self.dep_uses: set[str] = set()  # full dependency symbols, e.g. "flask.render_template"
         self.file = file
         self.is_test = is_test
         self.is_entry = is_entry
@@ -54,7 +70,7 @@ class _ModuleVisitor(ast.NodeVisitor):
         self.module = module
         self.rel = rel
         self.is_test = is_test
-        self.imports: dict[str, tuple[str, str]] = {}   # local name -> (root_pkg, full_symbol)
+        self.imports: dict[str, tuple[str, str]] = {}  # local name -> (root_pkg, full_symbol)
         self.nodes: list[_Node] = []
         self._top = _Node(f"{module}:<module>", rel, is_test, is_entry=not is_test)
         self.nodes.append(self._top)
@@ -71,7 +87,7 @@ class _ModuleVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node):
         if node.level and not node.module:
-            return                     # relative import of nothing concrete
+            return  # relative import of nothing concrete
         mod = node.module or ""
         root = mod.split(".")[0]
         for a in node.names:
@@ -84,7 +100,6 @@ class _ModuleVisitor(ast.NodeVisitor):
     # ---- function scopes ----
     def _enter_func(self, node):
         parent = self._stack[-1]
-        base = parent.qual.split(":", 1)[0] if parent is self._top else parent.qual
         qual = f"{self.module}:{node.name}" if parent is self._top else f"{parent.qual}.{node.name}"
         n = _Node(qual, self.rel, self.is_test, is_entry=(node.name == "main" and not self.is_test))
         self.nodes.append(n)
@@ -101,8 +116,11 @@ class _ModuleVisitor(ast.NodeVisitor):
     def visit_ClassDef(self, node):
         # methods are visited with a Class-qualified name via the stack
         prev = self._stack[-1]
-        holder = _Node(f"{prev.qual}.{node.name}" if prev is not self._top else f"{self.module}:{node.name}",
-                       self.rel, self.is_test)
+        holder = _Node(
+            f"{prev.qual}.{node.name}" if prev is not self._top else f"{self.module}:{node.name}",
+            self.rel,
+            self.is_test,
+        )
         self._stack.append(holder)
         self.generic_visit(node)
         self._stack.pop()
@@ -115,9 +133,12 @@ class _ModuleVisitor(ast.NodeVisitor):
 
     @staticmethod
     def _is_main_guard(test) -> bool:
-        return (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name)
-                and test.left.id == "__name__"
-                and any(isinstance(c, ast.Constant) and c.value == "__main__" for c in test.comparators))
+        return (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "__name__"
+            and any(isinstance(c, ast.Constant) and c.value == "__main__" for c in test.comparators)
+        )
 
     # ---- calls + dep usage ----
     def visit_Call(self, node):
@@ -163,7 +184,7 @@ class _ModuleVisitor(ast.NodeVisitor):
 class RepoGraph:
     def __init__(self):
         self.nodes: list[_Node] = []
-        self.by_name: dict[str, list[_Node]] = {}     # simple func name -> nodes
+        self.by_name: dict[str, list[_Node]] = {}  # simple func name -> nodes
         self.imports_by_root: dict[str, bool] = {}
         self._reachable: set[str] | None = None
 
@@ -175,9 +196,8 @@ class RepoGraph:
     def reachable_nodes(self) -> set[str]:
         if self._reachable is not None:
             return self._reachable
-        node_by_qual = {n.qual: n for n in self.nodes}
         frontier = [n for n in self.nodes if n.is_entry]
-        seen: set[str] = set(n.qual for n in frontier)
+        seen: set[str] = {n.qual for n in frontier}
         while frontier:
             cur = frontier.pop()
             for callee in cur.calls:
@@ -207,7 +227,7 @@ def analyze_repo(repo_path: str, max_files: int = 6000) -> RepoGraph | None:
             path = os.path.join(root, fn)
             rel = os.path.relpath(path, repo_path).replace("\\", "/")
             try:
-                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                with open(path, encoding="utf-8", errors="ignore") as fh:
                     tree = ast.parse(fh.read(800_000), filename=rel)
             except (OSError, SyntaxError, ValueError):
                 continue
@@ -218,7 +238,7 @@ def analyze_repo(repo_path: str, max_files: int = 6000) -> RepoGraph | None:
             except RecursionError:
                 continue
             g.nodes.extend(v.nodes)
-            for (rootpkg, _full) in v.imports.values():
+            for rootpkg, _full in v.imports.values():
                 g.imports_by_root[rootpkg] = True
     if not found_py:
         return None
@@ -228,8 +248,12 @@ def analyze_repo(repo_path: str, max_files: int = 6000) -> RepoGraph | None:
 
 def _symbol_matches(used: str, affected: str) -> bool:
     a = affected.strip().lstrip(".")
-    return bool(a) and (used == a or used.endswith("." + a) or used.endswith("." + a.split(".")[-1])
-                        or used == a.split(".")[-1])
+    return bool(a) and (
+        used == a
+        or used.endswith("." + a)
+        or used.endswith("." + a.split(".")[-1])
+        or used == a.split(".")[-1]
+    )
 
 
 def reachability(graph: RepoGraph, import_names: list[str], affected_symbols=None) -> dict:
@@ -247,14 +271,12 @@ def reachability(graph: RepoGraph, import_names: list[str], affected_symbols=Non
     used_any: set[str] = set()
     used_reachable: set[str] = set()
     used_nontest = False
-    used_test = False
     for n in graph.nodes:
         dep_syms = {s for s in n.dep_uses if _is_dep_sym(s)}
         if not dep_syms:
             continue
         used_any |= dep_syms
         if n.is_test:
-            used_test = True
             continue
         used_nontest = True
         if n.qual in reachable_set:
@@ -274,7 +296,7 @@ def reachability(graph: RepoGraph, import_names: list[str], affected_symbols=Non
     elif used_reachable:
         tier = "function-reachable" if vuln_reachable else "reachable"
     else:
-        tier = "imported-not-on-live-path"     # used, but only in unreachable (dead) non-test code
+        tier = "imported-not-on-live-path"  # used, but only in unreachable (dead) non-test code
 
     return {
         "tier": tier,

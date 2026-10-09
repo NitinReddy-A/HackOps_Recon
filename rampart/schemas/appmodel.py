@@ -7,6 +7,7 @@ read user A's order"; this can. It is ordinary relational data — no graph DB a
 Every ingested string carries a ``trust_level`` (OWASP LLM01 / ASI06): target-derived
 text is ``untrusted`` and is never concatenated into an instruction context.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -16,13 +17,13 @@ from dataclasses import asdict, dataclass, field
 class Endpoint:
     id: str
     method: str
-    path: str                       # template, e.g. /api/orders/{id}
+    path: str  # template, e.g. /api/orders/{id}
     auth_required: bool = False
     returns_object_type: str | None = None
     object_selector: dict = field(default_factory=dict)  # {"param": "id", "in": "path"}
-    parameters: list = field(default_factory=list)       # [{"name","in","type"}] — query/path inputs
+    parameters: list = field(default_factory=list)  # [{"name","in","type"}] — query/path inputs
     observed_roles: list = field(default_factory=list)
-    provenance: str = "crawl"        # crawl|spec|repo|manual
+    provenance: str = "crawl"  # crawl|spec|repo|manual
     trust_level: str = "untrusted"
 
     def query_params(self) -> list:
@@ -42,7 +43,7 @@ class Obj:
     id: str
     owner_principal: str
     seeded: bool = True
-    signature: str | None = None     # a distinctive value the oracle looks for in responses
+    signature: str | None = None  # a distinctive value the oracle looks for in responses
 
 
 @dataclass
@@ -50,7 +51,7 @@ class Permission:
     role: str
     object_type: str
     action: str
-    constraint: str = "owner_only"   # owner_only | any | role_scoped
+    constraint: str = "owner_only"  # owner_only | any | role_scoped
 
 
 @dataclass
@@ -71,7 +72,8 @@ class ApplicationModel:
 
     def objects_owned_by(self, principal_id: str, object_type: str | None = None) -> list:
         return [
-            o for o in self.objects
+            o
+            for o in self.objects
             if o.owner_principal == principal_id and (object_type is None or o.type == object_type)
         ]
 
@@ -90,7 +92,7 @@ class ApplicationModel:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ApplicationModel":
+    def from_dict(cls, d: dict) -> ApplicationModel:
         return cls(
             engagement_id=d.get("engagement_id", ""),
             endpoints=[Endpoint(**e) for e in d.get("endpoints", [])],

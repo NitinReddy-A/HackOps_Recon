@@ -1,21 +1,27 @@
 """Recon crawler: discover the attack surface with NO OpenAPI spec, then confirm findings."""
+
 from conftest import write_engagement
+
 from rampart.engagement import Engagement, EngagementConfig
 
 
 def _crawl_engagement(tmp_path, port):
-    scope_file = write_engagement(tmp_path, port)   # writes scope + secrets (+ openapi/seed we ignore)
+    scope_file = write_engagement(tmp_path, port)  # writes scope + secrets (+ openapi/seed we ignore)
     cfg = EngagementConfig(
-        scope_file=scope_file, target=f"http://127.0.0.1:{port}",
+        scope_file=scope_file,
+        target=f"http://127.0.0.1:{port}",
         work_dir=str(tmp_path / ".rampart"),
-        openapi="", appmodel_seed="",               # <- no spec: discovery must come from crawling
-        application="demo-shop-api", crawl=True)
+        openapi="",
+        appmodel_seed="",  # <- no spec: discovery must come from crawling
+        application="demo-shop-api",
+        crawl=True,
+    )
     return Engagement(cfg)
 
 
 def test_crawl_discovers_endpoints_without_spec(tmp_path, vuln_server):
     eng = _crawl_engagement(tmp_path, vuln_server.port)
-    assert eng.appmodel.endpoints == []             # nothing known before recon
+    assert eng.appmodel.endpoints == []  # nothing known before recon
     eng.recon()
     paths = {e.path for e in eng.appmodel.endpoints}
     assert "/api/search" in paths and "/api/products" in paths and "/api/go" in paths

@@ -5,6 +5,7 @@ the DNS name is re-resolved at execution time and the *resolved IP* is re-checke
 against the operator's allowlist. This defeats DNS rebinding and coerced SSRF to
 internal/cloud-metadata endpoints (blueprint section 23, threat #5).
 """
+
 from __future__ import annotations
 
 import socket
@@ -41,7 +42,9 @@ def check(scope: EngagementScope, action: ToolAction, resolver=default_resolver)
     if hs is None:
         return AllowlistResult(False, reason=f"host {host!r} is not in scope (or is excluded)")
     if action.port not in hs.ports:
-        return AllowlistResult(False, reason=f"port {action.port} not permitted for {host!r} (allowed: {hs.ports})")
+        return AllowlistResult(
+            False, reason=f"port {action.port} not permitted for {host!r} (allowed: {hs.ports})"
+        )
 
     ips = resolver(host)
     if not ips:
@@ -49,7 +52,10 @@ def check(scope: EngagementScope, action: ToolAction, resolver=default_resolver)
     # EVERY resolved IP must be allowlisted — a single rebind-to-internal answer denies.
     for ip in ips:
         if not scope.ip_allowed(ip):
-            return AllowlistResult(False, resolved_ip=ip,
-                                   reason=f"resolved IP {ip} for {host!r} is not in resolved_ip_allowlist "
-                                          "(or is a hard-blocked range)")
+            return AllowlistResult(
+                False,
+                resolved_ip=ip,
+                reason=f"resolved IP {ip} for {host!r} is not in resolved_ip_allowlist "
+                "(or is a hard-blocked range)",
+            )
     return AllowlistResult(True, resolved_ip=ips[0], reason="host+port+resolved-IP in scope")

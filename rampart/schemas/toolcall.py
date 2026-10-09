@@ -7,6 +7,7 @@ code disposes" enforceable and replayable. The model supplies ``rationale`` as *
 never trusted as instruction*, and never supplies credentials — the deterministic
 session manager injects them from ``use_session``.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -14,10 +15,10 @@ from enum import IntEnum
 
 
 class RiskTier(IntEnum):
-    READ_ONLY = 0            # GET in-scope, crawl, spec fetch, diffing, screenshotting
+    READ_ONLY = 0  # GET in-scope, crawl, spec fetch, diffing, screenshotting
     CONTROLLED_VALIDATION = 1  # benign PoC probes on seeded accounts/objects, non-destructive
-    HIGH_RISK = 2            # writes/state-change, chaining, anything touching real user data
-    PROHIBITED = 3           # DoS/destructive/exfil/persistence — denied by default
+    HIGH_RISK = 2  # writes/state-change, chaining, anything touching real user data
+    PROHIBITED = 3  # DoS/destructive/exfil/persistence — denied by default
 
 
 class Decision:
@@ -38,9 +39,9 @@ class ToolAction:
     scheme: str = "https"
     path: str = "/"
     query: dict = field(default_factory=dict)
-    body: str | None = None            # deterministic executor holds this; hashed for audit
+    body: str | None = None  # deterministic executor holds this; hashed for audit
     body_class: str = "none"
-    use_session: str | None = None     # reference to a seeded account id; NOT a raw token
+    use_session: str | None = None  # reference to a seeded account id; NOT a raw token
     headers: dict = field(default_factory=dict)  # extra request headers (e.g. a crafted test token)
     payload_class: str = "benign-read"
 
@@ -56,15 +57,15 @@ class ToolAction:
 @dataclass
 class ToolCallRequest:
     engagement_id: str
-    tool: str = "http_request"          # narrow tools only — no `shell`, no `fetch(url)`
-    phase: str = "test"                 # recon|map|test|validate|report|retest
-    actor_role: str = "test-worker"     # supervisor|mapper|test-worker|validator|reporter
-    actor_profile: str = ""             # e.g. "bola-idor"
+    tool: str = "http_request"  # narrow tools only — no `shell`, no `fetch(url)`
+    phase: str = "test"  # recon|map|test|validate|report|retest
+    actor_role: str = "test-worker"  # supervisor|mapper|test-worker|validator|reporter
+    actor_profile: str = ""  # e.g. "bola-idor"
     hypothesis_id: str | None = None
     finding_id: str | None = None
     action: ToolAction = field(default_factory=ToolAction)
     declared_tier: int = 0
-    rationale: str = ""                 # model reason — DATA, never executed as instruction
+    rationale: str = ""  # model reason — DATA, never executed as instruction
     request_id: str = ""
 
     def __post_init__(self):

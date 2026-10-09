@@ -1,5 +1,4 @@
 """The safety choke-point: allowlist -> scope -> risk -> policy -> HITL -> budget -> audit."""
-import os
 
 import pytest
 
@@ -51,15 +50,28 @@ def pipe(tmp_path):
     audit = AuditLog(str(tmp_path / "audit.jsonl"))
     budget = BudgetTracker(scope.limits)
     ex = _Exec()
-    p = PolicyPipeline(scope, audit, budget, ex,
-                       resolver=lambda h: ["127.0.0.1"] if h == "127.0.0.1" else [], approver=None)
+    p = PolicyPipeline(
+        scope, audit, budget, ex, resolver=lambda h: ["127.0.0.1"] if h == "127.0.0.1" else [], approver=None
+    )
     return p, ex, audit
 
 
-def _req(method="GET", path="/api/orders/1", payload="benign-read", session="user_b", tier=0, host="127.0.0.1"):
-    return ToolCallRequest(engagement_id="T", declared_tier=tier,
-                           action=ToolAction(method=method, target_host=host, port=8080, scheme="http",
-                                             path=path, use_session=session, payload_class=payload))
+def _req(
+    method="GET", path="/api/orders/1", payload="benign-read", session="user_b", tier=0, host="127.0.0.1"
+):
+    return ToolCallRequest(
+        engagement_id="T",
+        declared_tier=tier,
+        action=ToolAction(
+            method=method,
+            target_host=host,
+            port=8080,
+            scheme="http",
+            path=path,
+            use_session=session,
+            payload_class=payload,
+        ),
+    )
 
 
 def test_in_scope_read_allowed(pipe):

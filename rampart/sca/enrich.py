@@ -10,6 +10,7 @@ and "the 2 that are actually exploited in the wild and reachable in your code."
 
 All network calls are injectable seams and fully graceful (missing data just means "no signal").
 """
+
 from __future__ import annotations
 
 import json
@@ -23,9 +24,16 @@ _UA = "rampart-sca/1.0"
 
 # PyPI distribution name -> actual import name(s), where they differ. Default: the name itself.
 _PY_IMPORT_ALIASES = {
-    "pyyaml": ["yaml"], "beautifulsoup4": ["bs4"], "pillow": ["PIL"], "scikit-learn": ["sklearn"],
-    "python-dateutil": ["dateutil"], "msgpack-python": ["msgpack"], "protobuf": ["google"],
-    "opencv-python": ["cv2"], "attrs": ["attr"], "setuptools": ["setuptools", "pkg_resources"],
+    "pyyaml": ["yaml"],
+    "beautifulsoup4": ["bs4"],
+    "pillow": ["PIL"],
+    "scikit-learn": ["sklearn"],
+    "python-dateutil": ["dateutil"],
+    "msgpack-python": ["msgpack"],
+    "protobuf": ["google"],
+    "opencv-python": ["cv2"],
+    "attrs": ["attr"],
+    "setuptools": ["setuptools", "pkg_resources"],
 }
 
 
@@ -37,8 +45,8 @@ def fetch_epss(cves, fetch=None, timeout: float = 15.0) -> dict:
         return {}
     fetch = fetch or _epss_http
     out: dict[str, dict] = {}
-    for i in range(0, len(cves), 100):          # EPSS API accepts batches
-        batch = cves[i:i + 100]
+    for i in range(0, len(cves), 100):  # EPSS API accepts batches
+        batch = cves[i : i + 100]
         data = fetch(f"{EPSS_URL}?cve={','.join(batch)}", timeout)
         if not isinstance(data, dict):
             continue
@@ -46,8 +54,10 @@ def fetch_epss(cves, fetch=None, timeout: float = 15.0) -> dict:
             cve = row.get("cve")
             if cve:
                 try:
-                    out[cve] = {"epss": float(row.get("epss", 0)),
-                                "percentile": float(row.get("percentile", 0))}
+                    out[cve] = {
+                        "epss": float(row.get("epss", 0)),
+                        "percentile": float(row.get("percentile", 0)),
+                    }
                 except (TypeError, ValueError):
                     continue
     return out
@@ -102,6 +112,7 @@ def reachable(dep, repo_path: str, graph=None, affected_symbols=None):
         return None, {}
     if dep.ecosystem == "PyPI":
         from .reachability import analyze_repo, reachability, tier_to_bool
+
         if graph is None:
             graph = analyze_repo(repo_path)
         if graph is None:
@@ -110,12 +121,14 @@ def reachable(dep, repo_path: str, graph=None, affected_symbols=None):
         return tier_to_bool(detail["tier"]), detail
     if dep.ecosystem == "npm":
         n = re.escape(dep.name)
-        pats = [re.compile(rf"""require\(\s*['"]{n}(?:/|['"])"""),
-                re.compile(rf"""from\s+['"]{n}(?:/|['"])""" ),
-                re.compile(rf"""import\s+['"]{n}(?:/|['"])""")]
+        pats = [
+            re.compile(rf"""require\(\s*['"]{n}(?:/|['"])"""),
+            re.compile(rf"""from\s+['"]{n}(?:/|['"])"""),
+            re.compile(rf"""import\s+['"]{n}(?:/|['"])"""),
+        ]
         b = _scan_source(repo_path, (".js", ".ts", ".jsx", ".tsx", ".mjs"), pats)
         return b, ({"tier": "import-level"} if b is not None else {})
-    return None, {}       # Go/Maven/RubyGems/crates — not statically analysed here
+    return None, {}  # Go/Maven/RubyGems/crates — not statically analysed here
 
 
 def _scan_source(repo_path: str, exts: tuple, patterns: list, max_files: int = 4000):
@@ -131,7 +144,7 @@ def _scan_source(repo_path: str, exts: tuple, patterns: list, max_files: int = 4
             if seen > max_files:
                 return False
             try:
-                with open(os.path.join(root, fn), "r", encoding="utf-8", errors="ignore") as fh:
+                with open(os.path.join(root, fn), encoding="utf-8", errors="ignore") as fh:
                     text = fh.read(400_000)
             except OSError:
                 continue
@@ -182,7 +195,7 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach, reach_detail=None)
     adj_rank = base_rank
     reasons = []
     if kev:
-        adj_rank = 4                                    # KEV = exploited in the wild => treat as critical
+        adj_rank = 4  # KEV = exploited in the wild => treat as critical
         reasons.append("in CISA KEV (actively exploited in the wild)")
     if epss is not None and epss >= 0.5:
         adj_rank = max(adj_rank, 3)
@@ -197,14 +210,12 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach, reach_detail=None)
         reasons.append(_TIER_REASON.get(tier, "not reachable from first-party source"))
     elif reach is True:
         if tier == "function-reachable":
-            adj_rank = max(adj_rank, 3)                 # vuln symbol actually exercised => never low
+            adj_rank = max(adj_rank, 3)  # vuln symbol actually exercised => never low
         reasons.append(_TIER_REASON.get(tier, "reachable from first-party source"))
 
     adjusted_severity = _RANK_SEV[adj_rank]
     # Priority P0..P3: KEV->P0; else by adjusted severity, nudged by reachability.
-    if kev:
-        priority = "P0"
-    elif adj_rank >= 4:
+    if kev or adj_rank >= 4:
         priority = "P0"
     elif adj_rank == 3:
         priority = "P1"
@@ -247,8 +258,11 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach, reach_detail=None)
     if intel["kev"]:
         bits.append("**CISA KEV: actively exploited**")
     if intel["epss"] is not None:
-        bits.append(f"EPSS {intel['epss']:.0%} (pctl {intel['epss_percentile']:.0%})"
-                    if intel["epss_percentile"] is not None else f"EPSS {intel['epss']:.0%}")
+        bits.append(
+            f"EPSS {intel['epss']:.0%} (pctl {intel['epss_percentile']:.0%})"
+            if intel["epss_percentile"] is not None
+            else f"EPSS {intel['epss']:.0%}"
+        )
     if tier == "function-reachable":
         bits.append("vulnerable symbol reachable (call-graph)")
     elif reach is True:
@@ -259,8 +273,15 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach, reach_detail=None)
         finding.description += f"  [Exploit intel: {', '.join(bits)} → priority {priority}]"
 
 
-def enrich_findings(findings, deps_by_key: dict, repo_path: str = "", fetch_epss_fn=None,
-                    fetch_kev_fn=None, online: bool = False, affected_by_key: dict = None) -> list:
+def enrich_findings(
+    findings,
+    deps_by_key: dict,
+    repo_path: str = "",
+    fetch_epss_fn=None,
+    fetch_kev_fn=None,
+    online: bool = False,
+    affected_by_key: dict = None,
+) -> list:
     """Enrich SCA findings in place with EPSS/KEV + call-graph reachability, re-sorted by priority.
 
     Reachability is always computed (it's local & free) via a Python call graph built ONCE for the
@@ -282,6 +303,7 @@ def enrich_findings(findings, deps_by_key: dict, repo_path: str = "", fetch_epss
     if repo_path and os.path.isdir(repo_path):
         try:
             from .reachability import analyze_repo
+
             graph = analyze_repo(repo_path)
         except Exception:  # noqa: BLE001 - reachability is best-effort; never break a scan
             graph = None
@@ -301,6 +323,11 @@ def enrich_findings(findings, deps_by_key: dict, repo_path: str = "", fetch_epss
             r, detail = None, {}
         adjust(f, dep, epss_map, kev_set, r, reach_detail=detail)
     _pr = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
-    findings.sort(key=lambda f: (_pr.get(f.exploit_intel.get("priority", "P3"), 3),
-                                 -_SEV_RANK.get(f.severity, 0), f.title))
+    findings.sort(
+        key=lambda f: (
+            _pr.get(f.exploit_intel.get("priority", "P3"), 3),
+            -_SEV_RANK.get(f.severity, 0),
+            f.title,
+        )
+    )
     return findings

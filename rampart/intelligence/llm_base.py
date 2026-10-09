@@ -6,14 +6,15 @@ that keeps only hypotheses referencing endpoints/principals/objects we actually 
 lives here and is identical across the Claude Code and OpenAI-compatible backends. Any
 failure falls back to the deterministic provider so a run never breaks.
 """
+
 from __future__ import annotations
 
 import json
 import re
 
+from . import prompts
 from .base import IntelligenceProvider
 from .deterministic import DeterministicProvider
-from . import prompts
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
@@ -42,7 +43,7 @@ def extract_json(text: str):
                 depth -= 1
                 if depth == 0:
                     try:
-                        return json.loads(text[start:i + 1])
+                        return json.loads(text[start : i + 1])
                     except json.JSONDecodeError:
                         break
     return None
@@ -131,17 +132,28 @@ class LLMProvider(IntelligenceProvider):
             if not ep or atk not in principals or vic not in principals or atk == vic:
                 continue
             otype = ep.get("returns_object_type")
-            atk_obj = next((o for o in objects if o.get("owner_principal") == atk and o.get("type") == otype), None)
-            vic_obj = next((o for o in objects if o.get("owner_principal") == vic and o.get("type") == otype), None)
+            atk_obj = next(
+                (o for o in objects if o.get("owner_principal") == atk and o.get("type") == otype), None
+            )
+            vic_obj = next(
+                (o for o in objects if o.get("owner_principal") == vic and o.get("type") == otype), None
+            )
             if not atk_obj or not vic_obj:
                 continue
-            grounded.append({
-                "vuln_class": h.get("vuln_class", "IDOR/BOLA"),
-                "cwe": h.get("cwe") or ["CWE-639"],
-                "endpoint_id": ep["id"], "endpoint_method": ep["method"], "endpoint_path": ep["path"],
-                "object_type": otype, "selector_param": (ep.get("object_selector") or {}).get("param"),
-                "attacker_principal": atk, "victim_principal": vic,
-                "attacker_object": atk_obj, "victim_object": vic_obj,
-                "rationale": h.get("rationale", "") + " [LLM-proposed; grounded against the app model]",
-            })
+            grounded.append(
+                {
+                    "vuln_class": h.get("vuln_class", "IDOR/BOLA"),
+                    "cwe": h.get("cwe") or ["CWE-639"],
+                    "endpoint_id": ep["id"],
+                    "endpoint_method": ep["method"],
+                    "endpoint_path": ep["path"],
+                    "object_type": otype,
+                    "selector_param": (ep.get("object_selector") or {}).get("param"),
+                    "attacker_principal": atk,
+                    "victim_principal": vic,
+                    "attacker_object": atk_obj,
+                    "victim_object": vic_obj,
+                    "rationale": h.get("rationale", "") + " [LLM-proposed; grounded against the app model]",
+                }
+            )
         return grounded

@@ -1,23 +1,24 @@
 """The ``rampart`` command-line interface (developer-first DX, blueprint section 19).
 
-    rampart init      --scope-file SECURITY.md
-    rampart test      --scope-file SECURITY.md --target http://127.0.0.1:8080 [--repo .] [--report html,md,sarif,json]
-    rampart retest    --scope-file SECURITY.md --target ... --work-dir .rampart
-    rampart report    --scope-file SECURITY.md --target ... --format html
+    rampart init      --scope-file rampart.scope.yaml
+    rampart test      --scope-file rampart.scope.yaml --target http://127.0.0.1:8080 [--repo .] [--report html,md,sarif,json]
+    rampart retest    --scope-file rampart.scope.yaml --target ... --work-dir .rampart
+    rampart report    --scope-file rampart.scope.yaml --target ... --format html
     rampart verify-audit --work-dir .rampart
 
 `test` is the flagship: scope-gate -> map -> hypothesize -> validate -> report, with
 `--repo` adding source correlation and an advisory patch. Dependency-free (argparse).
 """
+
 from __future__ import annotations
 
 import argparse
 import os
 import sys
 
-from .version import __version__
-from .schemas.scope import EngagementScope, ScopeError
 from .schemas.finding import State
+from .schemas.scope import EngagementScope, ScopeError
+from .version import __version__
 
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
@@ -26,12 +27,28 @@ def _c(text, code):
     return f"\033[{code}m{text}\033[0m" if _USE_COLOR else str(text)
 
 
-def bold(t): return _c(t, "1")
-def green(t): return _c(t, "32")
-def red(t): return _c(t, "31")
-def yellow(t): return _c(t, "33")
-def cyan(t): return _c(t, "36")
-def dim(t): return _c(t, "2")
+def bold(t):
+    return _c(t, "1")
+
+
+def green(t):
+    return _c(t, "32")
+
+
+def red(t):
+    return _c(t, "31")
+
+
+def yellow(t):
+    return _c(t, "33")
+
+
+def cyan(t):
+    return _c(t, "36")
+
+
+def dim(t):
+    return _c(t, "2")
 
 
 _SEV_C = {"critical": red, "high": red, "medium": yellow, "low": cyan, "info": dim}
@@ -47,6 +64,7 @@ def _load_config(args):
     if not path or not os.path.exists(path):
         return
     from . import yaml_lite
+
     try:
         with open(path, encoding="utf-8") as fh:
             data = yaml_lite.load(fh.read()) or {}
@@ -57,9 +75,15 @@ def _load_config(args):
         return
     # argparse defaults we treat as "unset" so a config value may fill them (CLI overrides still win
     # in practice — a user who types the default value and also sets it in config gets the config one).
-    known_defaults = {"scope_file": "SECURITY.md", "intel": "deterministic", "application": "target",
-                      "login_path": "/api/login", "token_path": "token", "fail_on": "high",
-                      "report": "html,md,json,sarif"}
+    known_defaults = {
+        "scope_file": "rampart.scope.yaml",
+        "intel": "deterministic",
+        "application": "target",
+        "login_path": "/api/login",
+        "token_path": "token",
+        "fail_on": "high",
+        "report": "html,md,json,sarif",
+    }
     for key, val in data.items():
         attr = str(key).replace("-", "_")
         if not hasattr(args, attr):
@@ -72,6 +96,7 @@ def _load_config(args):
 
 def _make_config(args, approver=None):
     from .engagement import EngagementConfig
+
     return EngagementConfig(
         scope_file=args.scope_file,
         target=args.target,
@@ -130,8 +155,10 @@ def cmd_init(args):
     for hs in scope.in_scope:
         print(f"  in-scope:     {hs.host}:{hs.ports} {hs.methods} paths={hs.paths_include}")
     print(f"  resolved-IPs: {scope.resolved_ip_allowlist}")
-    print(f"  tier ceiling: {scope.action_policy.default_tier_ceiling} "
-          f"(Tier2 approval={scope.action_policy.tier2_requires_approval}, Tier3=deny)")
+    print(
+        f"  tier ceiling: {scope.action_policy.default_tier_ceiling} "
+        f"(Tier2 approval={scope.action_policy.tier2_requires_approval}, Tier3=deny)"
+    )
     print(f"  test accounts:{[a.id for a in scope.test_accounts]}")
     return 0
 
@@ -139,17 +166,19 @@ def cmd_init(args):
 # --------------------------------------------------------------------------- test
 def cmd_test(args):
     from .engagement import Engagement
+
     _banner()
     _load_config(args)
     # precedence: explicit CLI flag > rampart.yaml > built-in default
-    args.scope_file = getattr(args, "scope_file", None) or "SECURITY.md"
+    args.scope_file = getattr(args, "scope_file", None) or "rampart.scope.yaml"
     args.intel = getattr(args, "intel", None) or "deterministic"
     args.application = getattr(args, "application", None) or "target"
     args.login_path = getattr(args, "login_path", None) or "/api/login"
     args.token_path = getattr(args, "token_path", None) or "token"
     args.fail_on = getattr(args, "fail_on", None) or "high"
     args.report = getattr(args, "report", None) or (
-        "html,md,json,sarif,compliance,soc2" if getattr(args, "_pipeline", False) else "html,md,json,sarif")
+        "html,md,json,sarif,compliance,soc2" if getattr(args, "_pipeline", False) else "html,md,json,sarif"
+    )
     if not getattr(args, "target", None):
         print(red("✗ no target given (pass --target or set it in rampart.yaml)"))
         return 2
@@ -172,8 +201,10 @@ def cmd_test(args):
 
     if args.repo:
         touched = eng.remediate()
-        print(f"{green('✓')} remediation proposed for {len(touched)} validated finding(s) "
-              + dim("(advisory patch written; never auto-applied)"))
+        print(
+            f"{green('✓')} remediation proposed for {len(touched)} validated finding(s) "
+            + dim("(advisory patch written; never auto-applied)")
+        )
 
     formats = [f.strip() for f in (args.report or "html,md,json,sarif").split(",") if f.strip()]
     written, rb, chain_ok = eng.report(formats)
@@ -197,11 +228,17 @@ def _print_summary(rb, chain_ok, eng):
     dropped_txt = f"{m['dropped_candidates']} dropped by FP gate"
     print()
     print(bold("  Results"))
-    riskc = red if m["risk_band"] in ("Critical", "High") else (yellow if m["risk_band"] == "Medium" else green)
-    exploit_txt = f" · {cyan(str(m['demonstrated_exploits']))} demonstrated" if m.get("demonstrated_exploits") else ""
+    riskc = (
+        red if m["risk_band"] in ("Critical", "High") else (yellow if m["risk_band"] == "Medium" else green)
+    )
+    exploit_txt = (
+        f" · {cyan(str(m['demonstrated_exploits']))} demonstrated" if m.get("demonstrated_exploits") else ""
+    )
     agent_txt = f" · {cyan(str(m['agent_assessed']))} agent-assessed" if m.get("agent_assessed") else ""
-    print(f"   risk {riskc(str(m['risk_score']) + '/100 ' + m['risk_band'])} · "
-          f"{cyan(str(m['attack_chains']))} attack chain(s){exploit_txt}{agent_txt}")
+    print(
+        f"   risk {riskc(str(m['risk_score']) + '/100 ' + m['risk_band'])} · "
+        f"{cyan(str(m['attack_chains']))} attack chain(s){exploit_txt}{agent_txt}"
+    )
     print(f"   {green(str(m['confirmed']))} confirmed · {dim(dropped_txt)} · validation rate {bold(vr)}")
     extra = []
     if m.get("static_findings"):
@@ -219,16 +256,23 @@ def _print_summary(rb, chain_ok, eng):
         mark = green("✔ CONFIRMED") if f.verification.validated else yellow(f"~{f.confidence}")
         print(f"   {sev} {f.title} {mark}")
     ac = green("intact") if chain_ok else red("BROKEN")
-    print(dim(f"   audit chain: {ac} · {len(eng.audit.read_all())} events · "
-              f"cost ${m['usd_spent']} · {m['tokens_used']} tokens"))
+    print(
+        dim(
+            f"   audit chain: {ac} · {len(eng.audit.read_all())} events · "
+            f"cost ${m['usd_spent']} · {m['tokens_used']} tokens"
+        )
+    )
     print()
 
 
 def _ci_gate(rb, fail_on):
     order = ["info", "low", "medium", "high", "critical"]
     threshold = order.index(fail_on) if fail_on in order else order.index("high")
-    bad = [f for f in rb.findings if f.state != State.DROPPED and f.verification.validated
-           and order.index(f.severity) >= threshold]
+    bad = [
+        f
+        for f in rb.findings
+        if f.state != State.DROPPED and f.verification.validated and order.index(f.severity) >= threshold
+    ]
     if bad:
         return f"{len(bad)} validated finding(s) at or above '{fail_on}'"
     return ""
@@ -237,18 +281,48 @@ def _ci_gate(rb, fail_on):
 # ---------------------------------------------------------------- scan modes
 # Each mode is an isolated slice of the engagement so users run exactly the check they want.
 _MODES = {
-    "recon":    {"do_dast": False, "crawl": True, "desc": "crawl + map + fingerprint only"},
-    "dast":     {"do_dast": True, "desc": "black-box HTTP/web/API testing (oracle classes + misconfig)"},
-    "api":      {"do_dast": True, "desc": "API-focused black-box testing (BOLA/BFLA/mass-assignment/exposure/…)"},
-    "sast":     {"do_dast": False, "do_sast": True, "do_sca": True, "do_iac": True, "desc": "white-box source + secret/dependency + IaC scan"},
-    "sca":      {"do_dast": False, "do_sca": True, "desc": "dependency + secret scan (add --sca-online for OSV CVE matching)"},
-    "iac":      {"do_dast": False, "do_iac": True, "desc": "white-box IaC / cloud-config scan (Terraform/CFN/Kubernetes/Dockerfile)"},
-    "grpc":     {"do_dast": False, "grpc": True, "desc": "gRPC server-reflection exposure probe ([grpc] extra)"},
-    "infra":    {"do_dast": False, "infra": True, "desc": "live infrastructure / exposed-services scan (scope-gated TCP)"},
-    "authz":    {"do_dast": False, "authz": True, "desc": "deeper auth checks (weak JWT secret, expiry-not-enforced)"},
-    "bizlogic": {"do_dast": False, "bizlogic": True, "desc": "deterministic business-logic checks (economic/parameter tampering)"},
-    "apiscan":  {"do_dast": False, "api_scan": True, "desc": "deeper API checks (HTTP verb tampering, GraphQL depth)"},
-    "agents":   {"do_dast": True, "agents": True, "desc": "black-box + agentic business-logic reasoning"},
+    "recon": {"do_dast": False, "crawl": True, "desc": "crawl + map + fingerprint only"},
+    "dast": {"do_dast": True, "desc": "black-box HTTP/web/API testing (oracle classes + misconfig)"},
+    "api": {"do_dast": True, "desc": "API-focused black-box testing (BOLA/BFLA/mass-assignment/exposure/…)"},
+    "sast": {
+        "do_dast": False,
+        "do_sast": True,
+        "do_sca": True,
+        "do_iac": True,
+        "desc": "white-box source + secret/dependency + IaC scan",
+    },
+    "sca": {
+        "do_dast": False,
+        "do_sca": True,
+        "desc": "dependency + secret scan (add --sca-online for OSV CVE matching)",
+    },
+    "iac": {
+        "do_dast": False,
+        "do_iac": True,
+        "desc": "white-box IaC / cloud-config scan (Terraform/CFN/Kubernetes/Dockerfile)",
+    },
+    "grpc": {"do_dast": False, "grpc": True, "desc": "gRPC server-reflection exposure probe ([grpc] extra)"},
+    "infra": {
+        "do_dast": False,
+        "infra": True,
+        "desc": "live infrastructure / exposed-services scan (scope-gated TCP)",
+    },
+    "authz": {
+        "do_dast": False,
+        "authz": True,
+        "desc": "deeper auth checks (weak JWT secret, expiry-not-enforced)",
+    },
+    "bizlogic": {
+        "do_dast": False,
+        "bizlogic": True,
+        "desc": "deterministic business-logic checks (economic/parameter tampering)",
+    },
+    "apiscan": {
+        "do_dast": False,
+        "api_scan": True,
+        "desc": "deeper API checks (HTTP verb tampering, GraphQL depth)",
+    },
+    "agents": {"do_dast": True, "agents": True, "desc": "black-box + agentic business-logic reasoning"},
 }
 
 
@@ -268,16 +342,44 @@ def cmd_features(args):
         ("recon", "Attack-surface discovery (crawl, map, fingerprint)", "rampart recon"),
         ("dast", "Black-box web/API testing — 16 oracle classes, zero false positives", "rampart dast"),
         ("api", "API-focused testing (BOLA, BFLA, mass assignment, data exposure)", "rampart api"),
-        ("sast", "White-box source scan (native AST sinks) + secrets + dependencies + IaC", "rampart sast --repo ."),
-        ("sca", "Full SCA — pinned deps matched against OSV.dev with upgrade remediation", "rampart sca --repo . --sca-online"),
-        ("iac", "IaC / cloud-config scan (Terraform, CloudFormation, Kubernetes, Dockerfile)", "rampart iac --repo ."),
+        (
+            "sast",
+            "White-box source scan (native AST sinks) + secrets + dependencies + IaC",
+            "rampart sast --repo .",
+        ),
+        (
+            "sca",
+            "Full SCA — pinned deps matched against OSV.dev with upgrade remediation",
+            "rampart sca --repo . --sca-online",
+        ),
+        (
+            "iac",
+            "IaC / cloud-config scan (Terraform, CloudFormation, Kubernetes, Dockerfile)",
+            "rampart iac --repo .",
+        ),
         ("grpc", "gRPC server-reflection exposure probe", "rampart grpc --target grpc://host:50051"),
         ("llm", "OWASP LLM Top 10 (prompt injection, leakage, jailbreak)", "rampart llm-test ..."),
-        ("agents", "Agentic reasoning for business-logic / auth-flow flaws (agent-assessed)", "rampart agents --intel claude-code"),
-        ("exploit", "Demonstrate bounded, non-destructive impact for confirmed findings", "rampart dast --exploit"),
+        (
+            "agents",
+            "Agentic reasoning for business-logic / auth-flow flaws (agent-assessed)",
+            "rampart agents --intel claude-code",
+        ),
+        (
+            "exploit",
+            "Demonstrate bounded, non-destructive impact for confirmed findings",
+            "rampart dast --exploit",
+        ),
         ("oob", "Blind SSRF/XXE confirmation via out-of-band collaborator", "rampart dast --oob"),
-        ("browser", "DOM & stored XSS via headless browser (optional [browser] extra)", "rampart dast --browser"),
-        ("scanners", "External OSS tools (nuclei/nmap/semgrep/trivy/testssl) as leads", "rampart dast --scanners all"),
+        (
+            "browser",
+            "DOM & stored XSS via headless browser (optional [browser] extra)",
+            "rampart dast --browser",
+        ),
+        (
+            "scanners",
+            "External OSS tools (nuclei/nmap/semgrep/trivy/testssl) as leads",
+            "rampart dast --scanners all",
+        ),
         ("pipeline", "Everything, orchestrated, with correlation + risk + SOC 2 report", "rampart pipeline"),
         ("serve", "Local zero-dep web dashboard", "rampart serve"),
         ("mcp", "MCP server (scope-guarded tools for Claude Code / agents)", "rampart mcp"),
@@ -287,8 +389,12 @@ def cmd_features(args):
     for name, desc, example in rows:
         print(f"   {cyan(name):<12} {desc}")
         print(dim(f"                {example}"))
-    print(dim("\n  Testing types: black-box (dast/api/llm) · grey-box (dast + --openapi/seed) · "
-              "white-box (sast/sca). Confidence tiers: oracle-confirmed > agent-assessed > external-lead > static."))
+    print(
+        dim(
+            "\n  Testing types: black-box (dast/api/llm) · grey-box (dast + --openapi/seed) · "
+            "white-box (sast/sca). Confidence tiers: oracle-confirmed > agent-assessed > external-lead > static."
+        )
+    )
     return 0
 
 
@@ -300,28 +406,35 @@ def cmd_pipeline(args):
     args.agents = True
     args.oob = True
     args.active = True
-    args.do_sast = True      # white-box runs too when --repo is given (no-op otherwise)
+    args.do_sast = True  # white-box runs too when --repo is given (no-op otherwise)
     args.do_sca = True
-    args.do_iac = True       # IaC/cloud-config scan when --repo is given (no-op otherwise)
-    args.grpc = True         # gRPC reflection probe (no-op unless the [grpc] extra + a gRPC target)
-    args.infra = True        # live exposed-services scan of the in-scope host
-    args.authz = True        # deeper auth (weak JWT secret / expiry)
-    args.bizlogic = True     # deterministic business-logic (economic/parameter tampering)
-    args.api_scan = True     # deeper API checks (verb tampering, GraphQL depth)
+    args.do_iac = True  # IaC/cloud-config scan when --repo is given (no-op otherwise)
+    args.grpc = True  # gRPC reflection probe (no-op unless the [grpc] extra + a gRPC target)
+    args.infra = True  # live exposed-services scan of the in-scope host
+    args.authz = True  # deeper auth (weak JWT secret / expiry)
+    args.bizlogic = True  # deterministic business-logic (economic/parameter tampering)
+    args.api_scan = True  # deeper API checks (verb tampering, GraphQL depth)
     # Note: --sca-online stays OFF even in pipeline — it sends dependency names to OSV.dev, an
     # external service, so it remains an explicit operator opt-in rather than an implicit default.
     args._pipeline = True
-    print(dim("  pipeline: recon + full coverage + API/authz/business-logic + IaC + gRPC + infra "
-              "+ OOB blind-SSRF + chains + exploitation + agentic reasoning"))
+    print(
+        dim(
+            "  pipeline: recon + full coverage + API/authz/business-logic + IaC + gRPC + infra "
+            "+ OOB blind-SSRF + chains + exploitation + agentic reasoning"
+        )
+    )
     return cmd_test(args)
 
 
 # ------------------------------------------------------------------------- serve
 def cmd_serve(args):
     from .server import serve
+
     _banner()
-    print(f"{green('✓')} Rampart dashboard on http://{args.host}:{args.port}  "
-          + dim(f"(work-dir {os.path.abspath(args.work_dir)})"))
+    print(
+        f"{green('✓')} Rampart dashboard on http://{args.host}:{args.port}  "
+        + dim(f"(work-dir {os.path.abspath(args.work_dir)})")
+    )
     print(dim("  press Ctrl-C to stop"))
     try:
         serve(args.host, args.port, args.work_dir)
@@ -333,6 +446,7 @@ def cmd_serve(args):
 # ------------------------------------------------------------------------- retest
 def cmd_retest(args):
     from .engagement import Engagement
+
     _banner()
     try:
         eng = Engagement(_make_config(args))
@@ -353,6 +467,7 @@ def cmd_retest(args):
 # ------------------------------------------------------------------------- report
 def cmd_report(args):
     from .engagement import Engagement
+
     _banner()
     try:
         eng = Engagement(_make_config(args))
@@ -369,6 +484,7 @@ def cmd_report(args):
 # -------------------------------------------------------------------- tools
 def cmd_tools(args):
     from .scanners.adapters import doctor
+
     _banner()
     info = doctor()
     dstat = green("available") if info["docker"] else yellow("not detected")
@@ -394,31 +510,49 @@ def cmd_tools(args):
     # Built-in optional engines
     try:
         from .browser import available as _browser_available
+
         browser_ok = _browser_available()
     except Exception:  # noqa: BLE001
         browser_ok = False
     print(bold("\n  Built-in engines"))
     bmark = green("✓ available") if browser_ok else dim("· not installed")
-    print(f"   {bmark}  {bold('headless-browser (DOM/stored XSS)'):<40} "
-          + ("" if browser_ok else dim("pip install rampart-appsec[browser] && python -m playwright install chromium")))
-    print(f"   {green('✓ built-in')}  {bold('OOB collaborator (blind SSRF)'):<40} {dim('zero-dep; enable with --oob')}")
-    print(f"   {green('✓ built-in')}  {bold('agentic reasoning (business logic)'):<40} "
-          + dim("enable with --agents (needs --intel claude-code / openai-compat)"))
+    print(
+        f"   {bmark}  {bold('headless-browser (DOM/stored XSS)'):<40} "
+        + (
+            ""
+            if browser_ok
+            else dim("pip install rampart-appsec[browser] && python -m playwright install chromium")
+        )
+    )
+    print(
+        f"   {green('✓ built-in')}  {bold('OOB collaborator (blind SSRF)'):<40} {dim('zero-dep; enable with --oob')}"
+    )
+    print(
+        f"   {green('✓ built-in')}  {bold('agentic reasoning (business logic)'):<40} "
+        + dim("enable with --agents (needs --intel claude-code / openai-compat)")
+    )
     return 0
 
 
 # -------------------------------------------------------------------- llm-test
 def cmd_llm_test(args):
     from .engagement import Engagement, EngagementConfig
+
     _banner()
     # The LLM assessment sends gated POSTs (Tier 2); the operator authorizes them by running
     # this command against an in-scope endpoint, so Tier-2 is auto-approved and audited as such.
     approver = lambda req, dec: {"granted": True, "approver_user_id": "cli:llm-test"}
     cfg = EngagementConfig(
-        scope_file=args.scope_file, target=args.target, work_dir=args.work_dir,
+        scope_file=args.scope_file,
+        target=args.target,
+        work_dir=args.work_dir,
         application=getattr(args, "application", "llm-target"),
-        llm_chat_path=args.chat_path, llm_input_field=args.input_field,
-        llm_output_field=args.output_field, llm_canary=args.canary, approver=approver)
+        llm_chat_path=args.chat_path,
+        llm_input_field=args.input_field,
+        llm_output_field=args.output_field,
+        llm_canary=args.canary,
+        approver=approver,
+    )
     try:
         eng = Engagement(cfg)
     except (ScopeError, FileNotFoundError) as e:
@@ -428,13 +562,19 @@ def cmd_llm_test(args):
     res = eng.run_llm()
     print(bold("\n  OWASP LLM Top-10 probes"))
     for p in res.probe_log:
-        mark = {"confirmed": green("✔ CONFIRMED"), "not-vulnerable": dim("· held"),
-                "blocked": yellow("blocked"), "unconfirmed": yellow("~unconfirmed")}.get(p["result"], p["result"])
+        mark = {
+            "confirmed": green("✔ CONFIRMED"),
+            "not-vulnerable": dim("· held"),
+            "blocked": yellow("blocked"),
+            "unconfirmed": yellow("~unconfirmed"),
+        }.get(p["result"], p["result"])
         print(f"   {p['owasp']:<42} {mark}")
     written, rb, chain_ok = eng.report([f.strip() for f in (args.report or "html,md,json").split(",")])
     m = rb.metrics()
-    print(f"\n  {green(str(m['confirmed']))} confirmed LLM finding(s) · audit chain "
-          f"{'intact' if chain_ok else red('BROKEN')}")
+    print(
+        f"\n  {green(str(m['confirmed']))} confirmed LLM finding(s) · audit chain "
+        f"{'intact' if chain_ok else red('BROKEN')}"
+    )
     for fmt, path in written.items():
         print(f"  {fmt:>10}: {path}")
     return 0
@@ -443,6 +583,7 @@ def cmd_llm_test(args):
 # -------------------------------------------------------------------- verify-audit
 def cmd_verify_audit(args):
     from .audit import AuditLog
+
     _banner()
     path = os.path.join(args.work_dir, "audit.jsonl")
     if not os.path.exists(path):
@@ -457,17 +598,23 @@ def cmd_verify_audit(args):
 
 # -------------------------------------------------------------------------- parser
 def build_parser():
-    p = argparse.ArgumentParser(prog="rampart", description="Authorized, self-hosted, evidence-first AppSec agent.")
+    p = argparse.ArgumentParser(
+        prog="rampart", description="Authorized, self-hosted, evidence-first AppSec agent."
+    )
     p.add_argument("--version", action="version", version=f"rampart {__version__}")
     sub = p.add_subparsers(dest="cmd")
 
     def add_common(sp, need_target=True):
-        sp.add_argument("--scope-file", default="SECURITY.md", help="the SECURITY.md authorization contract")
-        sp.add_argument("--target", required=need_target, help="authorized target base URL, e.g. http://127.0.0.1:8080")
+        sp.add_argument(
+            "--scope-file", default="rampart.scope.yaml", help="the rampart.scope.yaml authorization contract"
+        )
+        sp.add_argument(
+            "--target", required=need_target, help="authorized target base URL, e.g. http://127.0.0.1:8080"
+        )
         sp.add_argument("--work-dir", default=".rampart", help="run directory (audit, evidence, reports)")
 
     sp = sub.add_parser("init", help="validate the scope contract")
-    sp.add_argument("--scope-file", default="SECURITY.md")
+    sp.add_argument("--scope-file", default="rampart.scope.yaml")
 
     sp = sub.add_parser("test", help="run an authorized assessment (flagship)")
     add_common(sp, need_target=False)
@@ -476,30 +623,98 @@ def build_parser():
     sp.add_argument("--openapi", default="", help="OpenAPI spec for the app model (grey-box)")
     sp.add_argument("--appmodel-seed", default="", help="seeded object-ownership file")
     sp.add_argument("--secrets", default="", help="secrets file (default: secrets.json next to scope)")
-    sp.add_argument("--intel", default="deterministic", help="intelligence provider: deterministic | claude-code")
+    sp.add_argument(
+        "--intel", default="deterministic", help="intelligence provider: deterministic | claude-code"
+    )
     sp.add_argument("--application", default="target", help="application name for findings")
     sp.add_argument("--login-path", default="/api/login")
     sp.add_argument("--token-path", default="token")
-    sp.add_argument("--report", default="html,md,json,sarif", help="comma list: html,md,json,sarif,compliance")
-    sp.add_argument("--scanners", default="", help="external OSS adapters to run: nuclei,nmap,semgrep,trivy,testssl or 'all'")
-    sp.add_argument("--crawl", action="store_true", help="discover endpoints/params by crawling (no OpenAPI needed)")
-    sp.add_argument("--exploit", action="store_true", help="demonstrate bounded, non-destructive impact for confirmed findings")
-    sp.add_argument("--agents", action="store_true", help="run the multi-agent reasoning layer (business-logic / auth flows; needs an LLM intel)")
-    sp.add_argument("--oob", action="store_true", help="run an OOB collaborator to confirm blind SSRF out-of-band")
-    sp.add_argument("--browser", action="store_true", help="run the headless-browser DOM-XSS pass (needs the [browser] extra)")
-    sp.add_argument("--grpc", action="store_true", help="probe the target as a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)")
-    sp.add_argument("--infra", action="store_true", help="live infrastructure / exposed-services scan (scope-gated TCP connect)")
-    sp.add_argument("--authz", action="store_true", help="deeper auth checks (weak JWT HMAC secret, expiry-not-enforced)")
-    sp.add_argument("--bizlogic", action="store_true", help="deterministic business-logic checks (economic/parameter tampering)")
-    sp.add_argument("--api-scan", dest="api_scan", action="store_true", help="deeper API checks (HTTP verb tampering, GraphQL depth)")
-    sp.add_argument("--iac", dest="do_iac", action="store_true", help="scan --repo for IaC/cloud misconfig (Terraform/CloudFormation/Kubernetes/Dockerfile)")
-    sp.add_argument("--sca-online", dest="sca_online", action="store_true", help="full SCA: match pinned deps against OSV.dev (sends package names to an external service)")
-    sp.add_argument("--parallel", type=int, default=0, help="orchestrator worker cap for the parallel hypothesis fan-out (0 = scope limit)")
-    sp.add_argument("--active", action="store_true", help="allow gated write/active probes (mass assignment, GraphQL); off by default")
-    sp.add_argument("--store", default="", help="multi-tenant store URL (sqlite:///runs.db or postgresql://…); default is file-based")
+    sp.add_argument(
+        "--report", default="html,md,json,sarif", help="comma list: html,md,json,sarif,compliance"
+    )
+    sp.add_argument(
+        "--scanners",
+        default="",
+        help="external OSS adapters to run: nuclei,nmap,semgrep,trivy,testssl or 'all'",
+    )
+    sp.add_argument(
+        "--crawl", action="store_true", help="discover endpoints/params by crawling (no OpenAPI needed)"
+    )
+    sp.add_argument(
+        "--exploit",
+        action="store_true",
+        help="demonstrate bounded, non-destructive impact for confirmed findings",
+    )
+    sp.add_argument(
+        "--agents",
+        action="store_true",
+        help="run the multi-agent reasoning layer (business-logic / auth flows; needs an LLM intel)",
+    )
+    sp.add_argument(
+        "--oob", action="store_true", help="run an OOB collaborator to confirm blind SSRF out-of-band"
+    )
+    sp.add_argument(
+        "--browser",
+        action="store_true",
+        help="run the headless-browser DOM-XSS pass (needs the [browser] extra)",
+    )
+    sp.add_argument(
+        "--grpc",
+        action="store_true",
+        help="probe the target as a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)",
+    )
+    sp.add_argument(
+        "--infra",
+        action="store_true",
+        help="live infrastructure / exposed-services scan (scope-gated TCP connect)",
+    )
+    sp.add_argument(
+        "--authz", action="store_true", help="deeper auth checks (weak JWT HMAC secret, expiry-not-enforced)"
+    )
+    sp.add_argument(
+        "--bizlogic",
+        action="store_true",
+        help="deterministic business-logic checks (economic/parameter tampering)",
+    )
+    sp.add_argument(
+        "--api-scan",
+        dest="api_scan",
+        action="store_true",
+        help="deeper API checks (HTTP verb tampering, GraphQL depth)",
+    )
+    sp.add_argument(
+        "--iac",
+        dest="do_iac",
+        action="store_true",
+        help="scan --repo for IaC/cloud misconfig (Terraform/CloudFormation/Kubernetes/Dockerfile)",
+    )
+    sp.add_argument(
+        "--sca-online",
+        dest="sca_online",
+        action="store_true",
+        help="full SCA: match pinned deps against OSV.dev (sends package names to an external service)",
+    )
+    sp.add_argument(
+        "--parallel",
+        type=int,
+        default=0,
+        help="orchestrator worker cap for the parallel hypothesis fan-out (0 = scope limit)",
+    )
+    sp.add_argument(
+        "--active",
+        action="store_true",
+        help="allow gated write/active probes (mass assignment, GraphQL); off by default",
+    )
+    sp.add_argument(
+        "--store",
+        default="",
+        help="multi-tenant store URL (sqlite:///runs.db or postgresql://…); default is file-based",
+    )
     sp.add_argument("--ci", action="store_true", help="nonzero exit if the severity gate is breached")
     sp.add_argument("--fail-on", default="high", help="CI gate severity: low|medium|high|critical")
-    sp.add_argument("--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)")
+    sp.add_argument(
+        "--approve-tier2", action="store_true", help="auto-approve Tier-2 actions (use with care)"
+    )
 
     sp = sub.add_parser("pipeline", help="the full intense pipeline (crawl + all classes + chains + report)")
     add_common(sp, need_target=False)
@@ -552,17 +767,41 @@ def build_parser():
         s.add_argument("--agents", action="store_true")
         s.add_argument("--oob", action="store_true")
         s.add_argument("--browser", action="store_true")
-        s.add_argument("--grpc", action="store_true", help="probe a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)")
-        s.add_argument("--infra", action="store_true", help="live infra / exposed-services scan (scope-gated TCP)")
-        s.add_argument("--authz", action="store_true", help="deeper auth checks (weak JWT secret, expiry-not-enforced)")
+        s.add_argument(
+            "--grpc",
+            action="store_true",
+            help="probe a gRPC endpoint for server-reflection exposure (needs the [grpc] extra)",
+        )
+        s.add_argument(
+            "--infra", action="store_true", help="live infra / exposed-services scan (scope-gated TCP)"
+        )
+        s.add_argument(
+            "--authz", action="store_true", help="deeper auth checks (weak JWT secret, expiry-not-enforced)"
+        )
         s.add_argument("--bizlogic", action="store_true", help="deterministic business-logic checks")
-        s.add_argument("--api-scan", dest="api_scan", action="store_true", help="deeper API checks (verb tampering, GraphQL depth)")
-        s.add_argument("--iac", dest="do_iac", action="store_true", help="scan --repo for IaC/cloud misconfig")
-        s.add_argument("--sca-online", dest="sca_online", action="store_true", help="full SCA via OSV.dev (sends package names externally)")
+        s.add_argument(
+            "--api-scan",
+            dest="api_scan",
+            action="store_true",
+            help="deeper API checks (verb tampering, GraphQL depth)",
+        )
+        s.add_argument(
+            "--iac", dest="do_iac", action="store_true", help="scan --repo for IaC/cloud misconfig"
+        )
+        s.add_argument(
+            "--sca-online",
+            dest="sca_online",
+            action="store_true",
+            help="full SCA via OSV.dev (sends package names externally)",
+        )
         s.add_argument("--parallel", type=int, default=0, help="orchestrator worker cap (0 = scope limit)")
-        s.add_argument("--active", action="store_true", help="allow gated write/active probes (off by default)")
+        s.add_argument(
+            "--active", action="store_true", help="allow gated write/active probes (off by default)"
+        )
         s.add_argument("--store", default="")
-        s.add_argument("--since", default="", help="diff-aware SAST: scan only .py files changed vs this git ref")
+        s.add_argument(
+            "--since", default="", help="diff-aware SAST: scan only .py files changed vs this git ref"
+        )
         s.add_argument("--ci", action="store_true")
         s.add_argument("--fail-on", default="high")
         s.add_argument("--approve-tier2", action="store_true")
@@ -577,7 +816,11 @@ def build_parser():
     add_eng_opts("grpc", "mode: gRPC server-reflection exposure probe", need_target=True)
     add_eng_opts("infra", "mode: live infrastructure / exposed-services scan", need_target=True)
     add_eng_opts("authz", "mode: deeper auth checks (weak JWT secret, expiry-not-enforced)", need_target=True)
-    add_eng_opts("bizlogic", "mode: deterministic business-logic checks (economic/parameter tampering)", need_target=True)
+    add_eng_opts(
+        "bizlogic",
+        "mode: deterministic business-logic checks (economic/parameter tampering)",
+        need_target=True,
+    )
     add_eng_opts("apiscan", "mode: deeper API checks (HTTP verb tampering, GraphQL depth)", need_target=True)
     add_eng_opts("agents", "mode: black-box + agentic business-logic reasoning")
     sub.add_parser("features", help="list Rampart's capabilities and how to run each in isolation")
@@ -644,7 +887,7 @@ def build_parser():
     sub.add_parser("mcp", help="run the MCP stdio server (scope-guarded tools for Claude Code / agents)")
 
     sp = sub.add_parser("llm-test", help="assess an LLM endpoint against the OWASP LLM Top 10")
-    sp.add_argument("--scope-file", default="SECURITY.md")
+    sp.add_argument("--scope-file", default="rampart.scope.yaml")
     sp.add_argument("--target", required=True, help="authorized LLM endpoint base URL")
     sp.add_argument("--work-dir", default=".rampart")
     sp.add_argument("--chat-path", default="/chat", help="path that accepts the prompt")
@@ -689,7 +932,9 @@ def main(argv=None):
         return cmd_tools(args)
     if args.cmd == "mcp":
         import sys as _sys
+
         from .mcp import serve_stdio
+
         return serve_stdio(_sys.stdin, _sys.stdout) or 0
     if args.cmd == "llm-test":
         return cmd_llm_test(args)

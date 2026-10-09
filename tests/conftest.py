@@ -3,6 +3,7 @@
 Every test runs against a throwaway instance of the intentionally-vulnerable demo app on a
 random loopback port (blueprint section 25: isolated, offline, no route to any real asset).
 """
+
 from __future__ import annotations
 
 import json
@@ -68,7 +69,7 @@ def fixed_server():
 
 
 def write_engagement(tmp_path, port, ceiling=1) -> str:
-    """Write SECURITY.md + secrets + openapi + seed into tmp_path; return the scope path."""
+    """Write rampart.scope.yaml + secrets + openapi + seed into tmp_path; return the scope path."""
     scope = f"""apiVersion: security-agent/v1
 kind: EngagementScope
 authorization:
@@ -103,68 +104,147 @@ test_accounts:
 notify:
   on_start: ["t@localhost"]
 """
-    (tmp_path / "SECURITY.md").write_text(scope, encoding="utf-8")
-    (tmp_path / "secrets.json").write_text(json.dumps({
-        "vault://demo/user_a": {"username": "user_a", "password": "demo-pw-a"},
-        "vault://demo/user_b": {"username": "user_b", "password": "demo-pw-b"},
-    }), encoding="utf-8")
-    (tmp_path / "openapi.json").write_text(json.dumps({
-        "openapi": "3.0.0", "info": {"title": "t", "version": "1"},
-        "paths": {
-            "/api/login": {"post": {"security": []}},
-            "/api/orders/{id}": {"get": {"security": [{"bearerAuth": []}]}},
-            "/api/search": {"get": {"security": [],
-                "parameters": [{"name": "q", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/products": {"get": {"security": [],
-                "parameters": [{"name": "id", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/go": {"get": {"security": [],
-                "parameters": [{"name": "next", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/fetch": {"get": {"security": [],
-                "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/ping": {"get": {"security": [],
-                "parameters": [{"name": "host", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/file": {"get": {"security": [],
-                "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/reports/orders": {"get": {"security": [{"bearerAuth": []}]}},
-            "/api/profile": {"get": {"security": [{"bearerAuth": []}]}},
-            "/api/greet": {"get": {"security": [],
-                "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/me": {"get": {"security": [{"bearerAuth": []}]}},
-            "/api/v2/me": {"get": {"security": [{"bearerAuth": []}]}},
-            "/api/checkout": {"get": {"security": [], "parameters": [
-                {"name": "item", "in": "query", "schema": {"type": "string"}},
-                {"name": "qty", "in": "query", "schema": {"type": "integer"}}]}},
-            "/api/webhook": {"get": {"security": [],
-                "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}]}},
-            "/dom": {"get": {"security": [],
-                "parameters": [{"name": "x", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/reset": {"get": {"security": [],
-                "parameters": [{"name": "email", "in": "query", "schema": {"type": "string"}}]}},
-            "/api/account": {"post": {"security": []}},
-            "/graphql": {"post": {"security": []}},
-            "/api/import": {"post": {"security": []}},
-            "/api/comments": {"get": {"security": []}, "post": {"security": []}},
-        },
-    }), encoding="utf-8")
-    (tmp_path / "seed.json").write_text(json.dumps({
-        "roles": ["customer"],
-        "endpoint_hints": [{"path": "/api/orders/{id}", "method": "GET",
-                            "returns_object_type": "Order",
-                            "object_selector": {"param": "id", "in": "path"}}],
-        "objects": [
-            {"type": "Order", "id": "1043", "owner_principal": "user_a", "seeded": True,
-             "signature": "SIGNATURE-A-4f9c1e77"},
-            {"type": "Order", "id": "2087", "owner_principal": "user_b", "seeded": True,
-             "signature": "SIGNATURE-B-1a2b3c4d"},
-        ],
-        "permissions": [{"role": "customer", "object_type": "Order", "action": "read",
-                         "constraint": "owner_only"}],
-    }), encoding="utf-8")
-    return str(tmp_path / "SECURITY.md")
+    (tmp_path / "rampart.scope.yaml").write_text(scope, encoding="utf-8")
+    (tmp_path / "secrets.json").write_text(
+        json.dumps(
+            {
+                "vault://demo/user_a": {"username": "user_a", "password": "demo-pw-a"},
+                "vault://demo/user_b": {"username": "user_b", "password": "demo-pw-b"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "openapi.json").write_text(
+        json.dumps(
+            {
+                "openapi": "3.0.0",
+                "info": {"title": "t", "version": "1"},
+                "paths": {
+                    "/api/login": {"post": {"security": []}},
+                    "/api/orders/{id}": {"get": {"security": [{"bearerAuth": []}]}},
+                    "/api/search": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "q", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/products": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "id", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/go": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "next", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/fetch": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/ping": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "host", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/file": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/reports/orders": {"get": {"security": [{"bearerAuth": []}]}},
+                    "/api/profile": {"get": {"security": [{"bearerAuth": []}]}},
+                    "/api/greet": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "name", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/me": {"get": {"security": [{"bearerAuth": []}]}},
+                    "/api/v2/me": {"get": {"security": [{"bearerAuth": []}]}},
+                    "/api/checkout": {
+                        "get": {
+                            "security": [],
+                            "parameters": [
+                                {"name": "item", "in": "query", "schema": {"type": "string"}},
+                                {"name": "qty", "in": "query", "schema": {"type": "integer"}},
+                            ],
+                        }
+                    },
+                    "/api/webhook": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "url", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/dom": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "x", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/reset": {
+                        "get": {
+                            "security": [],
+                            "parameters": [{"name": "email", "in": "query", "schema": {"type": "string"}}],
+                        }
+                    },
+                    "/api/account": {"post": {"security": []}},
+                    "/graphql": {"post": {"security": []}},
+                    "/api/import": {"post": {"security": []}},
+                    "/api/comments": {"get": {"security": []}, "post": {"security": []}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "seed.json").write_text(
+        json.dumps(
+            {
+                "roles": ["customer"],
+                "endpoint_hints": [
+                    {
+                        "path": "/api/orders/{id}",
+                        "method": "GET",
+                        "returns_object_type": "Order",
+                        "object_selector": {"param": "id", "in": "path"},
+                    }
+                ],
+                "objects": [
+                    {
+                        "type": "Order",
+                        "id": "1043",
+                        "owner_principal": "user_a",
+                        "seeded": True,
+                        "signature": "SIGNATURE-A-4f9c1e77",
+                    },
+                    {
+                        "type": "Order",
+                        "id": "2087",
+                        "owner_principal": "user_b",
+                        "seeded": True,
+                        "signature": "SIGNATURE-B-1a2b3c4d",
+                    },
+                ],
+                "permissions": [
+                    {"role": "customer", "object_type": "Order", "action": "read", "constraint": "owner_only"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return str(tmp_path / "rampart.scope.yaml")
 
 
 def make_engagement(tmp_path, port, repo="", intel="deterministic", ceiling=1):
     from rampart.engagement import Engagement, EngagementConfig
+
     scope_file = write_engagement(tmp_path, port, ceiling=ceiling)
     cfg = EngagementConfig(
         scope_file=scope_file,

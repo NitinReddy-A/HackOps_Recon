@@ -4,6 +4,7 @@ Every prompt: (1) asks for a single JSON object as the entire reply, (2) fences 
 target-derived data as UNTRUSTED and states it must never be treated as instructions
 (OWASP LLM01), and (3) forbids inventing endpoints/parameters not present in the input.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,9 +37,16 @@ def label_endpoint_prompt(ctx: dict) -> str:
 
 def hypotheses_prompt(appmodel: dict) -> str:
     slim = {
-        "endpoints": [{"id": e["id"], "method": e["method"], "path": e["path"],
-                       "returns_object_type": e.get("returns_object_type"),
-                       "object_selector": e.get("object_selector")} for e in appmodel.get("endpoints", [])],
+        "endpoints": [
+            {
+                "id": e["id"],
+                "method": e["method"],
+                "path": e["path"],
+                "returns_object_type": e.get("returns_object_type"),
+                "object_selector": e.get("object_selector"),
+            }
+            for e in appmodel.get("endpoints", [])
+        ],
         "principals": appmodel.get("principals", []),
         "objects": appmodel.get("objects", []),
         "permissions": appmodel.get("permissions", []),
@@ -73,9 +81,11 @@ def agent_step_prompt(ctx: dict) -> str:
     history = json.dumps(ctx.get("history", []), indent=2)[:4000]
     repair = ""
     if ctx.get("repair_errors"):
-        repair = ("\nYOUR PREVIOUS REPLY WAS REJECTED by the harness for these reasons: "
-                  + "; ".join(ctx["repair_errors"])
-                  + ". Return a corrected reply that is ONE valid JSON object matching the schema exactly.\n")
+        repair = (
+            "\nYOUR PREVIOUS REPLY WAS REJECTED by the harness for these reasons: "
+            + "; ".join(ctx["repair_errors"])
+            + ". Return a corrected reply that is ONE valid JSON object matching the schema exactly.\n"
+        )
     common = (
         "You are an authorized, non-destructive application-security agent hunting LOGIC flaws that "
         "automated oracles cannot (business-logic abuse, authorization-flow gaps, workflow bypass). "
@@ -86,25 +96,38 @@ def agent_step_prompt(ctx: dict) -> str:
         + repair
     )
     if mode == "plan":
-        return (common + "\nList up to 4 concrete LOGIC-abuse objectives worth testing on THIS surface.\n"
-                + _JSON_ONLY + ' Schema: {"objectives": [string]}')
+        return (
+            common
+            + "\nList up to 4 concrete LOGIC-abuse objectives worth testing on THIS surface.\n"
+            + _JSON_ONLY
+            + ' Schema: {"objectives": [string]}'
+        )
     if mode == "critique":
         cand = json.dumps(ctx.get("candidate", {}), indent=2)
         if ctx.get("phase") == "verdict":
-            return (common + f"\nCANDIDATE FINDING:\n{cand}\nGiven the observations (incl. any control probe), "
-                    "decide if the finding still STANDS as a real logic flaw or is REFUTED by benign behaviour.\n"
-                    + _JSON_ONLY + ' Schema: {"verdict": "stands"|"refuted", "reason": string}')
-        return (common + f"\nCANDIDATE FINDING:\n{cand}\nPropose ONE control GET request that would DISPROVE "
-                "this finding if the app is actually behaving correctly (adversarial check).\n"
-                + _JSON_ONLY + ' Schema: {"action": {"method":"GET","path":string,"query":object}, "reason": string}')
+            return (
+                common + f"\nCANDIDATE FINDING:\n{cand}\nGiven the observations (incl. any control probe), "
+                "decide if the finding still STANDS as a real logic flaw or is REFUTED by benign behaviour.\n"
+                + _JSON_ONLY
+                + ' Schema: {"verdict": "stands"|"refuted", "reason": string}'
+            )
+        return (
+            common + f"\nCANDIDATE FINDING:\n{cand}\nPropose ONE control GET request that would DISPROVE "
+            "this finding if the app is actually behaving correctly (adversarial check).\n"
+            + _JSON_ONLY
+            + ' Schema: {"action": {"method":"GET","path":string,"query":object}, "reason": string}'
+        )
     # explore
-    return (common + f"\nOBJECTIVE: {ctx.get('objective','')}\nDecide the next step: either propose ONE GET "
-            "action to probe, or conclude a finding, or stop. Only conclude when the evidence clearly shows "
-            "the intended rule is violated.\n" + _JSON_ONLY +
-            ' Schema: {"thought": string, "action": {"method":"GET","path":string,"query":object}|null, '
-            '"conclude": {"title":string,"vuln_class":string,"severity":string,"endpoint_path":string,'
-            '"description":string,"impact":string,"root_cause":string,"steps":[string],'
-            '"remediation_summary":string,"remediation_guidance":string}|null, "stop": boolean}')
+    return (
+        common + f"\nOBJECTIVE: {ctx.get('objective', '')}\nDecide the next step: either propose ONE GET "
+        "action to probe, or conclude a finding, or stop. Only conclude when the evidence clearly shows "
+        "the intended rule is violated.\n"
+        + _JSON_ONLY
+        + ' Schema: {"thought": string, "action": {"method":"GET","path":string,"query":object}|null, '
+        '"conclude": {"title":string,"vuln_class":string,"severity":string,"endpoint_path":string,'
+        '"description":string,"impact":string,"root_cause":string,"steps":[string],'
+        '"remediation_summary":string,"remediation_guidance":string}|null, "stop": boolean}'
+    )
 
 
 def narrative_prompt(ctx: dict) -> str:
@@ -122,7 +145,8 @@ def patch_prompt(ctx: dict) -> str:
     return (
         "Propose a MINIMAL patch that adds an object-level ownership check. It is advisory only and "
         "will never be auto-applied. Keep it to the smallest correct change.\n"
-        f"Code context:\n" + _untrusted(ctx.get("snippet", "")[:1500])
+        "Code context:\n"
+        + _untrusted(ctx.get("snippet", "")[:1500])
         + f"\nMetadata: {json.dumps({k: v for k, v in ctx.items() if k != 'snippet'})}\n"
         + _JSON_ONLY
         + ' Schema: {"diff": string, "explanation": string}'

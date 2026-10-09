@@ -5,6 +5,7 @@ reads the prompt from stdin, parses the JSON envelope, and returns the assistant
 Cost/token usage is pulled from the envelope into the engagement budget. All shared logic
 (JSON extraction, grounding, fallback) lives in :mod:`rampart.intelligence.llm_base`.
 """
+
 from __future__ import annotations
 
 import json

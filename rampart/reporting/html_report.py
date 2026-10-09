@@ -1,11 +1,12 @@
 """Self-contained HTML dashboard for an assessment (no external assets; works offline)."""
+
 from __future__ import annotations
 
 import html
 from datetime import datetime, timezone
 
-from ..version import __version__
 from ..schemas.finding import State
+from ..version import __version__
 from .report import owasp_tags
 
 _CSS = """
@@ -89,8 +90,13 @@ def _diff_html(diff: str) -> str:
 def render_html(rb) -> str:
     m = rb.metrics()
     sc = rb.scope
-    sev_color = {"critical": "#b4232c", "high": "#d1495b", "medium": "#e08a1e",
-                 "low": "#3a7ca5", "info": "#5b6570"}
+    sev_color = {
+        "critical": "#b4232c",
+        "high": "#d1495b",
+        "medium": "#e08a1e",
+        "low": "#3a7ca5",
+        "info": "#5b6570",
+    }
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     kpis = [
@@ -98,44 +104,57 @@ def render_html(rb) -> str:
         (m["confirmed"], "Confirmed findings"),
         (m["attack_chains"], "Attack chains"),
         (m["dropped_candidates"], "Dropped (FP gate)"),
-        (f"{m['finding_validation_rate']*100:.0f}%", "Validation rate"),
+        (f"{m['finding_validation_rate'] * 100:.0f}%", "Validation rate"),
         (f"{m['endpoints_tested']}/{m['endpoints_discovered']}", "Endpoints tested"),
         (m["audit_events"], "Audit events"),
         (f"${m['usd_spent']}", "LLM cost"),
     ]
     kpi_html = "".join(
-        f'<div class="kpi"><div class="n">{_esc(v)}</div><div class="l">{_esc(l)}</div></div>'
-        for v, l in kpis)
+        f'<div class="kpi"><div class="n">{_esc(v)}</div><div class="l">{_esc(lbl)}</div></div>'
+        for v, lbl in kpis
+    )
 
     hosts = ", ".join(h.host for h in sc.in_scope) or "—"
     posture = [
         ("In-scope hosts", hosts),
         ("Resolved-IP allowlist", ", ".join(sc.resolved_ip_allowlist) or "—"),
-        ("Action tier ceiling", f"Tier {sc.action_policy.default_tier_ceiling} auto-allow; "
-                                f"Tier 2 {'requires approval' if sc.action_policy.tier2_requires_approval else 'denied'}; "
-                                f"Tier 3 denied"),
+        (
+            "Action tier ceiling",
+            f"Tier {sc.action_policy.default_tier_ceiling} auto-allow; "
+            f"Tier 2 {'requires approval' if sc.action_policy.tier2_requires_approval else 'denied'}; "
+            f"Tier 3 denied",
+        ),
         ("Authorization", f"{sc.authorization.authorized_by} · ticket {sc.authorization.ticket}"),
         ("Scope expires", sc.authorization.expires),
         ("Audit chain", "hash-chained, append-only"),
     ]
     posture_html = "".join(
-        f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in posture)
+        f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in posture
+    )
 
     scan = rb.scan or {}
     classes = m.get("classes_tested") or sorted({f.vuln_class for f in rb.findings})
     runs = scan.get("scanner_runs") or []
-    scanner_txt = ", ".join(
-        (f"{r['scanner']} ✓" if r.get("available") else f"{r['scanner']} (not installed)") for r in runs) or "none run"
+    scanner_txt = (
+        ", ".join(
+            (f"{r['scanner']} ✓" if r.get("available") else f"{r['scanner']} (not installed)") for r in runs
+        )
+        or "none run"
+    )
     plan = scan.get("plan") or {}
     coverage = [
         ("Classes tested", ", ".join(classes) or "—"),
         ("Planner priority", ", ".join(plan.get("order", [])) or "—"),
         ("External OSS scanners", scanner_txt),
-        ("Confirmed vs external leads", f"{m['confirmed']} oracle-confirmed · {m['external_leads']} unvalidated leads"),
+        (
+            "Confirmed vs external leads",
+            f"{m['confirmed']} oracle-confirmed · {m['external_leads']} unvalidated leads",
+        ),
         ("Intelligence backend", scan.get("intel_provider", "deterministic")),
     ]
     coverage_html = "".join(
-        f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in coverage)
+        f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in coverage
+    )
 
     corr = scan.get("correlation") or {}
     chains = corr.get("chains") or []
@@ -145,16 +164,19 @@ def render_html(rb) -> str:
         for c in chains:
             color = sev_color.get(c["severity"], "#5b6570")
             steps = "".join(f"<li>{_esc(s)}</li>" for s in c["steps"])
-            built = (f'<div class="sub">Built from: {_esc(", ".join(c.get("contributing", [])))}</div>'
-                     if c.get("contributing") else "")
+            built = (
+                f'<div class="sub">Built from: {_esc(", ".join(c.get("contributing", [])))}</div>'
+                if c.get("contributing")
+                else ""
+            )
             parts.append(
                 f'<div class="finding" style="border-left-color:{color}"><div class="fbody">'
                 f'<h3 style="margin-top:12px"><span class="sev" style="background:{color}">'
-                f'{_esc(c["severity"])}</span> &nbsp;{_esc(c["title"])}</h3>'
+                f"{_esc(c['severity'])}</span> &nbsp;{_esc(c['title'])}</h3>"
                 f'<div class="sub">{_esc(c["rationale"])}</div><ol class="checks">{steps}</ol>{built}'
-                f'</div></div>')
-        chains_html = ('<div class="panel"><h2>Attack chains (kill-chain)</h2>'
-                       + "".join(parts) + "</div>")
+                f"</div></div>"
+            )
+        chains_html = '<div class="panel"><h2>Attack chains (kill-chain)</h2>' + "".join(parts) + "</div>"
 
     proofs = [p for p in (scan.get("exploitation") or []) if p.get("demonstrated")]
     exploit_html = ""
@@ -162,14 +184,19 @@ def render_html(rb) -> str:
         parts = []
         for p in proofs:
             steps = "".join(f"<li>{_esc(s)}</li>" for s in p.get("steps", []))
-            ev = (f'<div class="sub">Evidence: {_esc(", ".join(str(s) for s in p.get("samples", [])[:8]))}</div>'
-                  if p.get("samples") else "")
+            ev = (
+                f'<div class="sub">Evidence: {_esc(", ".join(str(s) for s in p.get("samples", [])[:8]))}</div>'
+                if p.get("samples")
+                else ""
+            )
             parts.append(
                 f'<div class="chain" style="border-left-color:#b4232c"><b>{_esc(p["title"])}</b>'
                 f'<div class="sub">Technique: {_esc(p["technique"])}</div><ol class="checks">{steps}</ol>'
-                f'<div><b>Demonstrated impact:</b> {_esc(p["impact"])}</div>{ev}</div>')
-        exploit_html = ('<div class="panel"><h2>Exploitation — demonstrated impact</h2>'
-                        + "".join(parts) + "</div>")
+                f"<div><b>Demonstrated impact:</b> {_esc(p['impact'])}</div>{ev}</div>"
+            )
+        exploit_html = (
+            '<div class="panel"><h2>Exploitation — demonstrated impact</h2>' + "".join(parts) + "</div>"
+        )
 
     roadmap = corr.get("roadmap") or []
     roadmap_html = ""
@@ -180,10 +207,12 @@ def render_html(rb) -> str:
             classes = ", ".join(r.get("classes", []))
             rows.append(
                 f'<div class="row"><span><span class="sev" style="background:{color}">{_esc(r["severity"])}'
-                f'</span> &nbsp;{i}. {_esc(r["summary"])} <span class="badge">{_esc(r.get("effort","?"))} effort</span>'
-                f'</span><b>{_esc(classes)}</b></div>')
-        roadmap_html = ('<div class="panel"><h2>Remediation roadmap (prioritized)</h2>'
-                        + "".join(rows) + "</div>")
+                f'</span> &nbsp;{i}. {_esc(r["summary"])} <span class="badge">{_esc(r.get("effort", "?"))} effort</span>'
+                f"</span><b>{_esc(classes)}</b></div>"
+            )
+        roadmap_html = (
+            '<div class="panel"><h2>Remediation roadmap (prioritized)</h2>' + "".join(rows) + "</div>"
+        )
 
     findings_html = []
     for f in rb.findings:
@@ -199,11 +228,15 @@ def render_html(rb) -> str:
             badge = f'<span class="badge">{_esc(f.confidence)}</span>'
         if dropped:
             badge = '<span class="badge">dropped by validator</span>'
-        parts = [f'<details class="finding{" dropped" if dropped else ""}" style="border-left-color:{color}"'
-                 f'{"" if dropped else " open"}>']
-        parts.append('<summary>'
-                     f'<span class="sev" style="background:{color}">{_esc(f.severity)}</span>'
-                     f'<span class="ftitle">{_esc(f.title)}</span>{badge}</summary>')
+        parts = [
+            f'<details class="finding{" dropped" if dropped else ""}" style="border-left-color:{color}"'
+            f"{'' if dropped else ' open'}>"
+        ]
+        parts.append(
+            "<summary>"
+            f'<span class="sev" style="background:{color}">{_esc(f.severity)}</span>'
+            f'<span class="ftitle">{_esc(f.title)}</span>{badge}</summary>'
+        )
         parts.append('<div class="fbody">')
 
         meta = []
@@ -216,18 +249,22 @@ def render_html(rb) -> str:
         parts.append("<div>" + "".join(meta) + "</div>")
 
         if f.endpoint.get("url"):
-            parts.append(f'<h3>Endpoint</h3><pre>{_esc(f.endpoint.get("method",""))} {_esc(f.endpoint["url"])}</pre>')
+            parts.append(
+                f"<h3>Endpoint</h3><pre>{_esc(f.endpoint.get('method', ''))} {_esc(f.endpoint['url'])}</pre>"
+            )
         if f.description:
-            parts.append(f'<h3>Description</h3><div>{_esc(f.description)}</div>')
+            parts.append(f"<h3>Description</h3><div>{_esc(f.description)}</div>")
         if f.impact:
-            parts.append(f'<h3>Impact</h3><div>{_esc(f.impact)}</div>')
+            parts.append(f"<h3>Impact</h3><div>{_esc(f.impact)}</div>")
         if f.root_cause:
-            parts.append(f'<h3>Root cause</h3><div>{_esc(f.root_cause)}</div>')
+            parts.append(f"<h3>Root cause</h3><div>{_esc(f.root_cause)}</div>")
 
         if f.verification.false_positive_checks:
-            title = ("How we proved it (independent validation, "
-                     f"{f.verification.reproductions} reproductions)") if f.verification.validated \
-                    else "Validation checks"
+            title = (
+                (f"How we proved it (independent validation, {f.verification.reproductions} reproductions)")
+                if f.verification.validated
+                else "Validation checks"
+            )
             parts.append(f"<h3>{_esc(title)}</h3><ul class='checks'>")
             for chk in f.verification.false_positive_checks:
                 parts.append(f"<li>{_esc(chk)}</li>")
@@ -240,41 +277,47 @@ def render_html(rb) -> str:
             parts.append("</ol>")
 
         if f.affected_code and f.affected_code.file:
-            parts.append(f'<h3>Affected code</h3><pre>{_esc(f.affected_code.file)}:'
-                         f'{_esc(f.affected_code.start_line)}  (via {_esc(f.affected_code.detected_by)})\n\n'
-                         f'{_esc(f.affected_code.snippet)}</pre>')
+            parts.append(
+                f"<h3>Affected code</h3><pre>{_esc(f.affected_code.file)}:"
+                f"{_esc(f.affected_code.start_line)}  (via {_esc(f.affected_code.detected_by)})\n\n"
+                f"{_esc(f.affected_code.snippet)}</pre>"
+            )
         if f.remediation.summary or f.remediation.guidance:
             parts.append("<h3>Remediation</h3>")
             if f.remediation.summary:
-                parts.append(f'<div><b>{_esc(f.remediation.summary)}</b></div>')
+                parts.append(f"<div><b>{_esc(f.remediation.summary)}</b></div>")
             if f.remediation.guidance:
-                parts.append(f'<div>{_esc(f.remediation.guidance)}</div>')
+                parts.append(f"<div>{_esc(f.remediation.guidance)}</div>")
         if f.remediation.proposed_diff:
             parts.append('<h3>Advisory patch <span class="badge">not auto-applied</span></h3>')
             parts.append(f'<pre class="diff">{_diff_html(f.remediation.proposed_diff)}</pre>')
 
         if f.compliance_control_refs:
-            parts.append("<h3>Compliance evidence</h3><div>"
-                         + "".join(f'<span class="pill">{_esc(c)}</span>' for c in f.compliance_control_refs)
-                         + "</div>")
+            parts.append(
+                "<h3>Compliance evidence</h3><div>"
+                + "".join(f'<span class="pill">{_esc(c)}</span>' for c in f.compliance_control_refs)
+                + "</div>"
+            )
         if f.evidence:
-            parts.append(f'<h3>Evidence bundle ({len(f.evidence)} artifact(s))</h3><div class="mono" '
-                         f'style="font-size:12px;color:var(--muted)">'
-                         + "<br>".join(_esc(e.type + " · " + e.storage_uri) for e in f.evidence[:12])
-                         + "</div>")
+            parts.append(
+                f'<h3>Evidence bundle ({len(f.evidence)} artifact(s))</h3><div class="mono" '
+                f'style="font-size:12px;color:var(--muted)">'
+                + "<br>".join(_esc(e.type + " · " + e.storage_uri) for e in f.evidence[:12])
+                + "</div>"
+            )
         parts.append("</div></details>")
         findings_html.append("".join(parts))
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rampart report — {_esc(sc.authorization.ticket or 'engagement')}</title>
+<title>Rampart report — {_esc(sc.authorization.ticket or "engagement")}</title>
 <style>{_CSS}</style></head>
 <body><div class="wrap">
 <header class="top">
   <div>
     <h1><span class="brandmark">Rampart</span> assessment report</h1>
-    <div class="sub">{_esc(sc.authorization.ticket or 'engagement')} · authorized by
+    <div class="sub">{_esc(sc.authorization.ticket or "engagement")} · authorized by
       <b>{_esc(sc.authorization.authorized_by)}</b> · {now} · rampart {__version__}</div>
   </div>
   <button id="themebtn" class="themebtn">◐ theme</button>
@@ -290,7 +333,7 @@ discipline visible.</div>
 {exploit_html}
 {roadmap_html}
 <div class="panel"><h2>Findings</h2>
-{''.join(findings_html) if findings_html else '<div class="sub">No findings.</div>'}
+{"".join(findings_html) if findings_html else '<div class="sub">No findings.</div>'}
 </div>
 <div class="foot">Rampart augments — it does not replace — expert human pentesters. This report is
 <b>evidence of control effectiveness</b>, not a compliance attestation. Every action above passed a

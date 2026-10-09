@@ -1,4 +1,5 @@
 """Append-only, hash-chained audit log integrity."""
+
 import json
 
 from rampart.audit import AuditLog
@@ -6,8 +7,9 @@ from rampart.schemas.audit import AuditEvent
 
 
 def _ev(engagement="E"):
-    return AuditEvent(engagement_id=engagement, phase="test",
-                      actor={"type": "system"}, action={"tool": "http_request"})
+    return AuditEvent(
+        engagement_id=engagement, phase="test", actor={"type": "system"}, action={"tool": "http_request"}
+    )
 
 
 def test_chain_intact(tmp_path):

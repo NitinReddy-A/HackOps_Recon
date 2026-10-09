@@ -1,16 +1,23 @@
 """Advanced classes (Phase 3): host-header injection, and write-side (mass assignment / GraphQL)
 behind the --active gate."""
+
 from conftest import make_engagement, write_engagement
+
 from rampart.engagement import Engagement, EngagementConfig
 from rampart.schemas.finding import State
 
 
 def _active_eng(tmp_path, port):
     scope = write_engagement(tmp_path, port)
-    cfg = EngagementConfig(scope_file=scope, target=f"http://127.0.0.1:{port}",
-                           work_dir=str(tmp_path / ".rampart"),
-                           openapi=str(tmp_path / "openapi.json"), appmodel_seed=str(tmp_path / "seed.json"),
-                           application="demo-shop-api", active=True)
+    cfg = EngagementConfig(
+        scope_file=scope,
+        target=f"http://127.0.0.1:{port}",
+        work_dir=str(tmp_path / ".rampart"),
+        openapi=str(tmp_path / "openapi.json"),
+        appmodel_seed=str(tmp_path / "seed.json"),
+        application="demo-shop-api",
+        active=True,
+    )
     return Engagement(cfg)
 
 
@@ -32,7 +39,7 @@ def test_host_header_injection_clean_on_fixed(tmp_path, fixed_server):
 def test_write_classes_gated_off_without_active(tmp_path, vuln_server):
     result = make_engagement(tmp_path, vuln_server.port).run_scan()
     classes = {h["vuln_class"] for h in result.hypotheses}
-    assert "MASS_ASSIGNMENT" not in classes and "GRAPHQL" not in classes   # safe by default
+    assert "MASS_ASSIGNMENT" not in classes and "GRAPHQL" not in classes  # safe by default
 
 
 def test_active_confirms_mass_assignment_and_graphql(tmp_path, vuln_server):
@@ -47,9 +54,10 @@ def test_active_confirms_mass_assignment_and_graphql(tmp_path, vuln_server):
 
 def test_smuggling_indicator_detects_proxy_and_is_never_confirmed():
     from rampart.scanners.misconfig import proxy_indicators
+
     assert proxy_indicators({"via": "1.1 varnish", "server": "nginx"}) == ["via"]
     assert proxy_indicators({"x-cache": "HIT", "cf-ray": "abc"}) == ["cf-ray", "x-cache"]
-    assert proxy_indicators({"server": "nginx", "content-type": "text/html"}) == []   # no false alarm
+    assert proxy_indicators({"server": "nginx", "content-type": "text/html"}) == []  # no false alarm
 
 
 def test_no_smuggling_indicator_on_plain_demo(tmp_path, vuln_server):

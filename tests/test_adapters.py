@@ -1,4 +1,5 @@
 """External scanner adapter framework — parsing + graceful degradation (tools not required)."""
+
 import json
 
 from rampart.scanners.adapters import ADAPTERS, build_adapters, doctor
@@ -7,18 +8,39 @@ from rampart.scanners.adapters.tools import NmapAdapter, NucleiAdapter
 
 _SEMGREP_SARIF = {
     "version": "2.1.0",
-    "runs": [{
-        "tool": {"driver": {"name": "semgrep", "rules": [
-            {"id": "py.sqli", "name": "SQL injection",
-             "shortDescription": {"text": "SQLi"}, "helpUri": "https://semgrep.dev/r/py.sqli",
-             "properties": {"cwe": ["CWE-89: SQL Injection"]}}]}},
-        "results": [{
-            "ruleId": "py.sqli", "level": "error",
-            "message": {"text": "Detected string-formatted SQL query"},
-            "locations": [{"physicalLocation": {
-                "artifactLocation": {"uri": "app/db.py"}, "region": {"startLine": 42}}}],
-        }],
-    }],
+    "runs": [
+        {
+            "tool": {
+                "driver": {
+                    "name": "semgrep",
+                    "rules": [
+                        {
+                            "id": "py.sqli",
+                            "name": "SQL injection",
+                            "shortDescription": {"text": "SQLi"},
+                            "helpUri": "https://semgrep.dev/r/py.sqli",
+                            "properties": {"cwe": ["CWE-89: SQL Injection"]},
+                        }
+                    ],
+                }
+            },
+            "results": [
+                {
+                    "ruleId": "py.sqli",
+                    "level": "error",
+                    "message": {"text": "Detected string-formatted SQL query"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": "app/db.py"},
+                                "region": {"startLine": 42},
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
 }
 
 
@@ -27,22 +49,31 @@ def test_sarif_normaliser_maps_fields_and_marks_unvalidated():
     findings = sarif_to_findings(adapter, _SEMGREP_SARIF, "demo", "http://127.0.0.1:8080")
     assert len(findings) == 1
     f = findings[0]
-    assert f.severity == "high"                       # SARIF error -> high
+    assert f.severity == "high"  # SARIF error -> high
     assert "CWE-89" in f.cwe
     assert "external-scanner" in f.tags and "semgrep" in f.tags
-    assert f.verification.validated is False          # external leads are never auto-confirmed
+    assert f.verification.validated is False  # external leads are never auto-confirmed
     assert f.confidence != "confirmed"
     assert "db.py:42" in f.endpoint["url"]
 
 
 def test_nuclei_jsonl_parse():
     adapter = NucleiAdapter()
-    jsonl = "\n".join(json.dumps(x) for x in [
-        {"template-id": "tech-detect", "info": {"name": "Tech", "severity": "info", "tags": ["tech"]},
-         "matched-at": "http://127.0.0.1:8080"},
-        {"template-id": "cve-2021-1234", "info": {"name": "Some CVE", "severity": "high",
-         "classification": {"cwe-id": ["cwe-79"]}}, "matched-at": "http://127.0.0.1:8080/x"},
-    ])
+    jsonl = "\n".join(
+        json.dumps(x)
+        for x in [
+            {
+                "template-id": "tech-detect",
+                "info": {"name": "Tech", "severity": "info", "tags": ["tech"]},
+                "matched-at": "http://127.0.0.1:8080",
+            },
+            {
+                "template-id": "cve-2021-1234",
+                "info": {"name": "Some CVE", "severity": "high", "classification": {"cwe-id": ["cwe-79"]}},
+                "matched-at": "http://127.0.0.1:8080/x",
+            },
+        ]
+    )
     findings = adapter._parse(jsonl, "demo", "http://127.0.0.1:8080")
     assert len(findings) == 2
     high = [f for f in findings if f.severity == "high"][0]
@@ -51,11 +82,13 @@ def test_nuclei_jsonl_parse():
 
 
 def test_nmap_xml_parse():
-    xml = ('<nmaprun><host><ports>'
-           '<port protocol="tcp" portid="8080"><state state="open"/>'
-           '<service name="http" product="Werkzeug" version="2.0"/></port>'
-           '<port protocol="tcp" portid="22"><state state="closed"/></port>'
-           '</ports></host></nmaprun>')
+    xml = (
+        "<nmaprun><host><ports>"
+        '<port protocol="tcp" portid="8080"><state state="open"/>'
+        '<service name="http" product="Werkzeug" version="2.0"/></port>'
+        '<port protocol="tcp" portid="22"><state state="closed"/></port>'
+        "</ports></host></nmaprun>"
+    )
     findings = NmapAdapter()._parse(xml, "demo", "http://127.0.0.1:8080")
     assert len(findings) == 1 and "8080" in findings[0].title
 

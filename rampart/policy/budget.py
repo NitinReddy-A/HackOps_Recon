@@ -4,6 +4,7 @@ Hard caps live here as the last quantitative gate before execution: max requests
 host per minute, max total requests, plus a per-engagement kill switch. Token/cost
 accounting is tracked for the "cost per validated finding" KPI (section 25).
 """
+
 from __future__ import annotations
 
 import threading
@@ -41,8 +42,9 @@ class BudgetTracker:
             while window and window[0] < cutoff:
                 window.popleft()
             if len(window) >= self.limits.max_requests_per_host_per_min:
-                return False, (f"rate limit for {host}: "
-                               f"{self.limits.max_requests_per_host_per_min}/min exceeded")
+                return False, (
+                    f"rate limit for {host}: {self.limits.max_requests_per_host_per_min}/min exceeded"
+                )
             window.append(now)
             self.total_requests += 1
             return True, "within budget"

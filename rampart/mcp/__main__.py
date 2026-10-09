@@ -4,6 +4,7 @@ Speaks JSON-RPC 2.0 over stdin/stdout (line-delimited JSON). Register it with an
 MCP client (e.g. Claude Code) as a stdio server running ``python -m rampart.mcp``.
 Exits cleanly when stdin reaches EOF.
 """
+
 from __future__ import annotations
 
 import sys

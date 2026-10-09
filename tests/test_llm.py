@@ -1,5 +1,5 @@
 """LLM VAPT track — OWASP LLM Top 10 probes proven both ways against the demo LLM target."""
-import json
+
 import os
 import re
 import subprocess
@@ -79,7 +79,7 @@ action_policy:
 test_accounts: []
 notify: {{}}
 """
-    p = tmp_path / "SECURITY.md"
+    p = tmp_path / "rampart.scope.yaml"
     p.write_text(scope, encoding="utf-8")
     (tmp_path / "secrets.json").write_text("{}", encoding="utf-8")
     return str(p)
@@ -87,10 +87,16 @@ notify: {{}}
 
 def _engagement(tmp_path, port):
     cfg = EngagementConfig(
-        scope_file=_scope(tmp_path, port), target=f"http://127.0.0.1:{port}",
-        work_dir=str(tmp_path / ".rampart"), application="demo-llm",
-        llm_chat_path="/chat", llm_input_field="message", llm_output_field="reply",
-        llm_canary=CANARY, approver=_APPROVE)
+        scope_file=_scope(tmp_path, port),
+        target=f"http://127.0.0.1:{port}",
+        work_dir=str(tmp_path / ".rampart"),
+        application="demo-llm",
+        llm_chat_path="/chat",
+        llm_input_field="message",
+        llm_output_field="reply",
+        llm_canary=CANARY,
+        approver=_APPROVE,
+    )
     return Engagement(cfg)
 
 

@@ -1,5 +1,7 @@
 """Attack-chain correlation, risk scoring, and remediation roadmap."""
+
 from conftest import make_engagement
+
 from rampart.correlation import correlate
 
 
@@ -9,8 +11,7 @@ def test_chains_and_risk_on_vuln_target(tmp_path, vuln_server):
     assert corr is not None
     chain_ids = {c["id"] for c in corr.chains}
     # the big ones must be inferred from the confirmed findings
-    assert {"ssrf-cloud-takeover", "rce-full-compromise", "sqli-breach",
-            "mass-data-exfil"} <= chain_ids
+    assert {"ssrf-cloud-takeover", "rce-full-compromise", "sqli-breach", "mass-data-exfil"} <= chain_ids
     assert corr.risk_score >= 80 and corr.risk_band == "Critical"
     # every chain references at least one real confirmed finding
     confirmed_ids = {f.id for f in result.findings if f.verification.validated}

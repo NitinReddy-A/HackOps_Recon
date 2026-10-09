@@ -5,17 +5,22 @@ validated findings are presented as confirmed; dropped candidates are shown sepa
 the false-positive discipline is visible. Nothing is over-claimed — the tool generates
 *evidence of control effectiveness*, never compliance itself.
 """
+
 from __future__ import annotations
 
-import html
 import json
 
-from ..version import __version__
 from ..schemas.finding import State
+from ..version import __version__
 
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-_SEV_COLOR = {"critical": "#b4232c", "high": "#d1495b", "medium": "#e08a1e",
-              "low": "#3a7ca5", "info": "#5b6570"}
+_SEV_COLOR = {
+    "critical": "#b4232c",
+    "high": "#d1495b",
+    "medium": "#e08a1e",
+    "low": "#3a7ca5",
+    "info": "#5b6570",
+}
 
 
 def owasp_tags(f) -> list:
@@ -28,8 +33,9 @@ def owasp_tags(f) -> list:
 
 class ReportBuilder:
     def __init__(self, findings, scope, appmodel, scan, budget_snapshot, audit_events=0):
-        self.findings = sorted(findings, key=lambda f: (_SEV_ORDER.get(f.severity, 9),
-                                                        0 if f.verification.validated else 1))
+        self.findings = sorted(
+            findings, key=lambda f: (_SEV_ORDER.get(f.severity, 9), 0 if f.verification.validated else 1)
+        )
         self.scope = scope
         self.appmodel = appmodel
         self.scan = scan
@@ -49,7 +55,11 @@ class ReportBuilder:
         # validation rate is over Rampart's own oracle-gated candidates (exclude external leads)
         own = [f for f in reported if "external-scanner" not in f.tags]
         total_candidates = len(own) + len(dropped)
-        val_rate = (len([f for f in own if f.verification.validated]) / total_candidates) if total_candidates else 0.0
+        val_rate = (
+            (len([f for f in own if f.verification.validated]) / total_candidates)
+            if total_candidates
+            else 0.0
+        )
         return {
             "confirmed": len(confirmed),
             "reported": len(reported),
@@ -68,27 +78,34 @@ class ReportBuilder:
             "risk_score": (self.scan or {}).get("correlation", {}).get("risk_score", 0),
             "risk_band": (self.scan or {}).get("correlation", {}).get("risk_band", "Informational"),
             "attack_chains": len((self.scan or {}).get("correlation", {}).get("chains", [])),
-            "demonstrated_exploits": len([p for p in (self.scan or {}).get("exploitation", [])
-                                          if p.get("demonstrated")]),
-            "agent_assessed": len([f for f in self.findings
-                                   if "agent-assessed" in f.tags and f.state != State.DROPPED]),
-            "static_findings": len([f for f in self.findings
-                                    if "sast" in f.tags and f.state != State.DROPPED]),
+            "demonstrated_exploits": len(
+                [p for p in (self.scan or {}).get("exploitation", []) if p.get("demonstrated")]
+            ),
+            "agent_assessed": len(
+                [f for f in self.findings if "agent-assessed" in f.tags and f.state != State.DROPPED]
+            ),
+            "static_findings": len(
+                [f for f in self.findings if "sast" in f.tags and f.state != State.DROPPED]
+            ),
             "source_correlated": len([f for f in self.findings if "source-correlated" in f.tags]),
         }
 
     # --------------------------------------------------------------- JSON
     def to_json(self) -> str:
-        return json.dumps({
-            "tool": {"name": "rampart", "version": __version__},
-            "engagement": {
-                "ticket": self.scope.authorization.ticket,
-                "owner": self.scope.authorization.owner,
-                "authorized_by": self.scope.authorization.authorized_by,
+        return json.dumps(
+            {
+                "tool": {"name": "rampart", "version": __version__},
+                "engagement": {
+                    "ticket": self.scope.authorization.ticket,
+                    "owner": self.scope.authorization.owner,
+                    "authorized_by": self.scope.authorization.authorized_by,
+                },
+                "metrics": self.metrics(),
+                "findings": [f.to_dict() for f in self.findings],
             },
-            "metrics": self.metrics(),
-            "findings": [f.to_dict() for f in self.findings],
-        }, indent=2, default=str)
+            indent=2,
+            default=str,
+        )
 
     # -------------------------------------------------------------- SARIF
     def to_sarif(self) -> str:
@@ -100,18 +117,31 @@ class ReportBuilder:
             rid = (f.cwe[0] if f.cwe else f.vuln_class) or "finding"
             if rid not in rule_ids:
                 rule_ids.add(rid)
-                rules.append({"id": rid, "name": f.vuln_class or rid,
-                              "shortDescription": {"text": f.title},
-                              "helpUri": (f.references[0] if f.references else "")})
+                rules.append(
+                    {
+                        "id": rid,
+                        "name": f.vuln_class or rid,
+                        "shortDescription": {"text": f.title},
+                        "helpUri": (f.references[0] if f.references else ""),
+                    }
+                )
             results.append(f.to_sarif_result())
         doc = {
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
             "version": "2.1.0",
-            "runs": [{
-                "tool": {"driver": {"name": "Rampart", "version": __version__,
-                                    "informationUri": "https://rampart.dev", "rules": rules}},
-                "results": results,
-            }],
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "Rampart",
+                            "version": __version__,
+                            "informationUri": "https://rampart.dev",
+                            "rules": rules,
+                        }
+                    },
+                    "results": results,
+                }
+            ],
         }
         return json.dumps(doc, indent=2, default=str)
 
@@ -121,23 +151,37 @@ class ReportBuilder:
         L = []
         L.append(f"# Rampart assessment report — {self.scope.authorization.ticket or 'engagement'}")
         L.append("")
-        L.append(f"*Authorized by* **{self.scope.authorization.authorized_by}** · "
-                 f"*owner* **{self.scope.authorization.owner}** · tool `rampart {__version__}`")
+        L.append(
+            f"*Authorized by* **{self.scope.authorization.authorized_by}** · "
+            f"*owner* **{self.scope.authorization.owner}** · tool `rampart {__version__}`"
+        )
         L.append("")
         L.append(self._executive_summary_md(m))
         L.append("## Summary")
         L.append("")
-        L.append(f"- **{m['confirmed']}** confirmed finding(s), independently validated with reproducible proof")
-        L.append(f"- **{m['dropped_candidates']}** candidate(s) dropped by the validation gate (false-positive control)")
-        L.append(f"- Finding-validation rate: **{m['finding_validation_rate']*100:.0f}%** of candidates confirmed")
+        L.append(
+            f"- **{m['confirmed']}** confirmed finding(s), independently validated with reproducible proof"
+        )
+        L.append(
+            f"- **{m['dropped_candidates']}** candidate(s) dropped by the validation gate (false-positive control)"
+        )
+        L.append(
+            f"- Finding-validation rate: **{m['finding_validation_rate'] * 100:.0f}%** of candidates confirmed"
+        )
         L.append(f"- Endpoints tested: {m['endpoints_tested']} / {m['endpoints_discovered']} discovered")
-        L.append(f"- Audit events: {m['audit_events']} (append-only, hash-chained) · "
-                 f"tokens: {m['tokens_used']} · cost: ${m['usd_spent']}")
+        L.append(
+            f"- Audit events: {m['audit_events']} (append-only, hash-chained) · "
+            f"tokens: {m['tokens_used']} · cost: ${m['usd_spent']}"
+        )
         if m["external_leads"]:
-            L.append(f"- **{m['external_leads']}** external-scanner lead(s) included (unvalidated — "
-                     "shown separately, not counted as confirmed)")
-        L.append(f"- **Aggregate risk: {m['risk_score']}/100 ({m['risk_band']})** · "
-                 f"{m['attack_chains']} attack chain(s) identified")
+            L.append(
+                f"- **{m['external_leads']}** external-scanner lead(s) included (unvalidated — "
+                "shown separately, not counted as confirmed)"
+            )
+        L.append(
+            f"- **Aggregate risk: {m['risk_score']}/100 ({m['risk_band']})** · "
+            f"{m['attack_chains']} attack chain(s) identified"
+        )
         L.append("")
         L.append(self._coverage_md(m))
         L.append(self._chains_md())
@@ -158,19 +202,24 @@ class ReportBuilder:
                 badge = "✅ CONFIRMED (validated)"
             else:
                 badge = f"⏳ {f.confidence}"
-            L.append(f"- **Status:** {badge} · state `{f.state}` · {', '.join(f.cwe)} · "
-                     f"{', '.join(owasp_tags(f))}")
+            L.append(
+                f"- **Status:** {badge} · state `{f.state}` · {', '.join(f.cwe)} · {', '.join(owasp_tags(f))}"
+            )
             if f.cvss.vector:
-                L.append(f"- **CVSS {f.cvss.version}:** {f.cvss.base_score} ({f.cvss.severity}) `{f.cvss.vector}`")
+                L.append(
+                    f"- **CVSS {f.cvss.version}:** {f.cvss.base_score} ({f.cvss.severity}) `{f.cvss.vector}`"
+                )
             if f.endpoint.get("url"):
-                L.append(f"- **Endpoint:** `{f.endpoint.get('method','')} {f.endpoint['url']}`")
+                L.append(f"- **Endpoint:** `{f.endpoint.get('method', '')} {f.endpoint['url']}`")
             L.append(f"- **Description:** {f.description}")
             if f.impact:
                 L.append(f"- **Impact:** {f.impact}")
             if f.root_cause:
                 L.append(f"- **Root cause:** {f.root_cause}")
             if f.verification.validated:
-                L.append(f"- **Proof (independent validation, {f.verification.reproductions} reproductions):**")
+                L.append(
+                    f"- **Proof (independent validation, {f.verification.reproductions} reproductions):**"
+                )
                 for chk in f.verification.false_positive_checks:
                     L.append(f"    - {chk}")
             if f.reproduction.steps:
@@ -178,8 +227,10 @@ class ReportBuilder:
                 for i, s in enumerate(f.reproduction.steps, 1):
                     L.append(f"    {i}. {s}")
             if f.affected_code and f.affected_code.file:
-                L.append(f"- **Affected code:** `{f.affected_code.file}:{f.affected_code.start_line}` "
-                         f"(via {f.affected_code.detected_by})")
+                L.append(
+                    f"- **Affected code:** `{f.affected_code.file}:{f.affected_code.start_line}` "
+                    f"(via {f.affected_code.detected_by})"
+                )
             if f.remediation.summary or f.remediation.guidance:
                 L.append(f"- **Remediation:** {f.remediation.summary}")
                 if f.remediation.guidance:
@@ -195,13 +246,16 @@ class ReportBuilder:
                 L.append(f"- **Compliance evidence:** {', '.join(f.compliance_control_refs)}")
         L.append("")
         L.append("---")
-        L.append("*Rampart augments, does not replace, expert human pentesters. This report is "
-                 "evidence of control effectiveness, not a compliance attestation.*")
+        L.append(
+            "*Rampart augments, does not replace, expert human pentesters. This report is "
+            "evidence of control effectiveness, not a compliance attestation.*"
+        )
         return "\n".join(L)
 
     # -------------------------------------------------------- coverage
     def _coverage_md(self, m) -> str:
         from ..agents import describe_roster
+
         scan = self.scan or {}
         L = ["## Coverage & methodology", ""]
         classes = m.get("classes_tested") or sorted({f.vuln_class for f in self.findings})
@@ -223,8 +277,10 @@ class ReportBuilder:
             confirmed = [p for p in probe_log if p["result"] == "confirmed"]
             L.append(f"- **OWASP LLM Top-10 probes:** {len(confirmed)}/{len(probe_log)} classes vulnerable")
         L.append("- **Agent pipeline:** " + " → ".join(r["role"] for r in describe_roster()))
-        L.append("- **Trust rule:** only findings re-derived by an independent deterministic oracle "
-                 "are marked *confirmed*; external-scanner results are unvalidated leads.")
+        L.append(
+            "- **Trust rule:** only findings re-derived by an independent deterministic oracle "
+            "are marked *confirmed*; external-scanner results are unvalidated leads."
+        )
         L.append("")
         return "\n".join(L)
 
@@ -233,28 +289,39 @@ class ReportBuilder:
         """One-paragraph, plain-English verdict for a decision-maker."""
         m = m or self.metrics()
         corr = (self.scan or {}).get("correlation") or {}
-        classes = sorted({f.vuln_class for f in self.findings
-                          if f.verification.validated and f.state != State.DROPPED})
+        classes = sorted(
+            {f.vuln_class for f in self.findings if f.verification.validated and f.state != State.DROPPED}
+        )
         if not m["confirmed"]:
-            return ("No vulnerabilities were confirmed. Every candidate was dropped by the "
-                    "independent validation gate, so there are no false positives to triage.")
-        worst = min(corr.get("chains", []),
-                    key=lambda c: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(c["severity"], 4),
-                    default=None)
-        bits = [f"The assessment confirmed {m['confirmed']} vulnerabilit"
-                f"{'y' if m['confirmed'] == 1 else 'ies'} across {len(classes)} class(es) "
-                f"({', '.join(classes)}), each independently validated with reproducible proof "
-                f"(no false positives). Aggregate risk is {m['risk_score']}/100 ({m['risk_band']})."]
+            return (
+                "No vulnerabilities were confirmed. Every candidate was dropped by the "
+                "independent validation gate, so there are no false positives to triage."
+            )
+        worst = min(
+            corr.get("chains", []),
+            key=lambda c: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(c["severity"], 4),
+            default=None,
+        )
+        bits = [
+            f"The assessment confirmed {m['confirmed']} vulnerabilit"
+            f"{'y' if m['confirmed'] == 1 else 'ies'} across {len(classes)} class(es) "
+            f"({', '.join(classes)}), each independently validated with reproducible proof "
+            f"(no false positives). Aggregate risk is {m['risk_score']}/100 ({m['risk_band']})."
+        ]
         if worst:
-            bits.append(f"The most serious exposure is \"{worst['title']}\" — "
-                        f"{len(corr.get('chains', []))} attack chain(s) were identified in total.")
+            bits.append(
+                f'The most serious exposure is "{worst["title"]}" — '
+                f"{len(corr.get('chains', []))} attack chain(s) were identified in total."
+            )
         if corr.get("roadmap"):
             top = corr["roadmap"][0]
             bits.append(f"Highest-priority fix: {top['summary']}")
         if m.get("agent_assessed"):
-            bits.append(f"Additionally, the reasoning agents flagged {m['agent_assessed']} "
-                        "agent-assessed issue(s) (e.g. business-logic abuse) for human confirmation — "
-                        "these are reported separately from oracle-confirmed findings.")
+            bits.append(
+                f"Additionally, the reasoning agents flagged {m['agent_assessed']} "
+                "agent-assessed issue(s) (e.g. business-logic abuse) for human confirmation — "
+                "these are reported separately from oracle-confirmed findings."
+            )
         return " ".join(bits)
 
     def _executive_summary_md(self, m) -> str:
@@ -266,8 +333,12 @@ class ReportBuilder:
         chains = corr.get("chains") or []
         if not chains:
             return ""
-        L = ["## Attack chains (kill-chain)", "",
-             "Confirmed findings composed into realistic multi-step attacks:", ""]
+        L = [
+            "## Attack chains (kill-chain)",
+            "",
+            "Confirmed findings composed into realistic multi-step attacks:",
+            "",
+        ]
         for c in chains:
             tag = " _(agent-assessed — human review)_" if c.get("agent_assessed") else ""
             L.append(f"### [{c['severity'].upper()}] {c['title']}{tag}")
@@ -287,7 +358,9 @@ class ReportBuilder:
         L = ["## Remediation roadmap (prioritized)", ""]
         for i, r in enumerate(roadmap, 1):
             fixes = f" — fixes {r['count']} finding(s): {', '.join(r['classes'])}" if r.get("count") else ""
-            L.append(f"{i}. **[{r['severity'].upper()}, {r.get('effort','?')} effort]** {r['summary']}{fixes}")
+            L.append(
+                f"{i}. **[{r['severity'].upper()}, {r.get('effort', '?')} effort]** {r['summary']}{fixes}"
+            )
             if r.get("guidance"):
                 L.append(f"    - {r['guidance']}")
         L.append("")
@@ -297,9 +370,13 @@ class ReportBuilder:
         proofs = [p for p in (self.scan or {}).get("exploitation", []) if p.get("demonstrated")]
         if not proofs:
             return ""
-        L = ["## Exploitation — demonstrated impact", "",
-             "Bounded, non-destructive follow-on steps that *demonstrate* real impact for confirmed "
-             "findings (read-only, scope-gated, request-capped):", ""]
+        L = [
+            "## Exploitation — demonstrated impact",
+            "",
+            "Bounded, non-destructive follow-on steps that *demonstrate* real impact for confirmed "
+            "findings (read-only, scope-gated, request-capped):",
+            "",
+        ]
         for p in proofs:
             L.append(f"### {p['title']}")
             L.append(f"- **Technique:** {p['technique']}")
@@ -316,14 +393,17 @@ class ReportBuilder:
         """Full multi-framework control-coverage matrix (SOC 2, ISO 27001, PCI DSS, NIST
         800-53/FedRAMP, HIPAA, GDPR, OWASP ASVS, CIS) — every finding mapped by CWE."""
         from ..compliance import compliance_matrix_report
+
         return compliance_matrix_report(self.findings, self.scope, self.scan)
 
     # ---------------------------------------------------------------- SOC 2
     def to_soc2(self) -> str:
         from .soc2 import soc2_report
+
         return soc2_report(self.findings, self.scan, self.scope)
 
     # -------------------------------------------------------------- HTML
     def to_html(self) -> str:
         from .html_report import render_html
+
         return render_html(self)

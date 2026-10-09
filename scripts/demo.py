@@ -7,6 +7,7 @@
 
 Everything runs on localhost against a target we ship and own. Nothing touches the internet.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,6 +52,7 @@ def _start_proc(script, fixed, fixed_flag="--fixed"):
 
 def _llm_scope(port):
     import tempfile
+
     tmp = tempfile.mkdtemp(prefix="rampart-llm-demo-")
     scope = f"""apiVersion: security-agent/v1
 kind: EngagementScope
@@ -69,7 +71,7 @@ action_policy: {{default_tier_ceiling: 1, tier2_requires_approval: true, tier3: 
 test_accounts: []
 notify: {{}}
 """
-    path = os.path.join(tmp, "SECURITY.md")
+    path = os.path.join(tmp, "rampart.scope.yaml")
     open(path, "w", encoding="utf-8").write(scope)
     open(os.path.join(tmp, "secrets.json"), "w", encoding="utf-8").write("{}")
     return path
@@ -80,21 +82,29 @@ def run_llm_demo(fixed, no_open):
     print(f"  demo LLM up on http://127.0.0.1:{port}/chat  [{'GUARDRAILED' if fixed else 'VULNERABLE'}]")
     work_dir = os.path.join(PLATFORM, ".rampart-llm-demo")
     import shutil
+
     shutil.rmtree(work_dir, ignore_errors=True)
     try:
         cfg = EngagementConfig(
-            scope_file=_llm_scope(port), target=f"http://127.0.0.1:{port}", work_dir=work_dir,
-            application="demo-llm", llm_chat_path="/chat", llm_canary=_LLM_CANARY,
-            approver=lambda req, dec: {"granted": True, "approver_user_id": "demo"})
+            scope_file=_llm_scope(port),
+            target=f"http://127.0.0.1:{port}",
+            work_dir=work_dir,
+            application="demo-llm",
+            llm_chat_path="/chat",
+            llm_canary=_LLM_CANARY,
+            approver=lambda req, dec: {"granted": True, "approver_user_id": "demo"},
+        )
         eng = Engagement(cfg)
         res = eng.run_llm()
         written, rb, chain_ok = eng.report(["html", "md", "json"])
-        print(f"\n  OWASP LLM Top-10:")
+        print("\n  OWASP LLM Top-10:")
         for p in res.probe_log:
             print(f"    {p['owasp']:<42} {p['result']}")
         m = rb.metrics()
-        print(f"\n  {m['confirmed']} confirmed LLM finding(s) · audit chain "
-              f"{'intact' if chain_ok else 'BROKEN'} · {len(eng.audit.read_all())} events")
+        print(
+            f"\n  {m['confirmed']} confirmed LLM finding(s) · audit chain "
+            f"{'intact' if chain_ok else 'BROKEN'} · {len(eng.audit.read_all())} events"
+        )
         html = written.get("html")
         print(f"\n  report: {html}\n")
         if html and not no_open:
@@ -142,39 +152,48 @@ def main():
     proc, port = _start_target(args.fixed)
     work_dir = os.path.join(PLATFORM, ".rampart-demo")
     import shutil
-    shutil.rmtree(work_dir, ignore_errors=True)   # fresh run for clean, single-engagement numbers
+
+    shutil.rmtree(work_dir, ignore_errors=True)  # fresh run for clean, single-engagement numbers
     try:
         # write a scope contract for the ephemeral port
         import tempfile
+
         tmp = tempfile.mkdtemp(prefix="rampart-demo-")
-        scope = open(os.path.join(DEMO_DIR, "SECURITY.md"), encoding="utf-8").read()
+        scope = open(os.path.join(DEMO_DIR, "rampart.scope.yaml"), encoding="utf-8").read()
         scope = re.sub(r"ports:\s*\[\d+\]", f"ports: [{port}]", scope)
-        scope_path = os.path.join(tmp, "SECURITY.md")
+        scope_path = os.path.join(tmp, "rampart.scope.yaml")
         open(scope_path, "w", encoding="utf-8").write(scope)
 
         cfg = EngagementConfig(
-            scope_file=scope_path, target=f"http://127.0.0.1:{port}", work_dir=work_dir,
+            scope_file=scope_path,
+            target=f"http://127.0.0.1:{port}",
+            work_dir=work_dir,
             secrets_file=os.path.join(DEMO_DIR, "secrets.json"),
             openapi=os.path.join(DEMO_DIR, "openapi.json"),
             appmodel_seed=os.path.join(DEMO_DIR, "appmodel_seed.json"),
-            application="demo-shop-api", intel=args.intel,
+            application="demo-shop-api",
+            intel=args.intel,
             repo=(DEMO_DIR if not args.fixed else ""),
         )
         eng = Engagement(cfg)
-        result = eng.run_scan()
+        eng.run_scan()
         if not args.fixed:
             eng.remediate()
         written, rb, chain_ok = eng.report(["html", "md", "json", "sarif", "compliance"])
 
         m = rb.metrics()
         print(f"\n  risk {m['risk_score']}/100 ({m['risk_band']}) · {m['attack_chains']} attack chain(s)")
-        print(f"  {m['confirmed']} confirmed · {m['dropped_candidates']} dropped by FP gate "
-              f"· validation rate {m['finding_validation_rate']*100:.0f}%")
+        print(
+            f"  {m['confirmed']} confirmed · {m['dropped_candidates']} dropped by FP gate "
+            f"· validation rate {m['finding_validation_rate'] * 100:.0f}%"
+        )
         for f in rb.findings:
             state = "CONFIRMED" if f.verification.validated else f.state
             print(f"    [{f.severity.upper():>6}] {f.title}  ({state})")
-        print(f"\n  audit chain: {'intact' if chain_ok else 'BROKEN'} · "
-              f"{len(eng.audit.read_all())} events · cost ${m['usd_spent']}")
+        print(
+            f"\n  audit chain: {'intact' if chain_ok else 'BROKEN'} · "
+            f"{len(eng.audit.read_all())} events · cost ${m['usd_spent']}"
+        )
         html = written.get("html")
         print(f"\n  report: {html}\n")
         if html and not args.no_open:

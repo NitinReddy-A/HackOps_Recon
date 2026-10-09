@@ -4,6 +4,7 @@ Each method takes structured context and returns structured data. Implementation
 treat any target-derived strings in the context as UNTRUSTED (never as instructions) —
 the prompts module enforces delimiting for the LLM-backed provider.
 """
+
 from __future__ import annotations
 
 
@@ -41,7 +42,11 @@ class IntelligenceProvider:
         severity_rank = {"SQLI": 0, "IDOR/BOLA": 1, "LLM": 2, "OPEN_REDIRECT": 3, "XSS": 4}
         order = sorted(classes, key=lambda c: severity_rank.get(c, 9))
         steps = [{"class": c, "rationale": f"test {c} across discovered inputs/endpoints"} for c in order]
-        return {"order": order, "notes": f"deterministic priority over {len(order)} class(es)", "steps": steps}
+        return {
+            "order": order,
+            "notes": f"deterministic priority over {len(order)} class(es)",
+            "steps": steps,
+        }
 
     def agent_step(self, ctx: dict) -> dict:
         """One decision for the reasoning agent loop (plan/explore/critique). The deterministic

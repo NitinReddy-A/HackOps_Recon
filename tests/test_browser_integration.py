@@ -1,16 +1,18 @@
 """Headless-browser DOM-XSS integration — skipped automatically when Playwright/Chromium absent."""
+
 import os
 
 import pytest
-
 from conftest import make_engagement, write_engagement
+
 from rampart.browser import available
 from rampart.engagement import Engagement, EngagementConfig
 
 # Launches a real browser (slow) — opt-in so the default suite stays fast and CI-portable.
 pytestmark = pytest.mark.skipif(
     not (available() and os.environ.get("RAMPART_BROWSER_TESTS")),
-    reason="set RAMPART_BROWSER_TESTS=1 with Playwright+Chromium installed to run browser integration")
+    reason="set RAMPART_BROWSER_TESTS=1 with Playwright+Chromium installed to run browser integration",
+)
 
 
 def test_dom_xss_confirmed_via_browser(tmp_path, vuln_server):
@@ -32,10 +34,15 @@ def test_dom_xss_clean_on_fixed(tmp_path, fixed_server):
 
 def _active_eng(tmp_path, port):
     scope = write_engagement(tmp_path, port)
-    cfg = EngagementConfig(scope_file=scope, target=f"http://127.0.0.1:{port}",
-                           work_dir=str(tmp_path / ".rampart"),
-                           openapi=str(tmp_path / "openapi.json"), appmodel_seed=str(tmp_path / "seed.json"),
-                           application="demo-shop-api", active=True)
+    cfg = EngagementConfig(
+        scope_file=scope,
+        target=f"http://127.0.0.1:{port}",
+        work_dir=str(tmp_path / ".rampart"),
+        openapi=str(tmp_path / "openapi.json"),
+        appmodel_seed=str(tmp_path / "seed.json"),
+        application="demo-shop-api",
+        active=True,
+    )
     return Engagement(cfg)
 
 

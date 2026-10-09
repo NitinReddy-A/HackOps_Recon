@@ -1,12 +1,12 @@
 """The graph orchestrator: DAG ordering, true parallelism, dynamic spawning, error isolation —
 and a parity proof that running the supervisor in parallel yields the SAME confirmed findings as
 a single worker (concurrency changes throughput, never the evidence or safety guarantees)."""
+
 import threading
 import time
 
-import pytest
-
 from conftest import write_engagement
+
 from rampart.engagement import Engagement, EngagementConfig
 from rampart.orchestration import Task, TaskGraph, TaskOutcome, run_graph
 
@@ -20,7 +20,7 @@ def test_dag_dependency_ordering_and_ctx():
     c = Task(name="c", run=lambda ctx: ctx[ga] * ctx[gb], deps=[ga, gb], kind="t")
     gc = g.add(c)
     res = run_graph(g, max_workers=4)
-    assert res.values[gc] == 6                 # c saw both deps' values in its ctx
+    assert res.values[gc] == 6  # c saw both deps' values in its ctx
     assert res.order.index(ga) < res.order.index(gc)
     assert res.order.index(gb) < res.order.index(gc)
 
@@ -40,9 +40,9 @@ def test_runs_in_parallel():
     for i in range(8):
         g.add(Task(name=f"s{i}", run=slow, kind="slow"))
     res = run_graph(g, max_workers=8)
-    assert res.duration_s < 1.0                # proves concurrency (serial would be ~1.6s)
+    assert res.duration_s < 1.0  # proves concurrency (serial would be ~1.6s)
     assert res.max_concurrency >= 4
-    assert len(set(idents)) >= 2               # genuinely ran on multiple threads
+    assert len(set(idents)) >= 2  # genuinely ran on multiple threads
 
 
 def test_dynamic_subagent_spawning():
@@ -105,15 +105,19 @@ def test_many_tasks_scale():
 def _run_with_parallel(tmp_path, port, parallel):
     scope_file = write_engagement(tmp_path, port)
     cfg = EngagementConfig(
-        scope_file=scope_file, target=f"http://127.0.0.1:{port}",
+        scope_file=scope_file,
+        target=f"http://127.0.0.1:{port}",
         work_dir=str(tmp_path / ".rampart"),
         openapi=str(tmp_path / "openapi.json"),
         appmodel_seed=str(tmp_path / "seed.json"),
-        application="demo-shop-api", parallel=parallel)
+        application="demo-shop-api",
+        parallel=parallel,
+    )
     eng = Engagement(cfg)
     result = eng.run_scan()
-    confirmed = sorted(f"{f.vuln_class}@{f.endpoint.get('url','')}"
-                       for f in result.findings if f.verification.validated)
+    confirmed = sorted(
+        f"{f.vuln_class}@{f.endpoint.get('url', '')}" for f in result.findings if f.verification.validated
+    )
     ok, msg = eng.audit.verify_chain()
     return confirmed, ok, msg
 
@@ -121,11 +125,12 @@ def _run_with_parallel(tmp_path, port, parallel):
 def test_parallel_findings_match_sequential(tmp_path, vuln_server):
     seq_dir = tmp_path / "seq"
     par_dir = tmp_path / "par"
-    seq_dir.mkdir(); par_dir.mkdir()
+    seq_dir.mkdir()
+    par_dir.mkdir()
     seq, ok1, m1 = _run_with_parallel(seq_dir, vuln_server.port, parallel=1)
     par, ok2, m2 = _run_with_parallel(par_dir, vuln_server.port, parallel=16)
     assert ok1, m1
-    assert ok2, m2                                   # audit hash-chain intact under concurrency
+    assert ok2, m2  # audit hash-chain intact under concurrency
     assert seq == par, f"parallel findings diverged:\n seq={seq}\n par={par}"
     assert seq, "expected confirmed findings on the vulnerable target"
 
@@ -133,14 +138,18 @@ def test_parallel_findings_match_sequential(tmp_path, vuln_server):
 # --------------------------------------------- integration: IaC / gRPC / SCA wiring
 def test_engagement_wires_iac_and_grpc(tmp_path, vuln_server):
     import os
+
     repo = os.path.join(os.path.dirname(__file__), "..", "examples", "demo_target")
     scope_file = write_engagement(tmp_path, vuln_server.port)
     cfg = EngagementConfig(
-        scope_file=scope_file, target=f"http://127.0.0.1:{vuln_server.port}",
+        scope_file=scope_file,
+        target=f"http://127.0.0.1:{vuln_server.port}",
         work_dir=str(tmp_path / ".rampart"),
         openapi=str(tmp_path / "openapi.json"),
         appmodel_seed=str(tmp_path / "seed.json"),
-        application="demo-shop-api", repo=repo)
+        application="demo-shop-api",
+        repo=repo,
+    )
     eng = Engagement(cfg)
     iac = eng.run_iac()
     assert iac, "expected IaC findings from the demo iac/ fixtures"

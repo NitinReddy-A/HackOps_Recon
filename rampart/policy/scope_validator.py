@@ -4,6 +4,7 @@ Validates the concrete request (host, path prefix, method) against the engagemen
 in-scope path globs, explicit exclusions (e.g. ``/admin/billing/**``, ``/logout``), and
 permitted methods. Excluded paths win over included ones (deny-by-default).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,10 +30,14 @@ def check(scope: EngagementScope, action: ToolAction) -> ScopeResult:
         return ScopeResult(False, reason=f"path {action.path!r} is explicitly out of scope")
 
     if action.method.upper() not in hs.methods:
-        return ScopeResult(False, reason=f"method {action.method} not permitted for {host!r} (allowed: {hs.methods})")
+        return ScopeResult(
+            False, reason=f"method {action.method} not permitted for {host!r} (allowed: {hs.methods})"
+        )
 
     for i, pat in enumerate(hs.paths_include):
         if path_glob_match(pat, action.path):
-            return ScopeResult(True, reason="path in scope", matched_rule=f"scope.in_scope[{host}].paths_include[{i}]")
+            return ScopeResult(
+                True, reason="path in scope", matched_rule=f"scope.in_scope[{host}].paths_include[{i}]"
+            )
 
     return ScopeResult(False, reason=f"path {action.path!r} does not match any in-scope pattern")

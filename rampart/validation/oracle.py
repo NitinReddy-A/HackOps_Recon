@@ -12,6 +12,7 @@ false-positive gate — not an LLM guess.
            AND unauth in (401,403)                       (auth IS enforced; defect is ownership)
            AND absent in (403,404)                       (200 for a missing id would be generic)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -36,8 +37,9 @@ def _path_for(hyp: dict, object_id: str) -> str:
     return hyp["endpoint_path"].replace("{" + param + "}", str(object_id))
 
 
-def run_bola_oracle(runner, session_manager, hyp: dict, reproductions: int = 2,
-                    fresh_sessions: bool = True) -> OracleVerdict:
+def run_bola_oracle(
+    runner, session_manager, hyp: dict, reproductions: int = 2, fresh_sessions: bool = True
+) -> OracleVerdict:
     attacker = hyp["attacker_principal"]
     victim = hyp["victim_principal"]
     atk_obj = hyp["attacker_object"]
@@ -51,21 +53,42 @@ def run_bola_oracle(runner, session_manager, hyp: dict, reproductions: int = 2,
         session_manager.fresh_session(victim)
 
     hid = hyp.get("id")
-    b_own = runner.get(_path_for(hyp, atk_obj["id"]), session=attacker,
-                       rationale="baseline: attacker reads own object", hypothesis_id=hid,
-                       summary="baseline attacker-own")
-    a_own = runner.get(_path_for(hyp, vic_obj["id"]), session=victim,
-                       rationale="baseline: victim reads own object", hypothesis_id=hid,
-                       summary="baseline victim-own")
-    probe = runner.get(_path_for(hyp, vic_obj["id"]), session=attacker,
-                       rationale="probe: attacker reads victim's object (cross-account)", hypothesis_id=hid,
-                       summary="probe cross-account")
-    unauth = runner.get(_path_for(hyp, vic_obj["id"]), session=None, payload_class="benign-read",
-                        rationale="negative control: unauthenticated read", hypothesis_id=hid,
-                        summary="control unauth")
-    absent = runner.get(_path_for(hyp, nonexistent), session=attacker,
-                        rationale="negative control: nonexistent object id", hypothesis_id=hid,
-                        summary="control absent")
+    b_own = runner.get(
+        _path_for(hyp, atk_obj["id"]),
+        session=attacker,
+        rationale="baseline: attacker reads own object",
+        hypothesis_id=hid,
+        summary="baseline attacker-own",
+    )
+    a_own = runner.get(
+        _path_for(hyp, vic_obj["id"]),
+        session=victim,
+        rationale="baseline: victim reads own object",
+        hypothesis_id=hid,
+        summary="baseline victim-own",
+    )
+    probe = runner.get(
+        _path_for(hyp, vic_obj["id"]),
+        session=attacker,
+        rationale="probe: attacker reads victim's object (cross-account)",
+        hypothesis_id=hid,
+        summary="probe cross-account",
+    )
+    unauth = runner.get(
+        _path_for(hyp, vic_obj["id"]),
+        session=None,
+        payload_class="benign-read",
+        rationale="negative control: unauthenticated read",
+        hypothesis_id=hid,
+        summary="control unauth",
+    )
+    absent = runner.get(
+        _path_for(hyp, nonexistent),
+        session=attacker,
+        rationale="negative control: nonexistent object id",
+        hypothesis_id=hid,
+        summary="control absent",
+    )
 
     reasons, fp = [], []
     checks = {
@@ -92,9 +115,15 @@ def run_bola_oracle(runner, session_manager, hyp: dict, reproductions: int = 2,
     all_ok &= note(sig_present, f"victim signature {'found' if sig_present else 'absent'} in probe body")
     all_ok &= note(not_echo, "probe body differs from attacker's own object (not an echo endpoint)")
     all_ok &= note(endpoint_ok, f"victim reading own object works ({a_own.status})")
-    fp.append(f"unauthenticated -> {unauth.status} " + ("(auth enforced)" if auth_enforced else "(WEAK: auth not enforced)"))
+    fp.append(
+        f"unauthenticated -> {unauth.status} "
+        + ("(auth enforced)" if auth_enforced else "(WEAK: auth not enforced)")
+    )
     all_ok &= note(auth_enforced, "authentication is enforced (defect isolated to ownership)")
-    fp.append(f"nonexistent id -> {absent.status} " + ("(distinguishes real leak)" if absent_ok else "(WARN: generic 200?)"))
+    fp.append(
+        f"nonexistent id -> {absent.status} "
+        + ("(distinguishes real leak)" if absent_ok else "(WARN: generic 200?)")
+    )
     all_ok &= note(absent_ok, "nonexistent id is rejected (probe 200 is a real object, not a generic body)")
 
     # reproductions from clean state
@@ -103,9 +132,13 @@ def run_bola_oracle(runner, session_manager, hyp: dict, reproductions: int = 2,
         for i in range(reproductions):
             if fresh_sessions and session_manager is not None:
                 session_manager.fresh_session(attacker)
-            r = runner.get(_path_for(hyp, vic_obj["id"]), session=attacker,
-                           rationale=f"reproduction #{i+1} from clean session", hypothesis_id=hid,
-                           summary=f"reproduction {i+1}")
+            r = runner.get(
+                _path_for(hyp, vic_obj["id"]),
+                session=attacker,
+                rationale=f"reproduction #{i + 1} from clean session",
+                hypothesis_id=hid,
+                summary=f"reproduction {i + 1}",
+            )
             if r.status == 200 and contains_signature(r.body, vic_sig):
                 repro_ok += 1
         fp.append(f"reproduced {repro_ok}/{reproductions} times from clean sessions")

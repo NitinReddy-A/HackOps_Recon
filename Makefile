@@ -4,10 +4,14 @@
 
 PYTHON ?= python
 
-.PHONY: install test bench demo demo-llm tools docker-build lint
+.PHONY: install dev test bench demo demo-llm tools docker-build lint format check
 
 install:  ## Install the package in editable mode
 	$(PYTHON) -m pip install -e .
+
+dev:  ## Install with dev tools (pytest, ruff, pre-commit) and set up hooks
+	$(PYTHON) -m pip install -e ".[dev]"
+	pre-commit install
 
 test:  ## Run the test suite
 	$(PYTHON) -m pytest
@@ -27,5 +31,14 @@ tools:  ## Show which external OSS scanners are installed (doctor)
 docker-build:  ## Build the Docker image
 	docker build -t rampart:local .
 
-lint:  ## Byte-compile the package to catch syntax errors
-	$(PYTHON) -m compileall rampart
+lint:  ## Lint with ruff
+	$(PYTHON) -m ruff check .
+
+format:  ## Auto-format with ruff
+	$(PYTHON) -m ruff format .
+
+check:  ## Everything CI runs: lint + format check + tests + benchmark
+	$(PYTHON) -m ruff check .
+	$(PYTHON) -m ruff format --check .
+	$(PYTHON) -m pytest -q
+	$(PYTHON) benchmarks/run_benchmark.py

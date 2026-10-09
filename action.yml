@@ -1,17 +1,17 @@
 # Composite GitHub Action for Rampart.
 # Usage in a consumer workflow:
 #
-#   - uses: your-org/rampart@v0.3
+#   - uses: NitinReddy-A/HackOps_Recon@v1.0.0
 #     with:
 #       target: https://staging.example.com      # authorized target (required)
-#       scope-file: SECURITY.md                   # authorization contract
+#       scope-file: rampart.scope.yaml                   # authorization contract
 #       fail-on: high                             # gate severity
 #   - uses: github/codeql-action/upload-sarif@v3
 #     with:
 #       sarif_file: ${{ steps.<id>.outputs.sarif-path }}
 #
 # Only scan assets you own or are explicitly authorized to test. Rampart
-# refuses to run without a valid, unexpired, in-scope SECURITY.md contract.
+# refuses to run without a valid, unexpired, in-scope rampart.scope.yaml contract.
 name: "Rampart AppSec Scan"
 description: "Authorized, evidence-first web/API/LLM security scan that emits SARIF for GitHub code scanning."
 author: "Rampart contributors"
@@ -22,9 +22,9 @@ branding:
 
 inputs:
   scope-file:
-    description: "Path to the SECURITY.md authorization contract."
+    description: "Path to the rampart.scope.yaml authorization contract."
     required: false
-    default: "SECURITY.md"
+    default: "rampart.scope.yaml"
   target:
     description: "Authorized target base URL, e.g. https://staging.example.com."
     required: true

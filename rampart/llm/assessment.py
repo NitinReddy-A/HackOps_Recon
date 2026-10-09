@@ -5,6 +5,7 @@ finding only when the marker/canary appears for the attack prompt, does NOT appe
 benign control (so a model that always echoes markers is not a false positive), and the
 effect reproduces 2+ times. Only then is it ``confirmed``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -17,22 +18,41 @@ from .probes import BENIGN_CONTROL, LLM_PROBES
 @dataclass
 class LLMResult:
     findings: list = field(default_factory=list)
-    probe_log: list = field(default_factory=list)   # [{id, owasp, result}]
+    probe_log: list = field(default_factory=list)  # [{id, owasp, result}]
 
 
 _SEV_CVSS = {
-    "high": CVSS(version="4.0", base_score=8.1, severity="high",
-                 vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:N/SC:N/SI:N/SA:N"),
-    "medium": CVSS(version="4.0", base_score=6.1, severity="medium",
-                   vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N"),
-    "low": CVSS(version="4.0", base_score=3.1, severity="low",
-                vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"),
+    "high": CVSS(
+        version="4.0",
+        base_score=8.1,
+        severity="high",
+        vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:N/SC:N/SI:N/SA:N",
+    ),
+    "medium": CVSS(
+        version="4.0",
+        base_score=6.1,
+        severity="medium",
+        vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N",
+    ),
+    "low": CVSS(
+        version="4.0",
+        base_score=3.1,
+        severity="low",
+        vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N",
+    ),
 }
 
 
 class LLMAssessment:
-    def __init__(self, client, canary: str = "", application: str = "llm-target",
-                 target_url: str = "", engagement_id: str = "", reproductions: int = 2):
+    def __init__(
+        self,
+        client,
+        canary: str = "",
+        application: str = "llm-target",
+        target_url: str = "",
+        engagement_id: str = "",
+        reproductions: int = 2,
+    ):
         self.client = client
         self.canary = canary
         self.application = application
@@ -62,8 +82,9 @@ class LLMAssessment:
                     repro += 1
             validated = repro >= self.reproductions
             result.findings.append(self._finding(probe, validated, repro, control_hit, outcome))
-            result.probe_log.append({"id": probe.id, "owasp": probe.owasp,
-                                     "result": "confirmed" if validated else "unconfirmed"})
+            result.probe_log.append(
+                {"id": probe.id, "owasp": probe.owasp, "result": "confirmed" if validated else "unconfirmed"}
+            )
         return result
 
     def _finding(self, probe, validated, repro, control_hit, outcome) -> Finding:
@@ -82,28 +103,48 @@ class LLMAssessment:
             cwe=list(probe.cwe),
             owasp={"llm_2025": [probe.owasp]},
             cvss=_SEV_CVSS.get(probe.severity, _SEV_CVSS["medium"]),
-            asset={"type": "llm_endpoint", "application": self.application,
-                   "environment": "authorized", "target": self.target_url},
-            endpoint={"method": "POST", "url": f"{self.target_url}{self.client.chat_path}",
-                      "auth_required": False},
+            asset={
+                "type": "llm_endpoint",
+                "application": self.application,
+                "environment": "authorized",
+                "target": self.target_url,
+            },
+            endpoint={
+                "method": "POST",
+                "url": f"{self.target_url}{self.client.chat_path}",
+                "auth_required": False,
+            },
             description=probe.description,
             impact=probe.impact,
             root_cause=probe.root_cause,
             reproduction=Reproduction(
                 prerequisites=["Authorized access to the LLM endpoint"],
-                steps=[f"POST the {probe.id} prompt to {self.client.chat_path}",
-                       "Observe the marker/canary in the reply (see proof)"],
-                deterministic=True),
-            remediation=Remediation(summary=probe.remediation_summary, type="config",
-                                    guidance=probe.remediation_guidance, effort="medium"),
+                steps=[
+                    f"POST the {probe.id} prompt to {self.client.chat_path}",
+                    "Observe the marker/canary in the reply (see proof)",
+                ],
+                deterministic=True,
+            ),
+            remediation=Remediation(
+                summary=probe.remediation_summary,
+                type="config",
+                guidance=probe.remediation_guidance,
+                effort="medium",
+            ),
             references=list(probe.references),
             compliance_control_refs=["OWASP-LLM-Top10", "NIST-AI-RMF:MANAGE"],
             dedupe_key=f"{self.application}:LLM:{probe.id}",
             tags=["llm", "ai", probe.id],
             verification=Verification(
-                method="llm-marker-oracle", validated=validated, validated_at=now_iso(),
-                validator="llm-oracle", independent_reproduction=validated, reproductions=repro,
-                false_positive_checks=checks, confidence_score=0.95 if validated else 0.5),
+                method="llm-marker-oracle",
+                validated=validated,
+                validated_at=now_iso(),
+                validator="llm-oracle",
+                independent_reproduction=validated,
+                reproductions=repro,
+                false_positive_checks=checks,
+                confidence_score=0.95 if validated else 0.5,
+            ),
         )
         f.evidence.extend(getattr(outcome, "evidence", []) or [])
         f.assert_consistent()

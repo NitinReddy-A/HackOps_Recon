@@ -14,10 +14,11 @@ No agent code executes a tool call directly. Everything goes through
 
 If any stage errors or is unreachable, the request is denied.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 from ..schemas.audit import AuditEvent
 from ..schemas.scope import EngagementScope
@@ -34,7 +35,7 @@ Approver = Callable[[ToolCallRequest, PolicyDecision], dict]
 class PipelineResult:
     decision: PolicyDecision
     executed: bool = False
-    response: object = None          # executor's HttpResponse, or None if blocked
+    response: object = None  # executor's HttpResponse, or None if blocked
     blocked_reason: str = ""
     resolved_ip: str = ""
     audit_event_ids: list = field(default_factory=list)
@@ -48,7 +49,7 @@ class PolicyPipeline:
         budget: BudgetTracker,
         executor,
         resolver=allowlist.default_resolver,
-        approver: Optional[Approver] = None,
+        approver: Approver | None = None,
     ):
         self.scope = scope
         self.audit = audit_log
@@ -128,8 +129,11 @@ class PolicyPipeline:
             else:
                 verdict = self.approver(req, decision) or {}
                 if verdict.get("granted"):
-                    approval_rec.update(status="granted", approver_user_id=verdict.get("approver_user_id", ""),
-                                        scope_bound=verdict.get("scope_bound", {}))
+                    approval_rec.update(
+                        status="granted",
+                        approver_user_id=verdict.get("approver_user_id", ""),
+                        scope_bound=verdict.get("scope_bound", {}),
+                    )
                     decision.decision = Decision.ALLOW
                 else:
                     decision.decision = Decision.DENY
@@ -198,8 +202,11 @@ class PolicyPipeline:
                 "policy_version": decision.policy_version,
                 "reason": decision.reason,
             },
-            intent={"hypothesis_id": req.hypothesis_id, "finding_id": req.finding_id,
-                    "rationale_summary": (req.rationale or "")[:280]},
+            intent={
+                "hypothesis_id": req.hypothesis_id,
+                "finding_id": req.finding_id,
+                "rationale_summary": (req.rationale or "")[:280],
+            },
             approval=approval_rec,
             execution={"status": "allowed" if decision.allowed else "blocked"},
             budget=self.budget.snapshot(),

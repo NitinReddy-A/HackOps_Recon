@@ -15,17 +15,18 @@ The read loop never crashes on a bad line.
 Scope gate
 ----------
 Every capability is executed through :class:`rampart.engagement.Engagement`, which
-parses and validates the SECURITY.md authorization contract and refuses (fail-closed)
+parses and validates the rampart.scope.yaml authorization contract and refuses (fail-closed)
 any target not inside ``scope.in_scope``. The server therefore *cannot* scan a target
 the operator has not authorized — the scope file is the authorization boundary.
 """
+
 from __future__ import annotations
 
 import json
 import os
 
-from ..version import __version__
 from ..schemas.scope import EngagementScope, ScopeError
+from ..version import __version__
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "rampart"
@@ -36,7 +37,7 @@ TOOLS = [
     {
         "name": "rampart_scope_check",
         "description": (
-            "Validate a Rampart SECURITY.md authorization contract WITHOUT touching the "
+            "Validate a Rampart rampart.scope.yaml authorization contract WITHOUT touching the "
             "network. Parses the scope file and runs the R1 fail-closed gate (owner, "
             "authorized_by, attestation, in_scope hosts, resolved_ip_allowlist, expiry). "
             "Returns {valid, errors, ...}. Run this first — every other tool refuses to act "
@@ -47,7 +48,7 @@ TOOLS = [
             "properties": {
                 "scope_file": {
                     "type": "string",
-                    "description": "Path to the SECURITY.md authorization contract.",
+                    "description": "Path to the rampart.scope.yaml authorization contract.",
                 },
             },
             "required": ["scope_file"],
@@ -58,22 +59,49 @@ TOOLS = [
         "description": (
             "Run an authorized web/API assessment against TARGET and return a JSON summary "
             "(confirmed findings, counts, and correlation risk_score/risk_band/attack-chains). "
-            "Executes through Engagement: the SECURITY.md scope gate is enforced fail-closed, "
+            "Executes through Engagement: the rampart.scope.yaml scope gate is enforced fail-closed, "
             "so a target not listed in scope.in_scope is REFUSED (isError) and never contacted. "
             "Only independently-validated findings are reported as confirmed."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "scope_file": {"type": "string", "description": "Path to the SECURITY.md contract (the authorization boundary)."},
-                "target": {"type": "string", "description": "Authorized target base URL, e.g. http://127.0.0.1:8080. Must be inside scope.in_scope."},
-                "openapi": {"type": "string", "description": "Optional OpenAPI spec path for a grey-box app model."},
-                "appmodel_seed": {"type": "string", "description": "Optional seeded object-ownership file (enables BOLA/IDOR hypotheses)."},
-                "secrets": {"type": "string", "description": "Optional secrets file (default: secrets.json next to the scope file)."},
-                "application": {"type": "string", "description": "Application name recorded on findings (default: target)."},
-                "crawl": {"type": "boolean", "description": "Discover endpoints/params by crawling, no OpenAPI needed (default: false)."},
-                "repo": {"type": "string", "description": "Optional source repo path for white-box correlation."},
-                "work_dir": {"type": "string", "description": "Run directory for audit/evidence/reports (default: .rampart)."},
+                "scope_file": {
+                    "type": "string",
+                    "description": "Path to the rampart.scope.yaml contract (the authorization boundary).",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Authorized target base URL, e.g. http://127.0.0.1:8080. Must be inside scope.in_scope.",
+                },
+                "openapi": {
+                    "type": "string",
+                    "description": "Optional OpenAPI spec path for a grey-box app model.",
+                },
+                "appmodel_seed": {
+                    "type": "string",
+                    "description": "Optional seeded object-ownership file (enables BOLA/IDOR hypotheses).",
+                },
+                "secrets": {
+                    "type": "string",
+                    "description": "Optional secrets file (default: secrets.json next to the scope file).",
+                },
+                "application": {
+                    "type": "string",
+                    "description": "Application name recorded on findings (default: target).",
+                },
+                "crawl": {
+                    "type": "boolean",
+                    "description": "Discover endpoints/params by crawling, no OpenAPI needed (default: false).",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": "Optional source repo path for white-box correlation.",
+                },
+                "work_dir": {
+                    "type": "string",
+                    "description": "Run directory for audit/evidence/reports (default: .rampart).",
+                },
             },
             "required": ["scope_file", "target"],
         },
@@ -83,7 +111,7 @@ TOOLS = [
         "description": (
             "Assess an authorized LLM endpoint against the OWASP LLM Top 10 and return "
             "confirmed findings plus a probe-log summary. Runs through Engagement so the "
-            "SECURITY.md scope gate is enforced fail-closed; an out-of-scope target is REFUSED. "
+            "rampart.scope.yaml scope gate is enforced fail-closed; an out-of-scope target is REFUSED. "
             "LLM prompts are Tier-2 (state-changing) POSTs — the operator authorizes them by "
             "providing an in-scope contract, so Tier-2 is auto-approved and audited. The model's "
             "reply is treated as data checked by a deterministic marker/canary oracle, never executed."
@@ -91,14 +119,38 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "scope_file": {"type": "string", "description": "Path to the SECURITY.md contract (the authorization boundary)."},
-                "target": {"type": "string", "description": "Authorized LLM endpoint base URL. Must be inside scope.in_scope."},
-                "chat_path": {"type": "string", "description": "Path that accepts the prompt (default: /chat)."},
-                "input_field": {"type": "string", "description": "JSON field holding the user prompt (default: message)."},
-                "output_field": {"type": "string", "description": "Dotted JSON path to the model reply (default: reply)."},
-                "canary": {"type": "string", "description": "Secret planted in the system prompt, used as a leak oracle (optional)."},
-                "application": {"type": "string", "description": "Application name recorded on findings (default: llm-target)."},
-                "work_dir": {"type": "string", "description": "Run directory for audit/evidence/reports (default: .rampart)."},
+                "scope_file": {
+                    "type": "string",
+                    "description": "Path to the rampart.scope.yaml contract (the authorization boundary).",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Authorized LLM endpoint base URL. Must be inside scope.in_scope.",
+                },
+                "chat_path": {
+                    "type": "string",
+                    "description": "Path that accepts the prompt (default: /chat).",
+                },
+                "input_field": {
+                    "type": "string",
+                    "description": "JSON field holding the user prompt (default: message).",
+                },
+                "output_field": {
+                    "type": "string",
+                    "description": "Dotted JSON path to the model reply (default: reply).",
+                },
+                "canary": {
+                    "type": "string",
+                    "description": "Secret planted in the system prompt, used as a leak oracle (optional).",
+                },
+                "application": {
+                    "type": "string",
+                    "description": "Application name recorded on findings (default: llm-target).",
+                },
+                "work_dir": {
+                    "type": "string",
+                    "description": "Run directory for audit/evidence/reports (default: .rampart).",
+                },
             },
             "required": ["scope_file", "target"],
         },
@@ -108,16 +160,28 @@ TOOLS = [
         "description": (
             "Regenerate report artifacts (html, md, json, sarif, compliance) from a previously "
             "stored run in WORK_DIR and return the written file paths. Runs through Engagement, "
-            "so the SECURITY.md scope gate is still validated (fail-closed) before any report is "
+            "so the rampart.scope.yaml scope gate is still validated (fail-closed) before any report is "
             "produced. No network traffic is generated."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "scope_file": {"type": "string", "description": "Path to the SECURITY.md contract (still validated)."},
-                "target": {"type": "string", "description": "The target the stored run was executed against (must be in scope)."},
-                "work_dir": {"type": "string", "description": "Run directory holding the stored findings/scan to report on."},
-                "format": {"type": "string", "description": "Comma list of formats: html,md,json,sarif,compliance (default: html,json)."},
+                "scope_file": {
+                    "type": "string",
+                    "description": "Path to the rampart.scope.yaml contract (still validated).",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "The target the stored run was executed against (must be in scope).",
+                },
+                "work_dir": {
+                    "type": "string",
+                    "description": "Run directory holding the stored findings/scan to report on.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Comma list of formats: html,md,json,sarif,compliance (default: html,json).",
+                },
                 "application": {"type": "string", "description": "Application name (default: target)."},
             },
             "required": ["scope_file", "target", "work_dir"],
@@ -154,20 +218,22 @@ def _tool_scope_check(args):
     errs = scope.validate()
     if errs:
         return _tool_text({"valid": False, "errors": errs})
-    return _tool_text({
-        "valid": True,
-        "errors": [],
-        "owner": scope.authorization.owner,
-        "authorized_by": scope.authorization.authorized_by,
-        "ticket": scope.authorization.ticket,
-        "expires": scope.authorization.expires,
-        "in_scope": [
-            {"host": h.host, "ports": h.ports, "methods": h.methods, "paths_include": h.paths_include}
-            for h in scope.in_scope
-        ],
-        "resolved_ip_allowlist": scope.resolved_ip_allowlist,
-        "tier_ceiling": scope.action_policy.default_tier_ceiling,
-    })
+    return _tool_text(
+        {
+            "valid": True,
+            "errors": [],
+            "owner": scope.authorization.owner,
+            "authorized_by": scope.authorization.authorized_by,
+            "ticket": scope.authorization.ticket,
+            "expires": scope.authorization.expires,
+            "in_scope": [
+                {"host": h.host, "ports": h.ports, "methods": h.methods, "paths_include": h.paths_include}
+                for h in scope.in_scope
+            ],
+            "resolved_ip_allowlist": scope.resolved_ip_allowlist,
+            "tier_ceiling": scope.action_policy.default_tier_ceiling,
+        }
+    )
 
 
 def _missing(args, keys):
@@ -193,7 +259,7 @@ def _tool_scan(args):
         crawl=bool(args.get("crawl", False)),
         intel="deterministic",
     )
-    eng = Engagement(cfg)              # ScopeError / FileNotFoundError -> caught by dispatch
+    eng = Engagement(cfg)  # ScopeError / FileNotFoundError -> caught by dispatch
     result = eng.run_scan()
 
     corr = result.correlation
@@ -211,13 +277,22 @@ def _tool_scan(args):
         "risk_score": getattr(corr, "risk_score", 0),
         "risk_band": getattr(corr, "risk_band", "Informational"),
         "attack_chains": [
-            {"id": c.get("id"), "title": c.get("title"), "severity": c.get("severity"),
-             "finding_ids": c.get("finding_ids", [])}
+            {
+                "id": c.get("id"),
+                "title": c.get("title"),
+                "severity": c.get("severity"),
+                "finding_ids": c.get("finding_ids", []),
+            }
             for c in (getattr(corr, "chains", []) or [])
         ],
         "confirmed_findings": [
-            {"title": f.title, "severity": f.severity, "vuln_class": f.vuln_class,
-             "cwe": f.cwe, "endpoint": (f.endpoint or {}).get("url", "")}
+            {
+                "title": f.title,
+                "severity": f.severity,
+                "vuln_class": f.vuln_class,
+                "cwe": f.cwe,
+                "endpoint": (f.endpoint or {}).get("url", ""),
+            }
             for f in confirmed
         ],
     }
@@ -245,7 +320,7 @@ def _tool_llm_test(args):
         intel="deterministic",
         approver=approver,
     )
-    eng = Engagement(cfg)              # ScopeError / FileNotFoundError -> caught by dispatch
+    eng = Engagement(cfg)  # ScopeError / FileNotFoundError -> caught by dispatch
     res = eng.run_llm()
 
     confirmed = [f for f in res.findings if getattr(f.verification, "validated", False)]
@@ -254,8 +329,14 @@ def _tool_llm_test(args):
         "chat_path": eng.cfg.llm_chat_path,
         "confirmed_count": len(confirmed),
         "confirmed_findings": [
-            {"title": f.title, "severity": f.severity, "vuln_class": f.vuln_class,
-             "cwe": f.cwe, "owasp": f.owasp, "endpoint": (f.endpoint or {}).get("url", "")}
+            {
+                "title": f.title,
+                "severity": f.severity,
+                "vuln_class": f.vuln_class,
+                "cwe": f.cwe,
+                "owasp": f.owasp,
+                "endpoint": (f.endpoint or {}).get("url", ""),
+            }
             for f in confirmed
         ],
         "probe_log": res.probe_log,
@@ -278,7 +359,7 @@ def _tool_report(args):
         application=args.get("application") or "target",
         intel="deterministic",
     )
-    eng = Engagement(cfg)              # ScopeError / FileNotFoundError -> caught by dispatch
+    eng = Engagement(cfg)  # ScopeError / FileNotFoundError -> caught by dispatch
     written, rb, chain_ok = eng.report(formats)
     m = rb.metrics()
     summary = {
@@ -321,11 +402,14 @@ def handle_request(req):
     is_notification = "id" not in req
 
     if method == "initialize":
-        return _result(rid, {
-            "protocolVersion": PROTOCOL_VERSION,
-            "serverInfo": {"name": SERVER_NAME, "version": __version__},
-            "capabilities": {"tools": {}},
-        })
+        return _result(
+            rid,
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "serverInfo": {"name": SERVER_NAME, "version": __version__},
+                "capabilities": {"tools": {}},
+            },
+        )
     if method == "notifications/initialized":
         return None
     if method == "tools/list":

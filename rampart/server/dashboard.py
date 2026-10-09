@@ -1,4 +1,5 @@
 """The dashboard HTTP handler (stdlib only)."""
+
 from __future__ import annotations
 
 import html
@@ -8,14 +9,19 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-_SEV_COLOR = {"critical": "#b4232c", "high": "#d1495b", "medium": "#e08a1e",
-              "low": "#3a7ca5", "info": "#5b6570"}
+_SEV_COLOR = {
+    "critical": "#b4232c",
+    "high": "#d1495b",
+    "medium": "#e08a1e",
+    "low": "#3a7ca5",
+    "info": "#5b6570",
+}
 _run_lock = threading.Lock()
 
 
 def _read_json(path, default):
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except Exception:  # noqa: BLE001
         return default
@@ -29,21 +35,31 @@ def _dashboard_html(work_dir: str) -> str:
     findings = _read_json(os.path.join(work_dir, "findings.json"), [])
     scan = _read_json(os.path.join(work_dir, "scan.json"), {})
     corr = scan.get("correlation") or {}
-    confirmed = [f for f in findings if (f.get("verification") or {}).get("validated")
-                 and f.get("state") != "Dropped"]
+    confirmed = [
+        f for f in findings if (f.get("verification") or {}).get("validated") and f.get("state") != "Dropped"
+    ]
     risk = corr.get("risk_score", 0)
     band = corr.get("risk_band", "Informational")
     chains = corr.get("chains", [])
-    band_color = {"Critical": "#b4232c", "High": "#d1495b", "Medium": "#e08a1e",
-                  "Low": "#3a7ca5", "Informational": "#5b6570"}.get(band, "#5b6570")
+    band_color = {
+        "Critical": "#b4232c",
+        "High": "#d1495b",
+        "Medium": "#e08a1e",
+        "Low": "#3a7ca5",
+        "Informational": "#5b6570",
+    }.get(band, "#5b6570")
 
-    kpis = [(f"{risk}/100", f"Risk · {band}", band_color),
-            (len(confirmed), "Confirmed", "#1f9d55"),
-            (len(chains), "Attack chains", "#5aa9d6"),
-            (len(findings), "Total findings", "#5b6570")]
+    kpis = [
+        (f"{risk}/100", f"Risk · {band}", band_color),
+        (len(confirmed), "Confirmed", "#1f9d55"),
+        (len(chains), "Attack chains", "#5aa9d6"),
+        (len(findings), "Total findings", "#5b6570"),
+    ]
     kpi_html = "".join(
         f'<div class="kpi"><div class="n" style="color:{c}">{_esc(v)}</div>'
-        f'<div class="l">{_esc(l)}</div></div>' for v, l, c in kpis)
+        f'<div class="l">{_esc(lbl)}</div></div>'
+        for v, lbl, c in kpis
+    )
 
     rows = []
     for f in sorted(confirmed, key=lambda f: f.get("cvss", {}).get("base_score", 0), reverse=True):
@@ -51,18 +67,27 @@ def _dashboard_html(work_dir: str) -> str:
         rows.append(
             f'<tr><td><span class="sev" style="background:{color}">{_esc(f.get("severity"))}</span></td>'
             f'<td>{_esc(f.get("title"))}</td><td class="mono">{_esc(", ".join(f.get("cwe", [])))}</td>'
-            f'<td class="mono">{_esc((f.get("endpoint") or {}).get("url",""))}</td></tr>')
-    findings_table = ("".join(rows) if rows
-                      else '<tr><td colspan="4" class="sub">No confirmed findings yet — run a scan.</td></tr>')
+            f'<td class="mono">{_esc((f.get("endpoint") or {}).get("url", ""))}</td></tr>'
+        )
+    findings_table = (
+        "".join(rows)
+        if rows
+        else '<tr><td colspan="4" class="sub">No confirmed findings yet — run a scan.</td></tr>'
+    )
 
     chain_html = "".join(
-        f'<div class="chain" style="border-left-color:{_SEV_COLOR.get(c["severity"],"#5b6570")}">'
-        f'<b>[{_esc(c["severity"].upper())}] {_esc(c["title"])}</b>'
-        f'<div class="sub">{_esc(c.get("rationale",""))}</div></div>' for c in chains)
+        f'<div class="chain" style="border-left-color:{_SEV_COLOR.get(c["severity"], "#5b6570")}">'
+        f"<b>[{_esc(c['severity'].upper())}] {_esc(c['title'])}</b>"
+        f'<div class="sub">{_esc(c.get("rationale", ""))}</div></div>'
+        for c in chains
+    )
 
     has_report = os.path.exists(os.path.join(work_dir, "reports", "report.html"))
-    report_link = ('<a class="btn" href="/report" target="_blank">Open full HTML report ↗</a>'
-                   if has_report else '<span class="sub">No report generated yet.</span>')
+    report_link = (
+        '<a class="btn" href="/report" target="_blank">Open full HTML report ↗</a>'
+        if has_report
+        else '<span class="sub">No report generated yet.</span>'
+    )
 
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Rampart dashboard</title>
@@ -94,7 +119,7 @@ input[type=text]{{width:100%;padding:8px;border:1px solid var(--line);border-rad
 <div class="kpis">{kpi_html}</div>
 <div class="panel"><h2>Run a scan</h2>
   <form id="runform" onsubmit="return runScan(event)">
-    <label>SECURITY.md scope file</label><input type="text" name="scope_file" placeholder="examples/demo_target/SECURITY.md" required>
+    <label>rampart.scope.yaml scope file</label><input type="text" name="scope_file" placeholder="examples/demo_target/rampart.scope.yaml" required>
     <label>Target base URL (must be in scope)</label><input type="text" name="target" placeholder="http://127.0.0.1:8080" required>
     <label><input type="checkbox" name="crawl" checked> crawl to discover endpoints</label><br>
     <button class="btn" type="submit">Run assessment</button>
@@ -148,15 +173,19 @@ def _make_handler(work_dir: str):
             if path == "/":
                 return self._send(200, _dashboard_html(work_dir))
             if path == "/api/findings":
-                return self._send(200, json.dumps(_read_json(
-                    os.path.join(work_dir, "findings.json"), [])), "application/json")
+                return self._send(
+                    200,
+                    json.dumps(_read_json(os.path.join(work_dir, "findings.json"), [])),
+                    "application/json",
+                )
             if path == "/api/scan":
-                return self._send(200, json.dumps(_read_json(
-                    os.path.join(work_dir, "scan.json"), {})), "application/json")
+                return self._send(
+                    200, json.dumps(_read_json(os.path.join(work_dir, "scan.json"), {})), "application/json"
+                )
             if path == "/report":
                 rp = os.path.join(work_dir, "reports", "report.html")
                 if os.path.exists(rp):
-                    with open(rp, "r", encoding="utf-8") as fh:
+                    with open(rp, encoding="utf-8") as fh:
                         return self._send(200, fh.read())
                 return self._send(404, "<h1>No report yet</h1>")
             return self._send(404, "<h1>404</h1>")
@@ -168,24 +197,32 @@ def _make_handler(work_dir: str):
             raw = self.rfile.read(length).decode("utf-8", "replace")
             form = {k: v[0] for k, v in parse_qs(raw).items()}
             if not form.get("scope_file") or not form.get("target"):
-                return self._send(400, json.dumps({"error": "scope_file and target are required"}),
-                                  "application/json")
+                return self._send(
+                    400, json.dumps({"error": "scope_file and target are required"}), "application/json"
+                )
             if not _run_lock.acquire(blocking=False):
-                return self._send(409, json.dumps({"error": "a scan is already running"}),
-                                  "application/json")
+                return self._send(409, json.dumps({"error": "a scan is already running"}), "application/json")
             try:
                 from ..engagement import Engagement, EngagementConfig
+
                 cfg = EngagementConfig(
-                    scope_file=form["scope_file"], target=form["target"], work_dir=work_dir,
+                    scope_file=form["scope_file"],
+                    target=form["target"],
+                    work_dir=work_dir,
                     crawl=(form.get("crawl") in ("on", "true", "1")),
-                    application=form.get("application", "target"))
+                    application=form.get("application", "target"),
+                )
                 eng = Engagement(cfg)
                 result = eng.run_scan()
                 eng.report(["html", "md", "json", "sarif"])
                 corr = result.correlation
-                out = {"ok": True, "confirmed": len([f for f in result.findings if f.verification.validated]),
-                       "risk_score": corr.risk_score, "risk_band": corr.risk_band,
-                       "chains": len(corr.chains)}
+                out = {
+                    "ok": True,
+                    "confirmed": len([f for f in result.findings if f.verification.validated]),
+                    "risk_score": corr.risk_score,
+                    "risk_band": corr.risk_band,
+                    "chains": len(corr.chains),
+                }
                 return self._send(200, json.dumps(out), "application/json")
             except Exception as exc:  # noqa: BLE001 - surface scope/other errors to the UI
                 return self._send(200, json.dumps({"error": str(exc)}), "application/json")

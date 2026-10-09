@@ -9,6 +9,7 @@ Trust boundary: a gRPC channel makes its OWN network requests and is NOT policed
 scope choke-point, so the caller must only ever point :func:`scan_grpc` at an already in-scope,
 authorized host:port.
 """
+
 from __future__ import annotations
 
 from .scan import (

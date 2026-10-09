@@ -6,6 +6,7 @@ the application model, the hypotheses (PTT), the findings, and the generated rep
 blueprint targets Postgres + object storage for a multi-tenant deployment; this file store
 is the self-hostable single-node default.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,7 +34,7 @@ class RunStore:
         path = os.path.join(self.base, name)
         if not os.path.exists(path):
             return default
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
 
     # findings

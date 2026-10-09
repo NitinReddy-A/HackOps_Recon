@@ -5,6 +5,7 @@ behind a monkeypatchable seam, and the "grpcio absent" degradation is the defaul
 test environment (grpcio is intentionally NOT installed). These pass whether or not grpcio
 happens to be present on the host.
 """
+
 import rampart.grpc_scan.scan as scan_mod
 from rampart.grpc_scan import available, is_grpc_response, scan_grpc, scan_grpc_methods
 from rampart.grpc_scan.scan import _is_read_method, _reflection_finding
@@ -47,8 +48,9 @@ def test_reflection_finding_confirmed_cwe200_lists_services():
 
 # --------------------------------------------------------------------- scan_grpc seam
 def test_scan_grpc_returns_finding_when_reflection_lists_services(monkeypatch):
-    monkeypatch.setattr(scan_mod, "_list_services",
-                        lambda host, port, scheme, timeout=8.0: ["pkg.A", "pkg.B"])
+    monkeypatch.setattr(
+        scan_mod, "_list_services", lambda host, port, scheme, timeout=8.0: ["pkg.A", "pkg.B"]
+    )
     findings = scan_grpc("h", 50051, "grpc", "app", "http://h:50051")
     assert len(findings) == 1
     f = findings[0]
@@ -87,22 +89,48 @@ def test_available_returns_bool_without_raising():
 # All of the following monkeypatch the two NEW network seams (_list_methods / _invoke_method) so
 # neither a live gRPC server nor grpcio is ever required (same discipline as the existing tests).
 
+
 def _m(svc, method, **extra):
     """Build one method dict as _list_methods would return it."""
-    d = {"service": svc, "method": method, "full_method": f"/{svc}/{method}",
-         "input_type": "", "output_type": ""}
+    d = {
+        "service": svc,
+        "method": method,
+        "full_method": f"/{svc}/{method}",
+        "input_type": "",
+        "output_type": "",
+    }
     d.update(extra)
     return d
 
 
 # --------------------------------------------------------------------- read/mutate classification
 def test_is_read_method_classification():
-    for ok in ("GetUser", "ListAccounts", "DescribeNode", "QueryLogs", "SearchDocs",
-               "HealthCheck", "WatchStatus", "CountItems", "ExistsKey", "readConfig"):
+    for ok in (
+        "GetUser",
+        "ListAccounts",
+        "DescribeNode",
+        "QueryLogs",
+        "SearchDocs",
+        "HealthCheck",
+        "WatchStatus",
+        "CountItems",
+        "ExistsKey",
+        "readConfig",
+    ):
         assert _is_read_method(ok) is True, ok
     # mutating prefixes always lose — fail-closed so writes are never auto-invoked.
-    for bad in ("CreateUser", "UpdateAccount", "DeleteUser", "SetConfig", "RemoveKey",
-                "RotateSecret", "RevokeToken", "DropTable", "PurgeCache", "ResetState"):
+    for bad in (
+        "CreateUser",
+        "UpdateAccount",
+        "DeleteUser",
+        "SetConfig",
+        "RemoveKey",
+        "RotateSecret",
+        "RevokeToken",
+        "DropTable",
+        "PurgeCache",
+        "ResetState",
+    ):
         assert _is_read_method(bad) is False, bad
     # neither prefix -> not read (so not invoked under read_only)
     assert _is_read_method("DoSomething") is False
@@ -111,10 +139,10 @@ def test_is_read_method_classification():
 
 # --------------------------------------------------------------------- reflection now lists methods
 def test_scan_grpc_reflection_description_mentions_methods(monkeypatch):
-    monkeypatch.setattr(scan_mod, "_list_services",
-                        lambda host, port, scheme, timeout=8.0: ["pkg.A"])
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: [_m("pkg.A", "GetThing")])
+    monkeypatch.setattr(scan_mod, "_list_services", lambda host, port, scheme, timeout=8.0: ["pkg.A"])
+    monkeypatch.setattr(
+        scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: [_m("pkg.A", "GetThing")]
+    )
     findings = scan_grpc("h", 50051, "grpc", "app", "http://h:50051")  # active defaults False
     assert len(findings) == 1  # still only the reflection exposure finding by default
     f = findings[0]
@@ -135,8 +163,7 @@ def test_reflection_finding_unchanged_when_methods_none():
 # --------------------------------------------------------------------- confirmed unauth (oracle)
 def test_active_unauth_confirmed_with_negative_control(monkeypatch):
     methods = [_m("pkg.UserService", "GetUser"), _m("pkg.AdminService", "GetAdminSettings")]
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: methods)
+    monkeypatch.setattr(scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: methods)
 
     def fake_invoke(host, port, scheme, full_method, metadata=None, request_bytes=b"", timeout=8.0):
         # unauthenticated: a read method is OPEN, the admin read method is properly GATED (control).
@@ -164,10 +191,12 @@ def test_active_unauth_confirmed_with_negative_control(monkeypatch):
 # --------------------------------------------------------------------- firm (no negative control)
 def test_active_unauth_all_open_is_firm_not_confirmed(monkeypatch):
     methods = [_m("pkg.S", "GetUser"), _m("pkg.S", "ListThings")]
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: methods)
-    monkeypatch.setattr(scan_mod, "_invoke_method",
-                        lambda *a, **k: {"code": "OK", "ok": True, "response_len": 10, "details": ""})
+    monkeypatch.setattr(scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: methods)
+    monkeypatch.setattr(
+        scan_mod,
+        "_invoke_method",
+        lambda *a, **k: {"code": "OK", "ok": True, "response_len": 10, "details": ""},
+    )
     findings = scan_grpc_methods("h", 50051, "grpc", "app", "http://h:50051", active=True)
     unauth = [f for f in findings if f.vuln_class == "GRPC_UNAUTH_METHOD"]
     assert len(unauth) == 1
@@ -180,19 +209,21 @@ def test_active_unauth_all_open_is_firm_not_confirmed(monkeypatch):
 # --------------------------------------------------------------------- all gated => no finding
 def test_active_unauth_all_gated_produces_no_unauth_finding(monkeypatch):
     methods = [_m("pkg.S", "GetUser"), _m("pkg.S", "ListThings")]
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: methods)
-    monkeypatch.setattr(scan_mod, "_invoke_method",
-                        lambda *a, **k: {"code": "UNAUTHENTICATED", "ok": False,
-                                         "response_len": 0, "details": "nope"})
+    monkeypatch.setattr(scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: methods)
+    monkeypatch.setattr(
+        scan_mod,
+        "_invoke_method",
+        lambda *a, **k: {"code": "UNAUTHENTICATED", "ok": False, "response_len": 0, "details": "nope"},
+    )
     findings = scan_grpc_methods("h", 50051, "grpc", "app", "http://h:50051", active=True)
     assert [f for f in findings if f.vuln_class == "GRPC_UNAUTH_METHOD"] == []
 
 
 # --------------------------------------------------------------------- NON-DESTRUCTIVE by default
 def test_inactive_never_invokes_any_method(monkeypatch):
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: [_m("pkg.S", "GetUser")])
+    monkeypatch.setattr(
+        scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: [_m("pkg.S", "GetUser")]
+    )
 
     def boom(*a, **k):
         raise AssertionError("_invoke_method must NOT be called when active=False")
@@ -205,8 +236,7 @@ def test_inactive_never_invokes_any_method(monkeypatch):
 
 def test_active_never_invokes_mutating_methods(monkeypatch):
     methods = [_m("pkg.S", "GetUser"), _m("pkg.S", "DeleteUser"), _m("pkg.S", "CreateUser")]
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: methods)
+    monkeypatch.setattr(scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: methods)
     calls = []
 
     def recording_invoke(host, port, scheme, full_method, metadata=None, request_bytes=b"", timeout=8.0):
@@ -215,15 +245,16 @@ def test_active_never_invokes_mutating_methods(monkeypatch):
 
     monkeypatch.setattr(scan_mod, "_invoke_method", recording_invoke)
     scan_grpc_methods("h", 50051, "grpc", "app", "http://h:50051", active=True)
-    assert "/pkg.S/DeleteUser" not in calls   # mutating never invoked
+    assert "/pkg.S/DeleteUser" not in calls  # mutating never invoked
     assert "/pkg.S/CreateUser" not in calls
-    assert "/pkg.S/GetUser" in calls           # read-ish IS invoked
+    assert "/pkg.S/GetUser" in calls  # read-ish IS invoked
 
 
 # --------------------------------------------------------------------- plaintext transport
 def test_plaintext_finding_for_insecure_scheme(monkeypatch):
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: [_m("pkg.S", "GetUser")])
+    monkeypatch.setattr(
+        scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: [_m("pkg.S", "GetUser")]
+    )
     findings = scan_grpc_methods("h", 50051, "grpc", "app", "http://h:50051", active=False)
     plain = [f for f in findings if f.vuln_class == "GRPC_PLAINTEXT"]
     assert len(plain) == 1
@@ -232,8 +263,9 @@ def test_plaintext_finding_for_insecure_scheme(monkeypatch):
 
 
 def test_no_plaintext_finding_for_tls_scheme(monkeypatch):
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0: [_m("pkg.S", "GetUser")])
+    monkeypatch.setattr(
+        scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: [_m("pkg.S", "GetUser")]
+    )
     findings = scan_grpc_methods("h", 50051, "grpcs", "app", "https://h:50051", active=False)
     assert [f for f in findings if f.vuln_class == "GRPC_PLAINTEXT"] == []
 
@@ -253,11 +285,17 @@ def test_scan_grpc_methods_graceful_when_list_methods_raises(monkeypatch):
 
 # --------------------------------------------------------------------- scan_grpc active wiring
 def test_scan_grpc_active_extends_with_method_findings(monkeypatch):
-    monkeypatch.setattr(scan_mod, "_list_services",
-                        lambda host, port, scheme, timeout=8.0: ["pkg.UserService"])
-    monkeypatch.setattr(scan_mod, "_list_methods",
-                        lambda host, port, scheme, timeout=8.0:
-                        [_m("pkg.UserService", "GetUser"), _m("pkg.UserService", "GetAdmin")])
+    monkeypatch.setattr(
+        scan_mod, "_list_services", lambda host, port, scheme, timeout=8.0: ["pkg.UserService"]
+    )
+    monkeypatch.setattr(
+        scan_mod,
+        "_list_methods",
+        lambda host, port, scheme, timeout=8.0: [
+            _m("pkg.UserService", "GetUser"),
+            _m("pkg.UserService", "GetAdmin"),
+        ],
+    )
 
     def fake_invoke(host, port, scheme, full_method, metadata=None, request_bytes=b"", timeout=8.0):
         if full_method == "/pkg.UserService/GetUser":
@@ -267,8 +305,8 @@ def test_scan_grpc_active_extends_with_method_findings(monkeypatch):
     monkeypatch.setattr(scan_mod, "_invoke_method", fake_invoke)
     findings = scan_grpc("h", 50051, "grpc", "app", "http://h:50051", active=True)
     classes = {f.vuln_class for f in findings}
-    assert "information-disclosure" in classes   # reflection exposure
-    assert "GRPC_PLAINTEXT" in classes           # plaintext transport
-    assert "GRPC_UNAUTH_METHOD" in classes       # confirmed unauth (GetUser open, GetAdmin gated)
+    assert "information-disclosure" in classes  # reflection exposure
+    assert "GRPC_PLAINTEXT" in classes  # plaintext transport
+    assert "GRPC_UNAUTH_METHOD" in classes  # confirmed unauth (GetUser open, GetAdmin gated)
     for f in findings:
         f.assert_consistent()

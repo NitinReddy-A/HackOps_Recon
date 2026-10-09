@@ -1,11 +1,9 @@
 """Full SCA: CVSS scoring, multi-ecosystem manifest parsing, OSV matching (mocked), and the
 graceful-offline / graceful-network-failure guarantees."""
+
 import json
 
-import pytest
-
-from rampart.sca import collect_dependencies, scan_sca
-from rampart.sca import cvss, osv
+from rampart.sca import collect_dependencies, cvss, osv, scan_sca
 
 
 # ------------------------------------------------------------------- CVSS calculator
@@ -25,21 +23,26 @@ def test_cvss_bands_and_fallback():
     assert cvss.severity_band(0.0) == "info"
     assert cvss.base_score("not-a-vector") is None
     assert cvss.from_text("CRITICAL")[0] == "critical"
-    assert cvss.from_text("")[0] == "medium"          # unknown -> conservative default
+    assert cvss.from_text("")[0] == "medium"  # unknown -> conservative default
 
 
 # --------------------------------------------------------------------- manifest parsers
 def test_parses_multiple_ecosystems(tmp_path):
     (tmp_path / "requirements.txt").write_text("Flask==0.12.2\nrequests>=2.0\nDjango===1.8\n")
-    (tmp_path / "package-lock.json").write_text(json.dumps({
-        "lockfileVersion": 3,
-        "packages": {"": {"name": "root"}, "node_modules/lodash": {"version": "4.17.4"}}}))
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {"": {"name": "root"}, "node_modules/lodash": {"version": "4.17.4"}},
+            }
+        )
+    )
     (tmp_path / "go.mod").write_text("module x\n\nrequire (\n\tgithub.com/foo/bar v1.2.3\n)\n")
     (tmp_path / "Gemfile.lock").write_text("GEM\n  specs:\n    rails (5.2.0)\n")
     deps = collect_dependencies(str(tmp_path))
     got = {(d.ecosystem, d.name, d.version) for d in deps}
     assert ("PyPI", "flask", "0.12.2") in got
-    assert ("PyPI", "django", "1.8") in got           # === exact pin
+    assert ("PyPI", "django", "1.8") in got  # === exact pin
     assert ("npm", "lodash", "4.17.4") in got
     assert ("Go", "github.com/foo/bar", "v1.2.3") in got
     assert ("RubyGems", "rails", "5.2.0") in got
@@ -56,11 +59,16 @@ def test_parsers_record_manifest_and_line(tmp_path):
 
 # ----------------------------------------------------------------------------- OSV match
 _FLASK_VULN = {
-    "id": "GHSA-562c-5r94-xh97", "aliases": ["CVE-2018-1000656"],
+    "id": "GHSA-562c-5r94-xh97",
+    "aliases": ["CVE-2018-1000656"],
     "summary": "Flask denial of service",
     "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"}],
-    "affected": [{"package": {"ecosystem": "PyPI", "name": "flask"},
-                  "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "0.12.3"}]}]}],
+    "affected": [
+        {
+            "package": {"ecosystem": "PyPI", "name": "flask"},
+            "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "0.12.3"}]}],
+        }
+    ],
     "database_specific": {"cwe_ids": ["CWE-400"]},
 }
 
@@ -79,16 +87,16 @@ def test_scan_sca_offline_is_a_noop(tmp_path):
 def test_scan_sca_online_emits_upgrade_finding(tmp_path):
     (tmp_path / "requirements.txt").write_text("Flask==0.12.2\nsafe-pkg==1.0.0\n")
     findings = scan_sca(str(tmp_path), "eng", online=True, fetch=_fetch_flask_only)
-    assert len(findings) == 1                         # only the vulnerable package
+    assert len(findings) == 1  # only the vulnerable package
     f = findings[0]
     assert f.vuln_class == "sca-known-vulnerability"
     assert f.severity == "high" and f.cvss.base_score == 7.5
     assert "CWE-400" in f.cwe
-    assert "0.12.3" in f.remediation.summary           # concrete upgrade target
+    assert "0.12.3" in f.remediation.summary  # concrete upgrade target
     assert f.remediation.type == "dependency_upgrade"
-    assert "CVE-2018-1000656" in f.description          # CVE id surfaced first
+    assert "CVE-2018-1000656" in f.description  # CVE id surfaced first
     assert f.affected_code.file == "requirements.txt"
-    assert not f.verification.validated                # advisory-tier, below oracle-confirmed
+    assert not f.verification.validated  # advisory-tier, below oracle-confirmed
     f.assert_consistent()
 
 
@@ -103,7 +111,7 @@ def test_scan_sca_recommends_highest_fix_across_advisories(tmp_path):
         return {"vulns": [_FLASK_VULN, v2]} if payload["package"]["name"] == "flask" else {"vulns": []}
 
     f = scan_sca(str(tmp_path), "eng", online=True, fetch=fetch)[0]
-    assert ">= 1.0.0" in f.remediation.summary          # upgrading to the max fix clears both
+    assert ">= 1.0.0" in f.remediation.summary  # upgrading to the max fix clears both
 
 
 def test_scan_sca_graceful_on_network_failure(tmp_path):

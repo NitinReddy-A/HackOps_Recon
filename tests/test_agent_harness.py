@@ -1,5 +1,7 @@
 """Agent-harness reliability: schema validation, self-repair, loop detection, coverage, no-miss."""
+
 from conftest import make_engagement
+
 from rampart.agents import DecisionGuard, MockBrain, action_signature, validate_decision
 
 
@@ -13,8 +15,8 @@ def test_validate_decision_accepts_well_formed():
 
 def test_validate_decision_rejects_malformed():
     assert not validate_decision("not a dict")[0]
-    assert not validate_decision({})[0]                                  # does nothing
-    assert not validate_decision({"action": {"method": "GET"}})[0]       # no path
+    assert not validate_decision({})[0]  # does nothing
+    assert not validate_decision({"action": {"method": "GET"}})[0]  # no path
     assert not validate_decision({"action": {"method": "DROP", "path": "/x"}})[0]
     assert not validate_decision({"action": {"path": "noslash"}})[0]
     assert not validate_decision({"verdict": "maybe"})[0]
@@ -68,23 +70,38 @@ def test_coverage_records_every_objective(tmp_path, vuln_server):
         "plan": [{"objectives": ["obj-one", "obj-two"]}],
         # obj-one concludes a finding; obj-two emits an invalid decision (harness must still record it)
         "explore": [
-            {"thought": "look", "action": {"method": "GET", "path": "/api/checkout",
-                                           "query": {"item": "1", "qty": "-5"}}},
-            {"conclude": {"title": "neg total", "vuln_class": "business-logic", "severity": "high",
-                          "endpoint_path": "/api/checkout", "description": "d", "impact": "i",
-                          "root_cause": "r", "steps": ["s"], "remediation_summary": "fix",
-                          "remediation_guidance": "g"}},
-            {"garbage": True}, {"garbage": True},   # obj-two: invalid x2 -> stopped-invalid
+            {
+                "thought": "look",
+                "action": {"method": "GET", "path": "/api/checkout", "query": {"item": "1", "qty": "-5"}},
+            },
+            {
+                "conclude": {
+                    "title": "neg total",
+                    "vuln_class": "business-logic",
+                    "severity": "high",
+                    "endpoint_path": "/api/checkout",
+                    "description": "d",
+                    "impact": "i",
+                    "root_cause": "r",
+                    "steps": ["s"],
+                    "remediation_summary": "fix",
+                    "remediation_guidance": "g",
+                }
+            },
+            {"garbage": True},
+            {"garbage": True},  # obj-two: invalid x2 -> stopped-invalid
         ],
         "critique": [
-            {"action": {"method": "GET", "path": "/api/checkout", "query": {"item": "1", "qty": "2"}},
-             "reason": "control"},
+            {
+                "action": {"method": "GET", "path": "/api/checkout", "query": {"item": "1", "qty": "2"}},
+                "reason": "control",
+            },
             {"verdict": "stands", "reason": "neg total is anomalous"},
         ],
     }
     eng = make_engagement(tmp_path, vuln_server.port)
     res = eng.run_agents(brain=MockBrain(script), confirmed_findings=[])
-    assert set(res.coverage) == {"obj-one", "obj-two"}          # BOTH objectives recorded — none missed
+    assert set(res.coverage) == {"obj-one", "obj-two"}  # BOTH objectives recorded — none missed
     assert res.coverage["obj-one"] == "agent-assessed"
     assert res.coverage["obj-two"] == "stopped-invalid"
     assert res.harness_stats["invalid"] >= 1

@@ -1,7 +1,9 @@
 """Coverage tests for the web/API classes added on top of BOLA — each proven both ways:
 confirmed on the vulnerable target, dropped by the independent oracle on the fixed target.
 """
+
 from conftest import make_engagement
+
 from rampart.schemas.finding import State
 
 
@@ -51,7 +53,9 @@ def test_fixed_target_confirms_nothing(tmp_path, fixed_server):
     eng = make_engagement(tmp_path, fixed_server.port)
     findings = eng.run_scan().findings
     confirmed = [f for f in findings if f.verification.validated]
-    assert not confirmed, f"fixed target must yield zero confirmed findings, got {[f.title for f in confirmed]}"
+    assert not confirmed, (
+        f"fixed target must yield zero confirmed findings, got {[f.title for f in confirmed]}"
+    )
     for cls in ("XSS", "SQLI", "OPEN_REDIRECT", "IDOR/BOLA"):
         assert _dropped(findings, cls), f"{cls} candidate should be dropped on the fixed target"
 
@@ -81,8 +85,17 @@ def test_hypotheses_cover_multiple_classes(tmp_path, vuln_server):
     eng = make_engagement(tmp_path, vuln_server.port)
     result = eng.run_scan()
     classes = {h["vuln_class"] for h in result.hypotheses}
-    assert {"IDOR/BOLA", "XSS", "SQLI", "OPEN_REDIRECT",
-            "SSRF", "CMDI", "PATH_TRAVERSAL", "BFLA", "EXCESSIVE_DATA"} <= classes
+    assert {
+        "IDOR/BOLA",
+        "XSS",
+        "SQLI",
+        "OPEN_REDIRECT",
+        "SSRF",
+        "CMDI",
+        "PATH_TRAVERSAL",
+        "BFLA",
+        "EXCESSIVE_DATA",
+    } <= classes
 
 
 # ---- confirmed findings never violate the trust invariant ----

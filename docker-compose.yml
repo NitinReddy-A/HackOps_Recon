@@ -4,7 +4,7 @@
 # the scope file and generated reports (under .rampart/) live on the host:
 #
 #   docker compose run --rm rampart \
-#     test --scope-file SECURITY.md --target http://host.docker.internal:8080 \
+#     test --scope-file rampart.scope.yaml --target http://host.docker.internal:8080 \
 #          --report html,md,json,sarif
 #
 # Or launch the local dashboard:
@@ -20,7 +20,7 @@ services:
     image: rampart:local
     working_dir: /work
     volumes:
-      # Mount the current directory so SECURITY.md is readable and reports are
+      # Mount the current directory so rampart.scope.yaml is readable and reports are
       # written back to the host at ./.rampart/reports/.
       - .:/work
     # Reach a target running on the host (Linux may need:

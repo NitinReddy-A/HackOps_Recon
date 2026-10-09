@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a new check, capability, or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the gap or the use case, not just the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Rampart to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - A new vulnerability class / check
+        - SCA / dependencies
+        - IaC / cloud / infra
+        - Auth / access control
+        - The agentic / orchestration layer
+        - Reporting / compliance
+        - Developer experience / docs
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How would a finding be proven?
+      description: >
+        Rampart only marks things `confirmed` when an independent oracle can re-derive the proof.
+        If you're proposing a new check, how could it be confirmed deterministically (probe +
+        negative control + reproductions)? "Not sure" is a fine answer — it helps us scope it.

@@ -32,7 +32,7 @@ rampart-scan:
     - pip install rampart-appsec    # or: pip install -e .
     - >
       python -m rampart test
-      --scope-file SECURITY.md
+      --scope-file rampart.scope.yaml
       --target "$RAMPART_TARGET"
       --report sarif,md,json
       --work-dir .rampart

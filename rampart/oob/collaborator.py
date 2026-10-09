@@ -1,4 +1,5 @@
 """The OOB collaborator server (stdlib only)."""
+
 from __future__ import annotations
 
 import secrets
@@ -41,8 +42,8 @@ class OOBCollaborator:
                 token = self.path.strip("/").split("/", 1)[0].split("?", 1)[0]
                 with collaborator._lock:
                     collaborator._hits.setdefault(token, []).append(
-                        {"at": time.time(), "path": self.path,
-                         "ua": self.headers.get("User-Agent", "")})
+                        {"at": time.time(), "path": self.path, "ua": self.headers.get("User-Agent", "")}
+                    )
                 body = b"rampart-oob-ok"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")

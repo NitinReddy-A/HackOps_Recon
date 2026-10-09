@@ -8,7 +8,8 @@ result ("proven at runtime AND located in source"). External SAST/SCA tools (Sem
 Trivy, gitleaks, pip-audit) plug in via the scanner-adapter framework and normalise to the same
 Finding shape.
 """
+
 from .scanner import scan_source
-from .secrets import scan_secrets, scan_dependencies
+from .secrets import scan_dependencies, scan_secrets
 
 __all__ = ["scan_source", "scan_secrets", "scan_dependencies"]

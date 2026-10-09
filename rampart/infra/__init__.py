@@ -13,6 +13,7 @@ Trust boundary: these sockets bypass Rampart's HTTP policy choke-point, so the c
 point :func:`scan_infra` at an already in-scope, authorized host:port (same contract as the
 gRPC / headless-browser engines). Passing a ``resolver`` + ``scope`` adds a fail-closed IP check.
 """
+
 from __future__ import annotations
 
 from .scanner import SENSITIVE_SERVICES, is_sensitive_port, scan_infra

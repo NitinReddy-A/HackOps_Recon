@@ -2,11 +2,12 @@
 
 Each test runs the real engagement against a throwaway, isolated demo target.
 """
+
 import os
 
 import pytest
-
 from conftest import make_engagement, write_engagement
+
 from rampart.engagement import Engagement, EngagementConfig
 from rampart.schemas.finding import Finding, State
 from rampart.schemas.scope import ScopeError
@@ -15,20 +16,24 @@ from rampart.schemas.scope import ScopeError
 # A1 — refuses to run without a valid, in-scope authorization
 def test_a1_refuses_out_of_scope_target(tmp_path, vuln_server):
     scope_file = write_engagement(tmp_path, vuln_server.port)
-    cfg = EngagementConfig(scope_file=scope_file, target="http://192.0.2.1:8080",  # not in scope
-                           work_dir=str(tmp_path / ".rampart"),
-                           openapi=str(tmp_path / "openapi.json"),
-                           appmodel_seed=str(tmp_path / "seed.json"))
+    cfg = EngagementConfig(
+        scope_file=scope_file,
+        target="http://192.0.2.1:8080",  # not in scope
+        work_dir=str(tmp_path / ".rampart"),
+        openapi=str(tmp_path / "openapi.json"),
+        appmodel_seed=str(tmp_path / "seed.json"),
+    )
     with pytest.raises(ScopeError):
         Engagement(cfg)
 
 
 def test_a1_refuses_invalid_scope(tmp_path):
-    bad = tmp_path / "SECURITY.md"
+    bad = tmp_path / "rampart.scope.yaml"
     bad.write_text("kind: EngagementScope\nscope: {}\n", encoding="utf-8")
     (tmp_path / "secrets.json").write_text("{}", encoding="utf-8")
-    cfg = EngagementConfig(scope_file=str(bad), target="http://127.0.0.1:8080",
-                           work_dir=str(tmp_path / ".rampart"))
+    cfg = EngagementConfig(
+        scope_file=str(bad), target="http://127.0.0.1:8080", work_dir=str(tmp_path / ".rampart")
+    )
     with pytest.raises(ScopeError):
         Engagement(cfg)
 
@@ -57,7 +62,7 @@ def test_a4_independent_validation(tmp_path, vuln_server):
     result = eng.run_scan()
     idor = next(f for f in result.findings if f.vuln_class == "IDOR/BOLA")
     assert idor.verification.validated is True
-    assert idor.verification.validator == "validator"        # separation of duties
+    assert idor.verification.validator == "validator"  # separation of duties
     assert idor.verification.reproductions >= 2
     assert idor.confidence == "confirmed"
     assert idor.state == State.VALIDATED
@@ -104,11 +109,14 @@ def test_a7_retest_flips_to_fixed(tmp_path, vuln_server, fixed_server):
     fixed_cfg_dir = tmp_path / "fixedcfg"
     fixed_cfg_dir.mkdir()
     scope_file = write_engagement(fixed_cfg_dir, fixed_server.port)
-    cfg = EngagementConfig(scope_file=scope_file, target=f"http://127.0.0.1:{fixed_server.port}",
-                           work_dir=eng.cfg.work_dir,
-                           openapi=str(fixed_cfg_dir / "openapi.json"),
-                           appmodel_seed=str(fixed_cfg_dir / "seed.json"),
-                           application="demo-shop-api")
+    cfg = EngagementConfig(
+        scope_file=scope_file,
+        target=f"http://127.0.0.1:{fixed_server.port}",
+        work_dir=eng.cfg.work_dir,
+        openapi=str(fixed_cfg_dir / "openapi.json"),
+        appmodel_seed=str(fixed_cfg_dir / "seed.json"),
+        application="demo-shop-api",
+    )
     eng_fixed = Engagement(cfg)
     results = eng_fixed.retest()
     assert results and results[0][1] == "Fixed"
@@ -118,10 +126,8 @@ def test_a7_retest_flips_to_fixed(tmp_path, vuln_server, fixed_server):
 def test_a8_fp_gate_drops_on_fixed(tmp_path, fixed_server):
     eng = make_engagement(tmp_path, fixed_server.port)
     result = eng.run_scan()
-    confirmed_idor = [f for f in result.findings
-                      if f.vuln_class == "IDOR/BOLA" and f.verification.validated]
-    dropped_idor = [f for f in result.findings
-                    if f.vuln_class == "IDOR/BOLA" and f.state == State.DROPPED]
+    confirmed_idor = [f for f in result.findings if f.vuln_class == "IDOR/BOLA" and f.verification.validated]
+    dropped_idor = [f for f in result.findings if f.vuln_class == "IDOR/BOLA" and f.state == State.DROPPED]
     assert not confirmed_idor, "must not confirm IDOR on a patched target"
     assert dropped_idor, "IDOR candidate should be dropped by the FP gate"
 

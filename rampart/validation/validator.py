@@ -7,6 +7,7 @@ for the finding's class in the registry, and re-derives the proof itself from a 
 Only the Validator may set ``confidence = confirmed``; a class with no registered oracle can
 never be confirmed (fail-closed).
 """
+
 from __future__ import annotations
 
 from ..runner import ProbeRunner
@@ -25,9 +26,17 @@ class Validator:
         self.scheme = scheme
 
     def _runner(self, phase: str, profile: str = "validator") -> ProbeRunner:
-        return ProbeRunner(self.pipeline, self.evidence, self.pipeline.engagement_id,
-                           self.host, self.port, self.scheme,
-                           actor_role="validator", actor_profile=profile, phase=phase)
+        return ProbeRunner(
+            self.pipeline,
+            self.evidence,
+            self.pipeline.engagement_id,
+            self.host,
+            self.port,
+            self.scheme,
+            actor_role="validator",
+            actor_profile=profile,
+            phase=phase,
+        )
 
     def validate(self, finding: Finding, hyp: dict, reproductions: int = 2) -> bool:
         oracle = get_oracle(finding.vuln_class)
@@ -37,9 +46,13 @@ class Validator:
             finding.status = "dropped"
             finding.confidence = "tentative"
             finding.verification = Verification(
-                method="no-oracle", validated=False, validated_at=now_iso(),
-                validator="validator", false_positive_checks=[f"no oracle registered for {finding.vuln_class!r}"],
-                confidence_score=0.0)
+                method="no-oracle",
+                validated=False,
+                validated_at=now_iso(),
+                validator="validator",
+                false_positive_checks=[f"no oracle registered for {finding.vuln_class!r}"],
+                confidence_score=0.0,
+            )
             finding.assert_consistent()
             return False
 
@@ -55,7 +68,7 @@ class Validator:
                 method="active-exploit-replay",
                 validated=True,
                 validated_at=now_iso(),
-                validator="validator",   # a component distinct from the discoverer
+                validator="validator",  # a component distinct from the discoverer
                 independent_reproduction=True,
                 reproductions=verdict.reproductions,
                 false_positive_checks=verdict.reasons + verdict.false_positive_checks,
@@ -67,8 +80,11 @@ class Validator:
             finding.confidence = "tentative"
             finding.status = "dropped"
             finding.verification = Verification(
-                method="active-exploit-replay", validated=False, validated_at=now_iso(),
-                validator="validator", independent_reproduction=False,
+                method="active-exploit-replay",
+                validated=False,
+                validated_at=now_iso(),
+                validator="validator",
+                independent_reproduction=False,
                 reproductions=verdict.reproductions,
                 false_positive_checks=verdict.reasons + verdict.false_positive_checks,
                 confidence_score=0.0,

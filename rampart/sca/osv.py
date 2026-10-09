@@ -10,6 +10,7 @@ Two deliberate design choices:
   * Querying OSV sends package *names/versions* to an external service, so the engagement only does
     it when the operator opts in (``--sca-online``); offline, SCA still inventories dependencies.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,17 +24,19 @@ def http_fetch(url: str, payload: dict, timeout: float = 15.0) -> dict | None:
     """Default network fetch: POST JSON to OSV, return parsed JSON, or None on any failure."""
     try:
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="POST",
-                                     headers={"Content-Type": "application/json",
-                                              "User-Agent": _USER_AGENT})
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json", "User-Agent": _USER_AGENT},
+        )
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed OSV host
             return json.loads(resp.read().decode("utf-8"))
     except Exception:  # noqa: BLE001 - SCA must degrade gracefully, never crash a scan
         return None
 
 
-def query_package(ecosystem: str, name: str, version: str, fetch=None,
-                  timeout: float = 15.0) -> list[dict]:
+def query_package(ecosystem: str, name: str, version: str, fetch=None, timeout: float = 15.0) -> list[dict]:
     """Return the list of OSV advisory dicts affecting ``name@version`` (empty on miss/error).
 
     ``fetch`` is the network seam, called as ``fetch(url, payload, timeout) -> dict | None``.
@@ -104,7 +107,7 @@ def affected_symbols(vuln: dict, ecosystem: str, name: str) -> list[str]:
             if path and not imp.get("symbols"):
                 syms.append(path)
         ds = aff.get("database_specific", {}) or {}
-        for s in (ds.get("affected_functions") or ds.get("symbols") or []):
+        for s in ds.get("affected_functions") or ds.get("symbols") or []:
             if isinstance(s, str):
                 syms.append(s)
     return list(dict.fromkeys(syms))

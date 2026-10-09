@@ -11,6 +11,7 @@ Usage:
 
 Everything runs against a throwaway target we own; there is no route to any real asset.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,9 +54,20 @@ GROUND_TRUTH = {
     "fixed": set(),
 }
 
-_PATH_KEYS = ("/api/reports/orders", "/api/orders/", "/api/search", "/api/products",
-              "/api/go", "/api/fetch", "/api/ping", "/api/file", "/api/profile",
-              "/api/greet", "/api/me", "/api/reset")
+_PATH_KEYS = (
+    "/api/reports/orders",
+    "/api/orders/",
+    "/api/search",
+    "/api/products",
+    "/api/go",
+    "/api/fetch",
+    "/api/ping",
+    "/api/file",
+    "/api/profile",
+    "/api/greet",
+    "/api/me",
+    "/api/reset",
+)
 
 
 def _pathkey(url: str) -> str:
@@ -63,6 +75,7 @@ def _pathkey(url: str) -> str:
         if key in url:
             return key
     return "/"
+
 
 SCOPE_TMPL = """apiVersion: security-agent/v1
 kind: EngagementScope
@@ -114,16 +127,18 @@ def _run_once(mode, intel):
     proc, port = _start_target(fixed)
     tmp = tempfile.mkdtemp(prefix=f"bench-{mode}-")
     try:
-        scope_path = os.path.join(tmp, "SECURITY.md")
+        scope_path = os.path.join(tmp, "rampart.scope.yaml")
         with open(scope_path, "w", encoding="utf-8") as fh:
             fh.write(SCOPE_TMPL.format(port=port))
         cfg = EngagementConfig(
-            scope_file=scope_path, target=f"http://127.0.0.1:{port}",
+            scope_file=scope_path,
+            target=f"http://127.0.0.1:{port}",
             work_dir=os.path.join(tmp, ".rampart"),
             secrets_file=os.path.join(DEMO_DIR, "secrets.json"),
             openapi=os.path.join(DEMO_DIR, "openapi.json"),
             appmodel_seed=os.path.join(DEMO_DIR, "appmodel_seed.json"),
-            application="demo-shop-api", intel=intel,
+            application="demo-shop-api",
+            intel=intel,
         )
         t0 = time.monotonic()
         eng = Engagement(cfg)
@@ -134,12 +149,17 @@ def _run_once(mode, intel):
         tp = len(confirmed & expected)
         fp = len(confirmed - expected)
         fn = len(expected - confirmed)
-        return {"mode": mode, "tp": tp, "fp": fp, "fn": fn,
-                "confirmed": sorted(f"{a}@{b}" for a, b in confirmed),
-                "expected": sorted(f"{a}@{b}" for a, b in expected),
-                "elapsed_s": round(elapsed, 3),
-                "cost_usd": eng.budget.snapshot()["usd_spent"],
-                "tokens": eng.budget.snapshot()["tokens_used"]}
+        return {
+            "mode": mode,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "confirmed": sorted(f"{a}@{b}" for a, b in confirmed),
+            "expected": sorted(f"{a}@{b}" for a, b in expected),
+            "elapsed_s": round(elapsed, 3),
+            "cost_usd": eng.budget.snapshot()["usd_spent"],
+            "tokens": eng.budget.snapshot()["tokens_used"],
+        }
     finally:
         proc.terminate()
 
@@ -164,9 +184,14 @@ def main():
     mttf = round(sum(r["elapsed_s"] for r in runs) / len(runs), 3)
 
     summary = {
-        "intel": args.intel, "runs": args.runs,
-        "true_positives": tp, "false_positives": fp, "false_negatives": fn,
-        "precision": round(precision, 4), "recall": round(recall, 4), "f1": round(f1, 4),
+        "intel": args.intel,
+        "runs": args.runs,
+        "true_positives": tp,
+        "false_positives": fp,
+        "false_negatives": fn,
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
         "mean_time_to_finding_s": mttf,
         "total_cost_usd": round(sum(r["cost_usd"] for r in runs), 4),
         "per_run": runs,
@@ -177,9 +202,9 @@ def main():
     print("=" * 60)
     print(f"  RAMPART BENCHMARK  (intel={args.intel}, runs={args.runs})")
     print("=" * 60)
-    print(f"  Precision : {precision*100:5.1f}%   (FP={fp})")
-    print(f"  Recall    : {recall*100:5.1f}%   (FN={fn})")
-    print(f"  F1        : {f1*100:5.1f}%")
+    print(f"  Precision : {precision * 100:5.1f}%   (FP={fp})")
+    print(f"  Recall    : {recall * 100:5.1f}%   (FN={fn})")
+    print(f"  F1        : {f1 * 100:5.1f}%")
     print(f"  TP/FP/FN  : {tp}/{fp}/{fn}")
     print(f"  MTT-find  : {mttf}s   cost=${summary['total_cost_usd']}")
     print("-" * 60)

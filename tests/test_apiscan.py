@@ -8,6 +8,7 @@ field-suggestion / batching behaviour deterministically.
 The fake endpoints mirror rampart.schemas.appmodel.Endpoint (.method/.path/.parameters/
 .auth_required), so the scanner works unchanged against the real application model.
 """
+
 from dataclasses import dataclass, field
 
 from rampart.apiscan import api_scan, graphql_depth_scan, method_tampering_scan
@@ -25,6 +26,7 @@ class FakeOutcome:
 @dataclass
 class FakeEndpoint:
     """Mirrors rampart.schemas.appmodel.Endpoint's relevant fields."""
+
     method: str
     path: str
     parameters: list = field(default_factory=list)
@@ -36,8 +38,9 @@ class FakeAppModel:
         self.endpoints = endpoints
 
 
-_ADMIN_BODY = ('{"section":"admin-dashboard","users":['
-               '{"username":"root","is_admin":true,"email":"root@corp"}]}')
+_ADMIN_BODY = (
+    '{"section":"admin-dashboard","users":[{"username":"root","is_admin":true,"email":"root@corp"}]}'
+)
 
 
 class FakeRunner:
@@ -60,7 +63,7 @@ class FakeRunner:
                 return FakeOutcome(True, 200, _ADMIN_BODY)
             return FakeOutcome(True, 403, "Forbidden")
         if path == "/api/secure":
-            return FakeOutcome(True, 403, "Forbidden")     # always protected, no bypass
+            return FakeOutcome(True, 403, "Forbidden")  # always protected, no bypass
         return FakeOutcome(True, 404, "Not Found")
 
     def post(self, path, json_body=None, session=None, headers=None, **kw):
@@ -71,19 +74,21 @@ class FakeRunner:
 
     def _graphql(self, path, body):
         secure = "secure" in path.lower()
-        if isinstance(body, list):                          # array batching
+        if isinstance(body, list):  # array batching
             if secure:
                 return FakeOutcome(True, 400, '{"errors":[{"message":"Batching is not allowed."}]}')
             return FakeOutcome(True, 200, '{"data":[{"__typename":"Query"},{"__typename":"Query"}]}')
         q = str((body or {}).get("query", ""))
-        if "uesr" in q:                                     # misspelled field
+        if "uesr" in q:  # misspelled field
             if secure:
-                return FakeOutcome(True, 200,
-                                   '{"errors":[{"message":"Cannot query field \\"uesr\\"."}]}')
-            return FakeOutcome(True, 200,
-                               '{"errors":[{"message":"Cannot query field \\"uesr\\" on type '
-                               '\\"Query\\". Did you mean \\"user\\"?"}]}')
-        if q.count(":") >= 2:                               # multi-alias amplification
+                return FakeOutcome(True, 200, '{"errors":[{"message":"Cannot query field \\"uesr\\"."}]}')
+            return FakeOutcome(
+                True,
+                200,
+                '{"errors":[{"message":"Cannot query field \\"uesr\\" on type '
+                '\\"Query\\". Did you mean \\"user\\"?"}]}',
+            )
+        if q.count(":") >= 2:  # multi-alias amplification
             if secure:
                 return FakeOutcome(True, 400, '{"errors":[{"message":"Too many aliases."}]}')
             return FakeOutcome(True, 200, '{"data":{"a0":"Query","a1":"Query"}}')
@@ -91,10 +96,12 @@ class FakeRunner:
 
 
 def _admin_model():
-    return FakeAppModel([
-        FakeEndpoint("GET", "/api/admin", auth_required=True),
-        FakeEndpoint("GET", "/api/secure", auth_required=True),
-    ])
+    return FakeAppModel(
+        [
+            FakeEndpoint("GET", "/api/admin", auth_required=True),
+            FakeEndpoint("GET", "/api/secure", auth_required=True),
+        ]
+    )
 
 
 def _gql_model(path="/graphql"):
@@ -127,7 +134,7 @@ def test_method_tampering_confirms_verb_bypass():
 
 # --------------------------------------------------------------- (b) secured -> no finding
 def test_method_tampering_secure_endpoint_no_finding():
-    runner = FakeRunner(admin_bypass=False)      # override never flips the decision
+    runner = FakeRunner(admin_bypass=False)  # override never flips the decision
     findings = method_tampering_scan(runner, _admin_model(), "http://t", "demo")
     assert [f for f in findings if f.vuln_class == "HTTP_METHOD_TAMPERING"] == []
 
@@ -180,11 +187,13 @@ def test_active_mode_issues_gated_post_probes():
 # --------------------------------------------------------------- api_scan combines both
 def test_api_scan_combines_both_scanners():
     runner = FakeRunner(admin_bypass=True)
-    model = FakeAppModel([
-        FakeEndpoint("GET", "/api/admin", auth_required=True),
-        FakeEndpoint("GET", "/api/secure", auth_required=True),
-        FakeEndpoint("POST", "/graphql", auth_required=False),
-    ])
+    model = FakeAppModel(
+        [
+            FakeEndpoint("GET", "/api/admin", auth_required=True),
+            FakeEndpoint("GET", "/api/secure", auth_required=True),
+            FakeEndpoint("POST", "/graphql", auth_required=False),
+        ]
+    )
     findings = api_scan(runner, model, "http://t", "demo")
     classes = sorted({f.vuln_class for f in findings})
     assert classes == ["GRAPHQL_BATCHING", "GRAPHQL_FIELD_SUGGESTION", "HTTP_METHOD_TAMPERING"]
@@ -197,10 +206,12 @@ def test_api_scan_combines_both_scanners():
 # --------------------------------------------------------------- confirmed tier is honest
 def test_only_method_tampering_is_confirmed_graphql_is_firm():
     runner = FakeRunner(admin_bypass=True)
-    model = FakeAppModel([
-        FakeEndpoint("GET", "/api/admin", auth_required=True),
-        FakeEndpoint("POST", "/graphql", auth_required=False),
-    ])
+    model = FakeAppModel(
+        [
+            FakeEndpoint("GET", "/api/admin", auth_required=True),
+            FakeEndpoint("POST", "/graphql", auth_required=False),
+        ]
+    )
     findings = api_scan(runner, model, "http://t", "demo")
     confirmed = {f.vuln_class for f in findings if f.confidence == "confirmed"}
     firm = {f.vuln_class for f in findings if f.confidence == "firm"}

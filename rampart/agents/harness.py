@@ -11,6 +11,7 @@ layer is accurate and misses nothing it set out to test:
   impossible) and still pass the policy choke-point; budget/step caps are enforced here too.
 * **No-miss coverage** — every planned objective gets a recorded outcome; unreached ones are surfaced.
 """
+
 from __future__ import annotations
 
 _METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")

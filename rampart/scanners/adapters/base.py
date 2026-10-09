@@ -13,6 +13,7 @@ rules keep this safe and honest:
   read only the provided repo. External tools run outside the policy choke-point, so they are
   opt-in (``--scanners``), never on by default.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -37,9 +38,9 @@ def docker_available() -> bool:
 
 class ScannerAdapter:
     name = "scanner"
-    binary = ""                      # the executable we look for on PATH
-    category = "dast"                # dast | sast | sca | network | tls
-    network = False                  # True if it sends traffic to the target
+    binary = ""  # the executable we look for on PATH
+    category = "dast"  # dast | sast | sca | network | tls
+    network = False  # True if it sends traffic to the target
     install_hint = ""
     help_uri = ""
 
@@ -73,31 +74,56 @@ class ScannerAdapter:
     def _exec(self, cmd: list[str]) -> subprocess.CompletedProcess:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
 
-    def _external_finding(self, *, engagement_id, application, target_url, title, severity,
-                          vuln_class, cwe, description, endpoint_url="", help_uri="",
-                          tags=None, rule_id="") -> Finding:
+    def _external_finding(
+        self,
+        *,
+        engagement_id,
+        application,
+        target_url,
+        title,
+        severity,
+        vuln_class,
+        cwe,
+        description,
+        endpoint_url="",
+        help_uri="",
+        tags=None,
+        rule_id="",
+    ) -> Finding:
         f = Finding(
             engagement_id=engagement_id,
             title=title,
             vuln_class=vuln_class,
             severity=severity if severity in ("info", "low", "medium", "high", "critical") else "medium",
-            confidence="firm",                         # NOT confirmed — no independent oracle re-derivation
+            confidence="firm",  # NOT confirmed — no independent oracle re-derivation
             state=State.EVIDENCE_FOUND,
             cwe=list(cwe or []),
-            asset={"type": self.category, "application": application,
-                   "environment": "authorized", "target": target_url},
+            asset={
+                "type": self.category,
+                "application": application,
+                "environment": "authorized",
+                "target": target_url,
+            },
             endpoint={"method": "GET", "url": endpoint_url or target_url, "auth_required": False},
             description=description,
-            reproduction=Reproduction(prerequisites=[f"{self.name} installed"],
-                                      steps=[f"Run {self.name} against the authorized target"],
-                                      deterministic=False),
+            reproduction=Reproduction(
+                prerequisites=[f"{self.name} installed"],
+                steps=[f"Run {self.name} against the authorized target"],
+                deterministic=False,
+            ),
             references=[help_uri] if help_uri else [],
-            verification=Verification(method=f"external-scanner:{self.name}", validated=False,
-                                      validated_at=now_iso(), validator=self.name,
-                                      independent_reproduction=False, reproductions=0,
-                                      false_positive_checks=[f"reported by {self.name}; NOT independently "
-                                                             "validated by a Rampart oracle"],
-                                      confidence_score=0.5),
+            verification=Verification(
+                method=f"external-scanner:{self.name}",
+                validated=False,
+                validated_at=now_iso(),
+                validator=self.name,
+                independent_reproduction=False,
+                reproductions=0,
+                false_positive_checks=[
+                    f"reported by {self.name}; NOT independently validated by a Rampart oracle"
+                ],
+                confidence_score=0.5,
+            ),
             dedupe_key=f"{application}:{self.name}:{rule_id or title}",
             tags=["external-scanner", self.name] + list(tags or []),
         )

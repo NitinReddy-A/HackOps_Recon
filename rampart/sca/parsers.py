@@ -5,6 +5,7 @@ version *ranges* (e.g. ``^1.2``) can't be matched to a specific CVE, so we parse
 pinned forms that resolve to one version. Each parser returns a list of ``Dep`` records tagged with
 the OSV ecosystem, the manifest file, and the line number for the finding's ``affected_code``.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,10 +16,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Dep:
-    ecosystem: str      # OSV ecosystem: PyPI | npm | Go | Maven | RubyGems | crates.io
+    ecosystem: str  # OSV ecosystem: PyPI | npm | Go | Maven | RubyGems | crates.io
     name: str
     version: str
-    manifest: str       # repo-relative manifest path
+    manifest: str  # repo-relative manifest path
     line: int = 0
 
     def key(self) -> tuple:
@@ -33,7 +34,7 @@ def _rel(path: str, repo: str) -> str:
 def parse_requirements(path: str, repo: str) -> list[Dep]:
     deps = []
     try:
-        lines = open(path, "r", encoding="utf-8", errors="ignore").read().splitlines()
+        lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
     except OSError:
         return deps
     for i, raw in enumerate(lines, 1):
@@ -50,7 +51,7 @@ def parse_requirements(path: str, repo: str) -> list[Dep]:
 def parse_pipfile_lock(path: str, repo: str) -> list[Dep]:
     deps = []
     try:
-        data = json.load(open(path, "r", encoding="utf-8", errors="ignore"))
+        data = json.load(open(path, encoding="utf-8", errors="ignore"))
     except (OSError, ValueError):
         return deps
     rel = _rel(path, repo)
@@ -67,7 +68,7 @@ def parse_poetry_lock(path: str, repo: str) -> list[Dep]:
     # Light TOML reader (avoids a tomllib/py-version dependency): walk [[package]] blocks.
     deps = []
     try:
-        lines = open(path, "r", encoding="utf-8", errors="ignore").read().splitlines()
+        lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
     except OSError:
         return deps
     rel = _rel(path, repo)
@@ -102,7 +103,7 @@ def parse_poetry_lock(path: str, repo: str) -> list[Dep]:
 def parse_package_lock(path: str, repo: str) -> list[Dep]:
     deps = []
     try:
-        data = json.load(open(path, "r", encoding="utf-8", errors="ignore"))
+        data = json.load(open(path, encoding="utf-8", errors="ignore"))
     except (OSError, ValueError):
         return deps
     rel = _rel(path, repo)
@@ -125,6 +126,7 @@ def parse_package_lock(path: str, repo: str) -> list[Dep]:
         for name, meta in (d or {}).items():
             _add(name, (meta or {}).get("version"))
             _walk((meta or {}).get("dependencies"))
+
     _walk(data.get("dependencies"))
     return deps
 
@@ -133,7 +135,7 @@ def parse_package_lock(path: str, repo: str) -> list[Dep]:
 def parse_go_sum(path: str, repo: str) -> list[Dep]:
     deps = []
     try:
-        lines = open(path, "r", encoding="utf-8", errors="ignore").read().splitlines()
+        lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
     except OSError:
         return deps
     rel = _rel(path, repo)
@@ -151,7 +153,7 @@ def parse_go_sum(path: str, repo: str) -> list[Dep]:
 def parse_go_mod(path: str, repo: str) -> list[Dep]:
     deps = []
     try:
-        lines = open(path, "r", encoding="utf-8", errors="ignore").read().splitlines()
+        lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
     except OSError:
         return deps
     rel = _rel(path, repo)
@@ -165,7 +167,7 @@ def parse_go_mod(path: str, repo: str) -> list[Dep]:
             in_block = False
             continue
         if s.startswith("require ") and not s.startswith("require ("):
-            body = s[len("require "):].strip()
+            body = s[len("require ") :].strip()
         elif in_block:
             body = s
         else:
@@ -180,7 +182,7 @@ def parse_go_mod(path: str, repo: str) -> list[Dep]:
 def parse_gemfile_lock(path: str, repo: str) -> list[Dep]:
     deps = []
     try:
-        lines = open(path, "r", encoding="utf-8", errors="ignore").read().splitlines()
+        lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
     except OSError:
         return deps
     rel = _rel(path, repo)
@@ -196,7 +198,7 @@ def parse_gemfile_lock(path: str, repo: str) -> list[Dep]:
 def parse_cargo_lock(path: str, repo: str) -> list[Dep]:
     deps = []
     try:
-        lines = open(path, "r", encoding="utf-8", errors="ignore").read().splitlines()
+        lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
     except OSError:
         return deps
     rel = _rel(path, repo)
@@ -228,6 +230,7 @@ def parse_cargo_lock(path: str, repo: str) -> list[Dep]:
 # --------------------------------------------------------------------------- Maven
 def parse_pom(path: str, repo: str) -> list[Dep]:
     import xml.etree.ElementTree as ET
+
     deps = []
     try:
         tree = ET.parse(path)

@@ -18,6 +18,7 @@ Configuration is via environment variables (never on the command line):
 
 Dependency-free (stdlib ``urllib``). Falls back to the deterministic provider on any error.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,10 @@ import urllib.request
 
 from .llm_base import LLMProvider
 
-_SYSTEM = ("You are a careful application-security analyst assisting an AUTHORIZED, "
-           "non-destructive assessment. Reply with exactly one JSON object and nothing else.")
+_SYSTEM = (
+    "You are a careful application-security analyst assisting an AUTHORIZED, "
+    "non-destructive assessment. Reply with exactly one JSON object and nothing else."
+)
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -36,8 +39,9 @@ class OpenAICompatProvider(LLMProvider):
 
     def __init__(self, budget=None, base_url=None, model=None, api_key=None, timeout: float = 60.0):
         super().__init__(budget=budget)
-        self.base_url = (base_url or os.environ.get("RAMPART_LLM_BASE_URL")
-                         or "https://api.openai.com/v1").rstrip("/")
+        self.base_url = (
+            base_url or os.environ.get("RAMPART_LLM_BASE_URL") or "https://api.openai.com/v1"
+        ).rstrip("/")
         self.model = model or os.environ.get("RAMPART_LLM_MODEL") or "gpt-4o-mini"
         if api_key is None:
             api_key = os.environ.get("RAMPART_LLM_API_KEY")
@@ -48,16 +52,19 @@ class OpenAICompatProvider(LLMProvider):
         self.timeout = timeout
 
     def _complete(self, prompt: str) -> str | None:
-        payload = json.dumps({
-            "model": self.model,
-            "temperature": 0,
-            "messages": [{"role": "system", "content": _SYSTEM},
-                         {"role": "user", "content": prompt}],
-        }).encode()
+        payload = json.dumps(
+            {
+                "model": self.model,
+                "temperature": 0,
+                "messages": [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": prompt}],
+            }
+        ).encode()
         req = urllib.request.Request(
-            f"{self.base_url}/chat/completions", data=payload, method="POST",
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {self.api_key}"})
+            f"{self.base_url}/chat/completions",
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+        )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8", errors="replace"))

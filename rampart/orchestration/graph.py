@@ -1,11 +1,13 @@
 """The DAG task graph + a bounded, concurrent scheduler with dynamic task spawning."""
+
 from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from ..util import gen_id
 
@@ -13,18 +15,19 @@ from ..util import gen_id
 @dataclass
 class TaskOutcome:
     """A task may return a plain value, or a TaskOutcome carrying newly-spawned child tasks."""
+
     value: Any = None
-    spawn: list = field(default_factory=list)   # list[Task] added to the graph dynamically
+    spawn: list = field(default_factory=list)  # list[Task] added to the graph dynamically
 
 
 @dataclass
 class Task:
     name: str
-    run: Callable[[dict], Any]         # ctx = {dep_id: dep_value}; returns value or TaskOutcome
+    run: Callable[[dict], Any]  # ctx = {dep_id: dep_value}; returns value or TaskOutcome
     deps: list = field(default_factory=list)
     kind: str = "agent"
     id: str = ""
-    status: str = "pending"            # pending | running | done | error
+    status: str = "pending"  # pending | running | done | error
     value: Any = None
     error: str = ""
     started: float = 0.0
@@ -37,10 +40,10 @@ class Task:
 
 @dataclass
 class GraphResult:
-    tasks: dict = field(default_factory=dict)      # id -> Task
-    order: list = field(default_factory=list)      # completion order (ids)
-    values: dict = field(default_factory=dict)     # id -> value
-    errors: dict = field(default_factory=dict)     # id -> error
+    tasks: dict = field(default_factory=dict)  # id -> Task
+    order: list = field(default_factory=list)  # completion order (ids)
+    values: dict = field(default_factory=dict)  # id -> value
+    errors: dict = field(default_factory=dict)  # id -> error
     max_concurrency: int = 0
     duration_s: float = 0.0
 
@@ -87,7 +90,7 @@ def run_graph(graph: TaskGraph, max_workers: int = 16, on_event=None) -> GraphRe
     """
     result = GraphResult(tasks=graph.tasks)
     t0 = time.monotonic()
-    inflight = {}          # future -> task
+    inflight = {}  # future -> task
     peak = 0
 
     def _submit(executor, task):

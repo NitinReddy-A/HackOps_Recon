@@ -1,4 +1,5 @@
 """Corpus scorer — the reusable precision/recall scoring used for external fixtures."""
+
 import os
 import sys
 
@@ -9,9 +10,16 @@ from rampart.schemas.finding import Finding, State, Verification  # noqa: E402
 
 
 def _confirmed(vuln_class, url):
-    return Finding(engagement_id="e", title=vuln_class, vuln_class=vuln_class, severity="high",
-                   confidence="confirmed", state=State.VALIDATED, endpoint={"url": url},
-                   verification=Verification(method="m", validated=True, validator="v"))
+    return Finding(
+        engagement_id="e",
+        title=vuln_class,
+        vuln_class=vuln_class,
+        severity="high",
+        confidence="confirmed",
+        state=State.VALIDATED,
+        endpoint={"url": url},
+        verification=Verification(method="m", validated=True, validator="v"),
+    )
 
 
 def test_path_key_matches_substring():
@@ -38,7 +46,12 @@ def test_score_counts_missed_and_unexpected():
 def test_score_ignores_external_and_unvalidated():
     f_ext = _confirmed("XSS", "http://h/api/search")
     f_ext.tags = ["external-scanner"]
-    f_unval = Finding(engagement_id="e", title="x", vuln_class="XSS", endpoint={"url": "http://h/api/search"},
-                      verification=Verification(validated=False))
+    f_unval = Finding(
+        engagement_id="e",
+        title="x",
+        vuln_class="XSS",
+        endpoint={"url": "http://h/api/search"},
+        verification=Verification(validated=False),
+    )
     r = score([f_ext, f_unval], [["XSS", "/api/search"]], ["/api/search"])
-    assert r["tp"] == 0 and r["fn"] == 1   # only oracle-confirmed, non-external findings count
+    assert r["tp"] == 0 and r["fn"] == 1  # only oracle-confirmed, non-external findings count

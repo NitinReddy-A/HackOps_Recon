@@ -4,6 +4,7 @@ Fail-closed: if the log cannot be written, the caller must treat the action as d
 (the policy pipeline enforces this). The chain lets a reviewer reconstruct *why* any
 action was permitted and detect tampering.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,7 @@ class AuditLog:
         if not os.path.exists(self.path):
             return GENESIS_HASH
         last = None
-        with open(self.path, "r", encoding="utf-8") as fh:
+        with open(self.path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if line:
@@ -59,7 +60,7 @@ class AuditLog:
         if not os.path.exists(self.path):
             return []
         out = []
-        with open(self.path, "r", encoding="utf-8") as fh:
+        with open(self.path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if line:

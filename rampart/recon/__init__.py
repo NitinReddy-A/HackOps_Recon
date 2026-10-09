@@ -5,6 +5,7 @@ other action (so it can never leave scope), extracting endpoints, parameters and
 technology fingerprint. Its output augments the application model, so the hypothesis/worker
 layer works on real apps, not only spec-described ones.
 """
-from .crawler import CrawlResult, Crawler, merge_into_model
+
+from .crawler import Crawler, CrawlResult, merge_into_model
 
 __all__ = ["Crawler", "CrawlResult", "merge_into_model"]

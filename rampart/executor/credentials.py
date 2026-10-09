@@ -5,6 +5,7 @@ secrets are referenced by ``secret_ref`` (e.g. ``vault://eng/user_a``) and resol
 For the MVP demo we ship a file-backed provider; a real deployment backs this with a
 KMS/secrets manager. Secrets are never written to the audit log or evidence.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,7 +37,7 @@ class FileSecretsProvider(SecretsProvider):
         self.path = path
         if not os.path.exists(path):
             raise FileNotFoundError(f"secrets file not found: {path}")
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             self._m = json.load(fh)
 
     def resolve(self, secret_ref: str) -> dict:

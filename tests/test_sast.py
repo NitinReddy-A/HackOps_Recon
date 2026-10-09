@@ -1,7 +1,9 @@
 """White-box SAST / SCA + SAST<->DAST correlation + isolated scan modes."""
+
 import os
 
 from conftest import write_engagement
+
 from rampart.engagement import Engagement, EngagementConfig
 from rampart.sast import scan_secrets, scan_source
 
@@ -27,10 +29,16 @@ def test_secret_scan_finds_hardcoded_key():
 
 def _eng(tmp_path, port, **over):
     scope = write_engagement(tmp_path, port)
-    cfg = EngagementConfig(scope_file=scope, target=f"http://127.0.0.1:{port}",
-                           work_dir=str(tmp_path / ".rampart"),
-                           openapi=str(tmp_path / "openapi.json"), appmodel_seed=str(tmp_path / "seed.json"),
-                           application="demo-shop-api", repo=DEMO, **over)
+    cfg = EngagementConfig(
+        scope_file=scope,
+        target=f"http://127.0.0.1:{port}",
+        work_dir=str(tmp_path / ".rampart"),
+        openapi=str(tmp_path / "openapi.json"),
+        appmodel_seed=str(tmp_path / "seed.json"),
+        application="demo-shop-api",
+        repo=DEMO,
+        **over,
+    )
     return Engagement(cfg)
 
 
@@ -40,11 +48,12 @@ def test_sast_mode_runs_without_network(tmp_path, vuln_server):
     findings = eng.run_scan().findings
     assert findings, "sast mode should produce source findings"
     assert all("sast" in f.tags for f in findings)
-    assert not [f for f in findings if f.verification.validated]   # nothing runtime-confirmed
+    assert not [f for f in findings if f.verification.validated]  # nothing runtime-confirmed
 
 
 def test_diff_aware_scan_limits_to_changed_files():
     from rampart.sast.scanner import changed_py_files
+
     only = {"src/vulnerable_code.py"}
     f_diff = scan_source(DEMO, "x", only_files=only)
     assert f_diff, "should still find sinks in the one changed file"

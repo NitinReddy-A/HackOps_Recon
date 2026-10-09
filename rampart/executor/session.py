@@ -8,6 +8,7 @@ is what lets the validator "reproduce from a clean state" (blueprint section 21)
 Authenticating our own seeded accounts is a setup operation (we own these credentials);
 it is recorded in the audit log as a ``system`` event but does not run as an attack action.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,7 @@ class LoginConfig:
     method: str = "POST"
     username_field: str = "username"
     password_field: str = "password"
-    token_json_path: str = "token"        # dotted path into the JSON response
+    token_json_path: str = "token"  # dotted path into the JSON response
     auth_header: str = "Authorization"
     auth_scheme: str = "Bearer"
     extra_headers: dict = field(default_factory=dict)
@@ -49,8 +50,7 @@ def _dig(obj, dotted: str):
 
 
 class SessionManager:
-    def __init__(self, scope, secrets: SecretsProvider, login: LoginConfig,
-                 resolver, audit_log=None):
+    def __init__(self, scope, secrets: SecretsProvider, login: LoginConfig, resolver, audit_log=None):
         self.scope = scope
         self.secrets = secrets
         self.login = login
@@ -93,14 +93,24 @@ class SessionManager:
             if acct is None:
                 raise SessionError(f"unknown seeded account {account_id!r}")
             creds = self.secrets.resolve(acct.secret_ref)
-            body = json.dumps({
-                self.login.username_field: creds["username"],
-                self.login.password_field: creds["password"],
-            })
+            body = json.dumps(
+                {
+                    self.login.username_field: creds["username"],
+                    self.login.password_field: creds["password"],
+                }
+            )
             ip = self._resolve_ip(self.login.host)
             headers = {"Content-Type": "application/json", **self.login.extra_headers}
-            resp = raw_request(self.login.scheme, self.login.host, self.login.port, ip,
-                               self.login.method, self.login.path, headers=headers, body=body)
+            resp = raw_request(
+                self.login.scheme,
+                self.login.host,
+                self.login.port,
+                ip,
+                self.login.method,
+                self.login.path,
+                headers=headers,
+                body=body,
+            )
             if resp.status != 200:
                 raise SessionError(f"login for {account_id!r} failed with HTTP {resp.status}")
             try:
@@ -127,12 +137,20 @@ class SessionManager:
     def _audit_session(self, account_id: str, ip: str, fresh: bool) -> None:
         if self.audit is None:
             return
-        self.audit.append(AuditEvent(
-            engagement_id=self.scope.authorization.ticket or "engagement",
-            phase="setup",
-            actor={"type": "system", "agent_role": "session-manager"},
-            action={"tool": "login", "target_host": self.login.host, "resolved_ip": ip,
-                    "path": self.login.path, "account": account_id, "fresh": fresh},
-            policy_decision={"decision": "ALLOW", "reason": "seeded-account session establishment"},
-            execution={"status": "executed"},
-        ))
+        self.audit.append(
+            AuditEvent(
+                engagement_id=self.scope.authorization.ticket or "engagement",
+                phase="setup",
+                actor={"type": "system", "agent_role": "session-manager"},
+                action={
+                    "tool": "login",
+                    "target_host": self.login.host,
+                    "resolved_ip": ip,
+                    "path": self.login.path,
+                    "account": account_id,
+                    "fresh": fresh,
+                },
+                policy_decision={"decision": "ALLOW", "reason": "seeded-account session establishment"},
+                execution={"status": "executed"},
+            )
+        )

@@ -4,6 +4,7 @@ The worker turns a hypothesis into a *candidate* finding backed by initial evide
 does NOT decide validity — it hands the candidate (structured facts only) to the independent
 Validator. Everything it does is a Tier-1 read on seeded accounts/objects.
 """
+
 from __future__ import annotations
 
 from ..executor.differ import contains_signature
@@ -11,7 +12,8 @@ from ..schemas.finding import CVSS, Finding, Reproduction, State
 
 # A defensible CVSS 4.0 for authenticated object-level authorization bypass (CWE-639).
 _IDOR_CVSS = CVSS(
-    version="4.0", base_score=8.7,
+    version="4.0",
+    base_score=8.7,
     vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
     severity="high",
     v31_fallback={"base_score": 7.7, "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"},
@@ -40,18 +42,30 @@ class BolaIdorWorker:
         path_probe = hyp["endpoint_path"].replace("{" + param + "}", str(vic_obj["id"]))
         path_own = hyp["endpoint_path"].replace("{" + param + "}", str(atk_obj["id"]))
 
-        baseline = self.runner.get(path_own, session=atk, payload_class="benign-read",
-                                   rationale="worker baseline: attacker reads own object",
-                                   hypothesis_id=hyp.get("id"), summary="worker baseline")
-        probe = self.runner.get(path_probe, session=atk, payload_class="boundary-probe",
-                                rationale="worker probe: attacker reads victim object",
-                                hypothesis_id=hyp.get("id"), summary="worker probe")
+        baseline = self.runner.get(
+            path_own,
+            session=atk,
+            payload_class="benign-read",
+            rationale="worker baseline: attacker reads own object",
+            hypothesis_id=hyp.get("id"),
+            summary="worker baseline",
+        )
+        probe = self.runner.get(
+            path_probe,
+            session=atk,
+            payload_class="boundary-probe",
+            rationale="worker probe: attacker reads victim object",
+            hypothesis_id=hyp.get("id"),
+            summary="worker probe",
+        )
         if not probe.executed:
             return None
 
-        signal = (probe.status == 200
-                  and contains_signature(probe.body, vic_obj.get("signature", ""))
-                  and probe.body != baseline.body)
+        signal = (
+            probe.status == 200
+            and contains_signature(probe.body, vic_obj.get("signature", ""))
+            and probe.body != baseline.body
+        )
 
         concrete_url = f"{target_url}{path_probe}"
         finding = Finding(
@@ -65,14 +79,25 @@ class BolaIdorWorker:
             owasp={"web_2025": ["A01:2025-Broken Access Control"], "api_2023": ["API1:2023-BOLA"]},
             asvs={"requirement": "V4.1.3", "level": 2},
             cvss=_IDOR_CVSS,
-            asset={"type": "api_endpoint", "application": self.application,
-                   "environment": self.environment, "target": target_url},
-            endpoint={"method": hyp["endpoint_method"], "url": concrete_url,
-                      "parameters": [{"name": param, "in": "path"}],
-                      "auth_required": True, "roles_tested": [atk, vic],
-                      "object_type": hyp["object_type"]},
+            asset={
+                "type": "api_endpoint",
+                "application": self.application,
+                "environment": self.environment,
+                "target": target_url,
+            },
+            endpoint={
+                "method": hyp["endpoint_method"],
+                "url": concrete_url,
+                "parameters": [{"name": param, "in": "path"}],
+                "auth_required": True,
+                "roles_tested": [atk, vic],
+                "object_type": hyp["object_type"],
+            },
             reproduction=Reproduction(
-                prerequisites=[f"Valid session for seeded '{atk}'", f"Known id for '{vic}'s {hyp['object_type']}"],
+                prerequisites=[
+                    f"Valid session for seeded '{atk}'",
+                    f"Known id for '{vic}'s {hyp['object_type']}",
+                ],
                 steps=[
                     f"Authenticate as seeded '{atk}', capture bearer token",
                     f"GET {path_probe} (owned by '{vic}') with '{atk}'s token",

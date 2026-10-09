@@ -4,6 +4,7 @@ It wraps the policy pipeline so every probe is gated, audited, and (optionally) 
 as evidence. Nothing here decides whether a finding is real; it just executes vetted
 Tier-0/1 reads and returns the outcome.
 """
+
 from __future__ import annotations
 
 import json as _json
@@ -30,8 +31,18 @@ class ProbeOutcome:
 
 
 class ProbeRunner:
-    def __init__(self, pipeline, evidence_store, engagement_id, host, port, scheme="http",
-                 actor_role="test-worker", actor_profile="", phase="test"):
+    def __init__(
+        self,
+        pipeline,
+        evidence_store,
+        engagement_id,
+        host,
+        port,
+        scheme="http",
+        actor_role="test-worker",
+        actor_profile="",
+        phase="test",
+    ):
         self.pipeline = pipeline
         self.evidence = evidence_store
         self.engagement_id = engagement_id
@@ -42,18 +53,54 @@ class ProbeRunner:
         self.actor_profile = actor_profile
         self.phase = phase
 
-    def get(self, path, session, payload_class="boundary-probe", rationale="",
-            hypothesis_id=None, capture=True, summary="", query=None, headers=None) -> ProbeOutcome:
-        action = ToolAction(method="GET", target_host=self.host, port=self.port, scheme=self.scheme,
-                            path=path, query=dict(query or {}), use_session=session,
-                            headers=dict(headers or {}), payload_class=payload_class)
-        req = ToolCallRequest(engagement_id=self.engagement_id, actor_role=self.actor_role,
-                              actor_profile=self.actor_profile, action=action, declared_tier=1,
-                              rationale=rationale, hypothesis_id=hypothesis_id, phase=self.phase)
+    def get(
+        self,
+        path,
+        session,
+        payload_class="boundary-probe",
+        rationale="",
+        hypothesis_id=None,
+        capture=True,
+        summary="",
+        query=None,
+        headers=None,
+    ) -> ProbeOutcome:
+        action = ToolAction(
+            method="GET",
+            target_host=self.host,
+            port=self.port,
+            scheme=self.scheme,
+            path=path,
+            query=dict(query or {}),
+            use_session=session,
+            headers=dict(headers or {}),
+            payload_class=payload_class,
+        )
+        req = ToolCallRequest(
+            engagement_id=self.engagement_id,
+            actor_role=self.actor_role,
+            actor_profile=self.actor_profile,
+            action=action,
+            declared_tier=1,
+            rationale=rationale,
+            hypothesis_id=hypothesis_id,
+            phase=self.phase,
+        )
         return self._execute(req, action, capture, summary)
 
-    def post(self, path, json_body, session=None, payload_class="canary", rationale="",
-             hypothesis_id=None, capture=True, summary="", headers=None, content_type=None) -> ProbeOutcome:
+    def post(
+        self,
+        path,
+        json_body,
+        session=None,
+        payload_class="canary",
+        rationale="",
+        hypothesis_id=None,
+        capture=True,
+        summary="",
+        headers=None,
+        content_type=None,
+    ) -> ProbeOutcome:
         """A gated POST with a JSON (or raw string) body. Still a typed ToolCallRequest through the
         one choke-point — POST classifies as Tier 2 (state-changing), so it is only permitted when
         the scope/approver authorizes it (e.g. --active, or an authorized LLM-endpoint assessment)."""
@@ -61,12 +108,28 @@ class ProbeRunner:
         hdrs = dict(headers or {})
         if content_type:
             hdrs["Content-Type"] = content_type
-        action = ToolAction(method="POST", target_host=self.host, port=self.port, scheme=self.scheme,
-                            path=path, body=body, body_class="json", use_session=session,
-                            headers=hdrs, payload_class=payload_class)
-        req = ToolCallRequest(engagement_id=self.engagement_id, actor_role=self.actor_role,
-                              actor_profile=self.actor_profile, action=action, declared_tier=2,
-                              rationale=rationale, hypothesis_id=hypothesis_id, phase=self.phase)
+        action = ToolAction(
+            method="POST",
+            target_host=self.host,
+            port=self.port,
+            scheme=self.scheme,
+            path=path,
+            body=body,
+            body_class="json",
+            use_session=session,
+            headers=hdrs,
+            payload_class=payload_class,
+        )
+        req = ToolCallRequest(
+            engagement_id=self.engagement_id,
+            actor_role=self.actor_role,
+            actor_profile=self.actor_profile,
+            action=action,
+            declared_tier=2,
+            rationale=rationale,
+            hypothesis_id=hypothesis_id,
+            phase=self.phase,
+        )
         return self._execute(req, action, capture, summary)
 
     def _execute(self, req, action, capture, summary) -> ProbeOutcome:
@@ -75,5 +138,10 @@ class ProbeRunner:
         if capture and result.executed and self.evidence is not None:
             evs.append(self.evidence.put_request(action, result.resolved_ip, summary=summary))
             evs.append(self.evidence.put_response(result.response, summary=summary))
-        return ProbeOutcome(executed=result.executed, response=result.response,
-                            decision=result.decision, evidence=evs, audit_ids=result.audit_event_ids)
+        return ProbeOutcome(
+            executed=result.executed,
+            response=result.response,
+            decision=result.decision,
+            evidence=evs,
+            audit_ids=result.audit_event_ids,
+        )

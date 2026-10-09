@@ -17,6 +17,7 @@ Planted flaws (each flips clean under --fixed):
   * Insecure cookie      POST /api/login            — session cookie without HttpOnly/Secure/SameSite
   * CORS misconfig       (API responses)            — ACAO:* together with ACAC:true
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,12 +40,22 @@ USERS = {
     "user_b": {"id": "u2", "password": "demo-pw-b", "email": "user_b@demo.local"},
 }
 ORDERS = {
-    "1043": {"id": "1043", "owner": "u1", "owner_email": "user_a@demo.local",
-             "item": "Blue Widget", "total": "42.00",
-             "secret_note": "SIGNATURE-A-4f9c1e77 (private to user_a)"},
-    "2087": {"id": "2087", "owner": "u2", "owner_email": "user_b@demo.local",
-             "item": "Red Gadget", "total": "17.50",
-             "secret_note": "SIGNATURE-B-1a2b3c4d (private to user_b)"},
+    "1043": {
+        "id": "1043",
+        "owner": "u1",
+        "owner_email": "user_a@demo.local",
+        "item": "Blue Widget",
+        "total": "42.00",
+        "secret_note": "SIGNATURE-A-4f9c1e77 (private to user_a)",
+    },
+    "2087": {
+        "id": "2087",
+        "owner": "u2",
+        "owner_email": "user_b@demo.local",
+        "item": "Red Gadget",
+        "total": "17.50",
+        "secret_note": "SIGNATURE-B-1a2b3c4d (private to user_b)",
+    },
 }
 PRODUCTS = {
     "1": {"id": "1", "name": "Blue Widget", "price": "42.00"},
@@ -58,7 +69,7 @@ FIXED = os.environ.get("RAMPART_DEMO_FIXED") == "1"
 _JWT_V2_STRONG = "a7f3c9e1b5d8402e6f1a9c4b7e2d8053a1c6f9b2e4d7018a3c5f8b1d6e9a2c4f7"
 _JWT_V2_WEAK = "secret"
 _TOKENS: dict[str, str] = {}  # token -> user id
-_COMMENTS: list[str] = []     # stored-XSS sink (in-memory)
+_COMMENTS: list[str] = []  # stored-XSS sink (in-memory)
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -86,8 +97,18 @@ _SSTI_EXPR = re.compile(r"\{\{\s*(\d+)\s*\*\s*(\d+)\s*\}\}")
 def _b64url_decode(s: str) -> bytes:
     s += "=" * (-len(s) % 4)
     return base64.urlsafe_b64decode(s.encode())
-_INTERNAL_HOSTS = {"127.0.0.1", "localhost", "169.254.169.254", "metadata.google.internal",
-                   "metadata", "0.0.0.0", "[::1]", "::1"}
+
+
+_INTERNAL_HOSTS = {
+    "127.0.0.1",
+    "localhost",
+    "169.254.169.254",
+    "metadata.google.internal",
+    "metadata",
+    "0.0.0.0",
+    "[::1]",
+    "::1",
+}
 
 
 def _is_internal(host: str) -> bool:
@@ -96,9 +117,13 @@ def _is_internal(host: str) -> bool:
     host = host.lower().strip("[]")
     if host in _INTERNAL_HOSTS:
         return True
-    return (host.startswith("10.") or host.startswith("192.168.")
-            or host.startswith("127.") or host.startswith("169.254.")
-            or any(host.startswith(f"172.{n}.") for n in range(16, 32)))
+    return (
+        host.startswith("10.")
+        or host.startswith("192.168.")
+        or host.startswith("127.")
+        or host.startswith("169.254.")
+        or any(host.startswith(f"172.{n}.") for n in range(16, 32))
+    )
 
 
 class _FakeSQLError(Exception):
@@ -120,15 +145,15 @@ def _fake_sql_select(raw: str, fixed: bool):
     if predicate.count("'") % 2 == 1:  # unterminated string literal
         raise _FakeSQLError('SQLSTATE[42000]: syntax error at or near "\'" — unterminated quoted string')
     low = raw.lower()
-    if "or '1'='1" in low or "or 1=1" in low:        # tautology -> dump every row
+    if "or '1'='1" in low or "or 1=1" in low:  # tautology -> dump every row
         return list(PRODUCTS.values())
-    if "and '1'='2" in low or "and 1=2" in low:      # always-false condition -> empty
+    if "and '1'='2" in low or "and 1=2" in low:  # always-false condition -> empty
         return []
-    if "and '1'='1" in low or "and 1=1" in low:      # always-true condition -> base row
+    if "and '1'='1" in low or "and 1=1" in low:  # always-true condition -> base row
         base = raw.split("'", 1)[0]
         row = PRODUCTS.get(base)
         return [row] if row else []
-    row = PRODUCTS.get(raw)                           # benign lookup
+    row = PRODUCTS.get(raw)  # benign lookup
     return [row] if row else []
 
 
@@ -215,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 return self._send(400, {"error": "bad json"})
             resp = {"name": data.get("name", "user"), "role": "customer", "is_admin": False}
-            if not FIXED:                              # VULN: bind whatever the client sent
+            if not FIXED:  # VULN: bind whatever the client sent
                 for priv in ("role", "is_admin", "balance", "verified"):
                     if priv in data:
                         resp[priv] = data[priv]
@@ -226,14 +251,14 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             raw = (self.rfile.read(length) or b"").decode("utf-8", "replace")
             m = re.search(r'SYSTEM\s+["\']([^"\']+)["\']', raw)
-            if (not FIXED) and m:                      # VULN: external entity resolution enabled
+            if (not FIXED) and m:  # VULN: external entity resolution enabled
                 host = urlparse(m.group(1)).hostname or ""
-                if _is_internal(host):                 # demo only fetches loopback/internal (safe)
+                if _is_internal(host):  # demo only fetches loopback/internal (safe)
                     try:
                         urllib.request.urlopen(m.group(1), timeout=2).read(64)
                     except Exception:  # noqa: BLE001
                         pass
-            return self._send(200, {"status": "imported"})   # blind: same response either way
+            return self._send(200, {"status": "imported"})  # blind: same response either way
 
         # Stored XSS: persist a comment, rendered back (unescaped in VULN) on GET /api/comments.
         if self.path == "/api/comments":
@@ -256,8 +281,14 @@ class Handler(BaseHTTPRequestHandler):
             if "__schema" in query or "__type" in query:
                 if FIXED:
                     return self._send(400, {"errors": [{"message": "introspection is disabled"}]})
-                return self._send(200, {"data": {"__schema": {"types": [
-                    {"name": "Query"}, {"name": "Order"}, {"name": "User"}]}}})
+                return self._send(
+                    200,
+                    {
+                        "data": {
+                            "__schema": {"types": [{"name": "Query"}, {"name": "Order"}, {"name": "User"}]}
+                        }
+                    },
+                )
             return self._send(200, {"data": {}})
 
         return self._send(404, {"error": "not found"})
@@ -284,20 +315,26 @@ class Handler(BaseHTTPRequestHandler):
                 "</ul>"
                 '<form action="/api/search" method="get">'
                 '<input name="q" placeholder="search"><button>Go</button></form>'
-                "</body></html>")
+                "</body></html>"
+            )
             return self._send_html(200, page)
 
         # Stored-XSS display page: renders stored comments (unescaped in VULN mode).
         if path == "/api/comments":
             items = "".join(
-                (f"<li>{c}</li>" if not FIXED else f"<li>{html.escape(c)}</li>") for c in _COMMENTS)
-            return self._send_html(200, f"<!doctype html><html><body><h1>Comments</h1>"
-                                        f"<ul id='comments'>{items}</ul></body></html>")
+                (f"<li>{c}</li>" if not FIXED else f"<li>{html.escape(c)}</li>") for c in _COMMENTS
+            )
+            return self._send_html(
+                200,
+                f"<!doctype html><html><body><h1>Comments</h1><ul id='comments'>{items}</ul></body></html>",
+            )
 
         # Host-header injection: a password-reset link built from the incoming Host header.
         if path == "/api/reset":
             email = q.get("email", "user@demo.local")
-            host = self.headers.get("Host", "demo.local") if not FIXED else "demo.local"  # VULN uses attacker Host
+            host = (
+                self.headers.get("Host", "demo.local") if not FIXED else "demo.local"
+            )  # VULN uses attacker Host
             link = f"https://{host}/reset?token=demo-reset-token&email={email}"
             return self._send(200, {"reset_link": link, "sent_to": email})
 
@@ -305,21 +342,26 @@ class Handler(BaseHTTPRequestHandler):
         # The sink is in the browser (JS), so only a headless-browser oracle can confirm it.
         if path == "/dom":
             if FIXED:
-                page = ("<!doctype html><html><body><div id='out'></div>"
-                        "<script>var p=new URLSearchParams(location.search).get('x')||'';"
-                        "document.getElementById('out').textContent=p;</script></body></html>")
+                page = (
+                    "<!doctype html><html><body><div id='out'></div>"
+                    "<script>var p=new URLSearchParams(location.search).get('x')||'';"
+                    "document.getElementById('out').textContent=p;</script></body></html>"
+                )
             else:
-                page = ("<!doctype html><html><body><div id='out'></div>"
-                        "<script>var p=new URLSearchParams(location.search).get('x')||'';"
-                        "document.getElementById('out').innerHTML=p;</script></body></html>")
+                page = (
+                    "<!doctype html><html><body><div id='out'></div>"
+                    "<script>var p=new URLSearchParams(location.search).get('x')||'';"
+                    "document.getElementById('out').innerHTML=p;</script></body></html>"
+                )
             return self._send_html(200, page)
 
         # Reflected XSS: q echoed into an HTML page. Vulnerable: raw. Fixed: html-escaped.
         if path == "/api/search":
             term = q.get("q", "")
             shown = html.escape(term) if FIXED else term
-            markup = (f"<!doctype html><html><body><h1>Results</h1>"
-                      f"<p>You searched for: {shown}</p></body></html>")
+            markup = (
+                f"<!doctype html><html><body><h1>Results</h1><p>You searched for: {shown}</p></body></html>"
+            )
             return self._send_html(200, markup)
 
         # SQL injection: id flows into a query sink. Vulnerable: concatenated. Fixed: bound.
@@ -329,8 +371,7 @@ class Handler(BaseHTTPRequestHandler):
                 rows = _fake_sql_select(raw, FIXED)
             except _FakeSQLError as exc:
                 # VULN: raw driver error leaked to the client (error-based signal).
-                return self._send(500, {"error": "database error", "detail": str(exc),
-                                        "sqlstate": "42000"})
+                return self._send(500, {"error": "database error", "detail": str(exc), "sqlstate": "42000"})
             return self._send(200, {"results": rows, "count": len(rows)})
 
         # Open redirect: next reflected into Location. Vulnerable: any URL. Fixed: local only.
@@ -346,6 +387,7 @@ class Handler(BaseHTTPRequestHandler):
         # SSRF: server-side fetch of a user-supplied URL (simulated — no real network call).
         if path == "/api/fetch":
             from urllib.parse import urlparse as _up
+
             target = q.get("url", "")
             host = _up(target).hostname or ""
             scheme = _up(target).scheme or ""
@@ -355,7 +397,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"error": "blocked: destination not allowed"})
                 return self._send(200, {"fetched": target, "content": "external resource ok"})
             if internal:
-                return self._send(200, {"fetched": target, "content": SSRF_MARKER})   # SSRF to internal
+                return self._send(200, {"fetched": target, "content": SSRF_MARKER})  # SSRF to internal
             return self._send(200, {"fetched": target, "content": "external resource ok"})
 
         # Blind SSRF: a "webhook" that fetches the URL server-side with NO response signal.
@@ -368,12 +410,12 @@ class Handler(BaseHTTPRequestHandler):
                 if _is_internal(host) or urlparse(target).scheme not in ("http", "https"):
                     return self._send(400, {"error": "destination not allowed"})
                 return self._send(200, {"status": "queued"})
-            if _is_internal(host):           # VULN: perform the server-side fetch (blind SSRF)
+            if _is_internal(host):  # VULN: perform the server-side fetch (blind SSRF)
                 try:
                     urllib.request.urlopen(target, timeout=2).read(64)
                 except Exception:  # noqa: BLE001
                     pass
-            return self._send(200, {"status": "queued"})   # blind: same response regardless
+            return self._send(200, {"status": "queued"})  # blind: same response regardless
 
         # Command injection: simulated `ping <host>` that honours shell metacharacters.
         if path == "/api/ping":
@@ -397,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"error": "invalid file name"})
                 return self._send(200, {"name": name, "content": "demo file contents"})
             if escapes:
-                return self._send(200, {"name": name, "content": TRAVERSAL_MARKER})     # traversal!
+                return self._send(200, {"name": name, "content": TRAVERSAL_MARKER})  # traversal!
             known = {"readme.txt": "demo file contents", "notes.txt": "some notes"}
             if name in known:
                 return self._send(200, {"name": name, "content": known[name]})
@@ -416,12 +458,13 @@ class Handler(BaseHTTPRequestHandler):
             if prod is None:
                 return self._send(404, {"error": "unknown item"})
             if FIXED and qty < 1:
-                return self._send(400, {"error": "quantity must be >= 1"})   # the fix
-            total = round(qty * float(prod["price"]), 2)                     # VULN: negative qty allowed
+                return self._send(400, {"error": "quantity must be >= 1"})  # the fix
+            total = round(qty * float(prod["price"]), 2)  # VULN: negative qty allowed
             # total is an unquoted JSON number so the deterministic business-logic oracle can read
             # the server-computed economic result (a negative/zero total proves the tampering).
-            return self._send(200, {"item": item, "qty": qty, "unit_price": float(prod["price"]),
-                                    "total": total})
+            return self._send(
+                200, {"item": item, "qty": qty, "unit_price": float(prod["price"]), "total": total}
+            )
 
         # Sensitive file exposure: serve dotfiles/backups/config in VULN mode only.
         if path in SENSITIVE_FILES:
@@ -447,8 +490,11 @@ class Handler(BaseHTTPRequestHandler):
         # Cookie hygiene: a GET that sets a session cookie (flags missing in VULN mode).
         if path == "/api/session":
             tok = secrets.token_hex(8)
-            cookie = (f"session={tok}; Path=/; HttpOnly; Secure; SameSite=Strict" if FIXED
-                      else f"session={tok}; Path=/")
+            cookie = (
+                f"session={tok}; Path=/; HttpOnly; Secure; SameSite=Strict"
+                if FIXED
+                else f"session={tok}; Path=/"
+            )
             return self._send(200, {"session": "started"}, {"Set-Cookie": cookie})
 
         # JWT: /api/me trusts the token's identity. VULN accepts alg=none / unsigned tokens.
@@ -470,8 +516,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(401, {"error": "invalid token signature"})
                 return self._send(200, {"user": payload.get("sub")})
             # VULN: trust the token's claims without verifying the signature
-            return self._send(200, {"user": payload.get("sub"),
-                                    "data": f"RAMPART-JWT-NOSIG authenticated as {payload.get('sub')}"})
+            return self._send(
+                200,
+                {
+                    "user": payload.get("sub"),
+                    "data": f"RAMPART-JWT-NOSIG authenticated as {payload.get('sub')}",
+                },
+            )
 
         # JWT v2: /api/v2/me DOES verify the HS256 signature — but VULN signs with a weak, guessable
         # secret ("secret") and never checks expiry. FIXED uses a long random key and enforces exp.
@@ -489,16 +540,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(401, {"error": "bad token"})
             if str(header.get("alg", "")).lower() != "hs256":
                 return self._send(401, {"error": "unsupported alg"})
-            secret = _JWT_V2_STRONG if FIXED else _JWT_V2_WEAK   # selected at request time
+            secret = _JWT_V2_STRONG if FIXED else _JWT_V2_WEAK  # selected at request time
             signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
-            expected = base64.urlsafe_b64encode(
-                hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()).decode().rstrip("=")
+            expected = (
+                base64.urlsafe_b64encode(hmac.new(secret.encode(), signing_input, hashlib.sha256).digest())
+                .decode()
+                .rstrip("=")
+            )
             if not hmac.compare_digest(expected, parts[2]):
                 return self._send(401, {"error": "invalid token signature"})
             if FIXED and int(payload.get("exp", 0)) < int(time.time()):
-                return self._send(401, {"error": "token expired"})   # the fix: enforce expiry
-            return self._send(200, {"user": payload.get("sub"),
-                                    "data": f"RAMPART-JWT-HS256 authenticated as {payload.get('sub')}"})
+                return self._send(401, {"error": "token expired"})  # the fix: enforce expiry
+            return self._send(
+                200,
+                {
+                    "user": payload.get("sub"),
+                    "data": f"RAMPART-JWT-HS256 authenticated as {payload.get('sub')}",
+                },
+            )
 
         # BFLA: a privileged "all orders" report that should be admin-only.
         if path == "/api/reports/orders":
@@ -508,8 +567,9 @@ class Handler(BaseHTTPRequestHandler):
             if FIXED:
                 # function-level authorization: only admins (none seeded) may call this
                 return self._send(403, {"error": "forbidden: admin role required"})
-            return self._send(200, {"report": "RAMPART-BFLA all-customer-orders",
-                                    "orders": list(ORDERS.values())})            # VULN: no role check
+            return self._send(
+                200, {"report": "RAMPART-BFLA all-customer-orders", "orders": list(ORDERS.values())}
+            )  # VULN: no role check
 
         # Excessive data exposure: profile returns sensitive fields it shouldn't.
         if path == "/api/profile":
@@ -519,21 +579,29 @@ class Handler(BaseHTTPRequestHandler):
             email = next((u["email"] for u in USERS.values() if u["id"] == uid), "user@demo.local")
             if FIXED:
                 return self._send(200, {"email": email, "role": "customer"})
-            return self._send(200, {"email": email, "role": "customer",
-                                    "ssn": "123-45-6789", "password_hash": "$2b$12$demohashdemohash",
-                                    "api_token": "sk-demo-01HZ0PRIVATE", "credit_card": "4111111111111111"})
+            return self._send(
+                200,
+                {
+                    "email": email,
+                    "role": "customer",
+                    "ssn": "123-45-6789",
+                    "password_hash": "$2b$12$demohashdemohash",
+                    "api_token": "sk-demo-01HZ0PRIVATE",
+                    "credit_card": "4111111111111111",
+                },
+            )
 
         if path.startswith("/api/orders/"):
             oid = path.rsplit("/", 1)[-1]
             uid = self._auth_user()
             if uid is None:
-                return self._send(401, {"error": "authentication required"})   # auth IS enforced
+                return self._send(401, {"error": "authentication required"})  # auth IS enforced
             order = ORDERS.get(oid)
             if order is None:
-                return self._send(404, {"error": "order not found"})           # absent -> 404
+                return self._send(404, {"error": "order not found"})  # absent -> 404
             if FIXED and not self._authorize(order, uid):
-                return self._send(403, {"error": "forbidden"})                 # the fix (patched build)
-            return self._send(200, order)                                      # VULN: no ownership check
+                return self._send(403, {"error": "forbidden"})  # the fix (patched build)
+            return self._send(200, order)  # VULN: no ownership check
         return self._send(404, {"error": "not found"})
 
 

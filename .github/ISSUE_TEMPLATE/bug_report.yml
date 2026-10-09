@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Rampart doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If this is a **security vulnerability in Rampart itself**,
+        please don't file it here — follow [SECURITY.md](../blob/main/SECURITY.md) instead.
+  - type: checkboxes
+    id: authorized
+    attributes:
+      label: Authorized use
+      options:
+        - label: Anything I share below came from testing a target I own or am authorized to test.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The exact command(s) you ran. Reproducing against the bundled demo target is ideal.
+      placeholder: |
+        python -m rampart dast --target http://127.0.0.1:8080 --scope-file rampart.scope.yaml ...
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `rampart --version`, or the commit SHA.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python
+      placeholder: "e.g. Windows 11, Python 3.12"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Error messages or logs. Please redact anything sensitive.
+      render: shell

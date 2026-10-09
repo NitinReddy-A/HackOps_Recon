@@ -5,6 +5,7 @@ same allowlist -> scope -> risk -> policy -> approval -> budget -> audit choke-p
 other action. The model's reply is DATA — it is inspected by a deterministic oracle and never
 executed or turned into a tool call.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,17 +30,21 @@ class LLMClient:
 
     def ask(self, prompt: str, summary: str = "llm probe"):
         """Returns (reply_text|None, outcome). reply is None if the request was blocked."""
-        outcome = self.runner.post(self.chat_path, {self.input_field: prompt},
-                                   payload_class="canary", rationale="LLM security probe (authorized)",
-                                   summary=summary)
+        outcome = self.runner.post(
+            self.chat_path,
+            {self.input_field: prompt},
+            payload_class="canary",
+            rationale="LLM security probe (authorized)",
+            summary=summary,
+        )
         if not outcome.executed:
             return None, outcome
         body = outcome.body
         try:
             data = json.loads(body)
         except json.JSONDecodeError:
-            return body, outcome                 # non-JSON endpoint: whole body is the reply
+            return body, outcome  # non-JSON endpoint: whole body is the reply
         reply = _dig(data, self.output_field)
         if reply is None:
-            reply = body                          # fall back to raw body if the field is absent
+            reply = body  # fall back to raw body if the field is absent
         return (reply if isinstance(reply, str) else json.dumps(reply)), outcome

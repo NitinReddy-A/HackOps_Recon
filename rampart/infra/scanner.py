@@ -40,6 +40,7 @@ authorized and in-scope. As a defence-in-depth aid, :func:`scan_infra` will — 
 ``resolver`` and a ``scope`` — resolve the host and fail **closed** unless the resolved IP is
 inside ``scope.ip_allowed`` before it opens a single socket.
 """
+
 from __future__ import annotations
 
 import socket
@@ -56,7 +57,7 @@ SENSITIVE_SERVICES: dict[int, tuple[str, str]] = {
     22: ("ssh", "medium"),
     23: ("telnet", "high"),
     1433: ("mssql", "high"),
-    2375: ("docker-api", "critical"),      # unauthenticated Docker daemon == host RCE
+    2375: ("docker-api", "critical"),  # unauthenticated Docker daemon == host RCE
     2376: ("docker-api", "critical"),
     2379: ("etcd", "high"),
     3306: ("mysql", "high"),
@@ -66,7 +67,7 @@ SENSITIVE_SERVICES: dict[int, tuple[str, str]] = {
     5900: ("vnc", "high"),
     6379: ("redis", "high"),
     8500: ("consul", "medium"),
-    9000: ("service-9000", "medium"),       # various (Portainer/MinIO/SonarQube/php-fpm…)
+    9000: ("service-9000", "medium"),  # various (Portainer/MinIO/SonarQube/php-fpm…)
     9092: ("kafka", "medium"),
     9200: ("elasticsearch", "high"),
     11211: ("memcached", "high"),
@@ -92,17 +93,17 @@ _CONTROL_PORTS: tuple[int, ...] = (59991, 60997, 61999)
 _BANNER_SIGNATURES: dict[str, tuple[str, ...]] = {
     "ssh": ("ssh-",),
     "telnet": ("\xff\xfb", "\xff\xfd", "\xff\xfe", "\xff\xfc"),  # IAC negotiation bytes
-    "mysql": ("mysql", "mariadb"),           # greeting carries a NUL-terminated version string
+    "mysql": ("mysql", "mariadb"),  # greeting carries a NUL-terminated version string
     "mssql": (),
     "postgres": (),
-    "redis": ("-err", "+pong", "redis"),     # silent on a bare connect; tokens appear if poked
+    "redis": ("-err", "+pong", "redis"),  # silent on a bare connect; tokens appear if poked
     "mongodb": (),
-    "vnc": ("rfb",),                           # VNC server greets with "RFB 003.00x"
+    "vnc": ("rfb",),  # VNC server greets with "RFB 003.00x"
     "rdp": (),
-    "elasticsearch": ("elasticsearch", "lucene", "\"cluster_name\""),
+    "elasticsearch": ("elasticsearch", "lucene", '"cluster_name"'),
     "kibana": ("kibana",),
     "memcached": ("version", "stat"),
-    "docker-api": ("docker", "\"apiversion\""),
+    "docker-api": ("docker", '"apiversion"'),
     "etcd": ("etcd",),
     "consul": ("consul",),
     "kafka": (),
@@ -113,34 +114,48 @@ _BANNER_SIGNATURES: dict[str, tuple[str, ...]] = {
 # CVSS per severity bucket (4.0 base with a 3.1 fallback). Network, no privileges, no UI.
 _CVSS_BY_SEV: dict[str, CVSS] = {
     "critical": CVSS(
-        version="4.0", base_score=9.3, severity="critical",
+        version="4.0",
+        base_score=9.3,
+        severity="critical",
         vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
-        v31_fallback={"base_score": 9.8,
-                      "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}),
+        v31_fallback={"base_score": 9.8, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+    ),
     "high": CVSS(
-        version="4.0", base_score=7.5, severity="high",
+        version="4.0",
+        base_score=7.5,
+        severity="high",
         vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
-        v31_fallback={"base_score": 7.5,
-                      "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"}),
+        v31_fallback={"base_score": 7.5, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"},
+    ),
     "medium": CVSS(
-        version="4.0", base_score=5.3, severity="medium",
+        version="4.0",
+        base_score=5.3,
+        severity="medium",
         vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N",
-        v31_fallback={"base_score": 5.3,
-                      "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"}),
+        v31_fallback={"base_score": 5.3, "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"},
+    ),
     "low": CVSS(
-        version="4.0", base_score=3.7, severity="low",
+        version="4.0",
+        base_score=3.7,
+        severity="low",
         vector="CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N",
-        v31_fallback={"base_score": 3.7,
-                      "vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N"}),
+        v31_fallback={"base_score": 3.7, "vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N"},
+    ),
 }
 
 _IMPACT_BY_SEV = {
-    "critical": ("Direct takeover: an unauthenticated control-plane/management service is reachable, "
-                 "enabling remote code execution, data destruction and host compromise."),
-    "high": ("Sensitive data exposure and lateral movement: the backend can be enumerated and, if it "
-             "lacks strong authentication, read or abused directly from this network position."),
-    "medium": ("Expanded attack surface: a management/support service is reachable and can be "
-               "fingerprinted and probed for weak credentials or known CVEs."),
+    "critical": (
+        "Direct takeover: an unauthenticated control-plane/management service is reachable, "
+        "enabling remote code execution, data destruction and host compromise."
+    ),
+    "high": (
+        "Sensitive data exposure and lateral movement: the backend can be enumerated and, if it "
+        "lacks strong authentication, read or abused directly from this network position."
+    ),
+    "medium": (
+        "Expanded attack surface: a management/support service is reachable and can be "
+        "fingerprinted and probed for weak credentials or known CVEs."
+    ),
     "low": ("Minor information disclosure / expanded attack surface from an avoidably reachable service."),
 }
 
@@ -191,13 +206,13 @@ def _tcp_probe(host: str, ip: str | None, port: int, timeout: float = 1.0) -> di
                 data = sock.recv(512)
                 if data:
                     banner = data.decode("latin-1", "replace")
-            except (socket.timeout, OSError):
-                banner = ""          # silent service — accepting the connection IS the signal
+            except (TimeoutError, OSError):
+                banner = ""  # silent service — accepting the connection IS the signal
             return {"open": True, "banner": banner}
-    except (ConnectionRefusedError, socket.timeout, TimeoutError):
+    except (ConnectionRefusedError, TimeoutError):
         return {"open": False, "banner": ""}
     except socket.gaierror:
-        return None                  # name resolution failed — "open" is unknown
+        return None  # name resolution failed — "open" is unknown
     except OSError:
         # network unreachable / reset / etc. — treat as not-open (no finding), still a usable
         # negative-control signal ("did not answer").
@@ -228,7 +243,7 @@ def _read_tlv(der: bytes, off: int) -> tuple[int, int, int]:
     first = der[off + 1]
     if first & 0x80:
         n = first & 0x7F
-        length = int.from_bytes(der[off + 2:off + 2 + n], "big")
+        length = int.from_bytes(der[off + 2 : off + 2 + n], "big")
         vstart = off + 2 + n
     else:
         length = first
@@ -238,16 +253,18 @@ def _read_tlv(der: bytes, off: int) -> tuple[int, int, int]:
 
 def _parse_asn1_time(tag: int, raw: bytes) -> datetime:
     s = raw.decode("ascii")
-    if tag == 0x17:              # UTCTime: YYMMDDHHMMSS[Z]
+    if tag == 0x17:  # UTCTime: YYMMDDHHMMSS[Z]
         yy = int(s[0:2])
         year = 2000 + yy if yy < 50 else 1900 + yy
         rest = s[2:]
-    elif tag == 0x18:            # GeneralizedTime: YYYYMMDDHHMMSS[Z]
+    elif tag == 0x18:  # GeneralizedTime: YYYYMMDDHHMMSS[Z]
         year = int(s[0:4])
         rest = s[4:]
     else:
         raise ValueError("unsupported ASN.1 time tag")
-    month = int(rest[0:2]); day = int(rest[2:4]); hour = int(rest[4:6])
+    month = int(rest[0:2])
+    day = int(rest[2:4])
+    hour = int(rest[4:6])
     minute = int(rest[6:8]) if len(rest) >= 8 and rest[6:8].isdigit() else 0
     second = int(rest[8:10]) if len(rest) >= 10 and rest[8:10].isdigit() else 0
     return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
@@ -259,32 +276,33 @@ def _parse_x509(der: bytes) -> dict:
     Self-signed is detected by an exact byte-for-byte equality of the issuer and subject Name
     structures (self-issued). Raises on a malformed/unsupported encoding; the caller guards it.
     """
+
     def read(o):
         return _read_tlv(der, o)
 
-    _, cs, _ = read(0)                     # Certificate SEQUENCE
-    _, ts, _ = read(cs)                    # TBSCertificate SEQUENCE
+    _, cs, _ = read(0)  # Certificate SEQUENCE
+    _, ts, _ = read(cs)  # TBSCertificate SEQUENCE
     off = ts
-    tag, _, ve = read(off)                 # [0] version (optional) OR serialNumber
-    if tag == 0xA0:                        # EXPLICIT version tag
+    tag, _, ve = read(off)  # [0] version (optional) OR serialNumber
+    if tag == 0xA0:  # EXPLICIT version tag
         off = ve
-        _, _, ve = read(off)               # serialNumber
+        _, _, ve = read(off)  # serialNumber
     off = ve
-    _, _, ve = read(off)                   # signature AlgorithmIdentifier
+    _, _, ve = read(off)  # signature AlgorithmIdentifier
     off = ve
     issuer_start = off
-    _, _, ve = read(off)                   # issuer Name
+    _, _, ve = read(off)  # issuer Name
     issuer_der = der[issuer_start:ve]
     off = ve
-    _, vs, ve = read(off)                  # validity SEQUENCE
+    _, vs, ve = read(off)  # validity SEQUENCE
     validity_start = vs
     off = ve
     subject_start = off
-    _, _, ve = read(off)                   # subject Name
+    _, _, ve = read(off)  # subject Name
     subject_der = der[subject_start:ve]
 
-    t1_tag, _, t1_end = read(validity_start)          # notBefore
-    t2_tag, t2_s, t2_e = read(t1_end)                 # notAfter
+    t1_tag, _, t1_end = read(validity_start)  # notBefore
+    t2_tag, t2_s, t2_e = read(t1_end)  # notAfter
     not_after = _parse_asn1_time(t2_tag, der[t2_s:t2_e])
     return {"not_after": not_after, "self_signed": issuer_der == subject_der}
 
@@ -329,24 +347,39 @@ def _tls_probe(host: str, ip: str | None, port: int, timeout: float = 2.0) -> di
                 self_signed = bool(parsed.get("self_signed"))
             except Exception:  # noqa: BLE001 - cert parse is best effort; handshake data stands
                 pass
-        return {"tls": True, "proto": proto,
-                "cert": {"not_after": not_after_iso, "self_signed": self_signed},
-                "expired": expired, "self_signed": self_signed}
+        return {
+            "tls": True,
+            "proto": proto,
+            "cert": {"not_after": not_after_iso, "self_signed": self_signed},
+            "expired": expired,
+            "self_signed": self_signed,
+        }
     except Exception:  # noqa: BLE001 - unreachable / non-TLS / handshake error: no TLS finding
         return None
 
 
 # --------------------------------------------------------------------------- finding builders
-def _exposed_service_finding(engagement_id: str, host: str, ip: str | None, port: int, svc: str,
-                             severity: str, banner: str, application: str, control_port: int,
-                             reproductions: int) -> Finding:
+def _exposed_service_finding(
+    engagement_id: str,
+    host: str,
+    ip: str | None,
+    port: int,
+    svc: str,
+    severity: str,
+    banner: str,
+    application: str,
+    control_port: int,
+    reproductions: int,
+) -> Finding:
     """Build the CONFIRMED 'exposed sensitive service' finding (observation-oracle, validated)."""
     severity = severity if severity in _CVSS_BY_SEV else "medium"
     target = f"{host}:{port}"
     snippet = _banner_snippet(banner)
     hint = _protocol_hint(svc, banner)
-    desc = (f"The sensitive service '{svc}' is reachable over the network at {target}: a plain TCP "
-            f"connect succeeds on two independent attempts.")
+    desc = (
+        f"The sensitive service '{svc}' is reachable over the network at {target}: a plain TCP "
+        f"connect succeeds on two independent attempts."
+    )
     if snippet:
         desc += f" The service volunteered a banner: {snippet!r}."
     else:
@@ -371,41 +404,66 @@ def _exposed_service_finding(engagement_id: str, host: str, ip: str | None, port
         cwe=["CWE-284", "CWE-668"],
         owasp={"web_2021": ["A05:2021-Security Misconfiguration"]},
         cvss=_CVSS_BY_SEV[severity],
-        asset={"type": "infrastructure", "application": application,
-               "environment": "authorized", "target": target},
+        asset={
+            "type": "infrastructure",
+            "application": application,
+            "environment": "authorized",
+            "target": target,
+        },
         endpoint={"method": "TCP", "url": target, "auth_required": False},
         description=desc,
         impact=_IMPACT_BY_SEV.get(severity, _IMPACT_BY_SEV["medium"]),
-        root_cause=("A sensitive backend service is reachable from this network position; it should "
-                    "be firewalled/bound to localhost."),
+        root_cause=(
+            "A sensitive backend service is reachable from this network position; it should "
+            "be firewalled/bound to localhost."
+        ),
         reproduction=Reproduction(
             prerequisites=["Network reachability to the target host"],
-            steps=[f"TCP connect to {host}:{port}",
-                   "Observe the service responds / accepts the connection"],
-            deterministic=True),
+            steps=[f"TCP connect to {host}:{port}", "Observe the service responds / accepts the connection"],
+            deterministic=True,
+        ),
         remediation=Remediation(
             summary="Restrict the service to a private network / bind to localhost / add a firewall rule.",
             type="config_change",
-            guidance=(f"Do not expose {svc} ({port}/tcp) to untrusted networks: bind it to 127.0.0.1 or a "
-                      "private interface, place it behind a firewall / security-group allow-list, and "
-                      "require strong authentication. Verify no other network path reaches it (CWE-284/668)."),
-            effort="medium"),
-        references=["https://cwe.mitre.org/data/definitions/284.html",
-                    "https://cwe.mitre.org/data/definitions/668.html"],
+            guidance=(
+                f"Do not expose {svc} ({port}/tcp) to untrusted networks: bind it to 127.0.0.1 or a "
+                "private interface, place it behind a firewall / security-group allow-list, and "
+                "require strong authentication. Verify no other network path reaches it (CWE-284/668)."
+            ),
+            effort="medium",
+        ),
+        references=[
+            "https://cwe.mitre.org/data/definitions/284.html",
+            "https://cwe.mitre.org/data/definitions/668.html",
+        ],
         compliance_control_refs=["SOC2:CC6.1", "SOC2:CC6.6"],
         dedupe_key=f"infra:{host}:{port}:{svc}",
         tags=["infra", "exposed-service", "network"],
         verification=Verification(
-            method="tcp-connect-probe", validated=True, validated_at=now_iso(),
-            validator="infra-scan", independent_reproduction=True, reproductions=reproductions,
-            false_positive_checks=fp_checks, confidence_score=0.9),
+            method="tcp-connect-probe",
+            validated=True,
+            validated_at=now_iso(),
+            validator="infra-scan",
+            independent_reproduction=True,
+            reproductions=reproductions,
+            false_positive_checks=fp_checks,
+            confidence_score=0.9,
+        ),
     )
     f.assert_consistent()
     return f
 
 
-def _tls_cert_finding(engagement_id: str, host: str, port: int, issue: str, severity: str,
-                      not_after: str, proto: str, application: str) -> Finding:
+def _tls_cert_finding(
+    engagement_id: str,
+    host: str,
+    port: int,
+    issue: str,
+    severity: str,
+    not_after: str,
+    proto: str,
+    application: str,
+) -> Finding:
     target = f"{host}:{port}"
     desc = f"The TLS endpoint at {target} presents a certificate that is {issue}"
     if not_after:
@@ -421,40 +479,57 @@ def _tls_cert_finding(engagement_id: str, host: str, port: int, issue: str, seve
         cwe=["CWE-295"],
         owasp={"web_2021": ["A02:2021-Cryptographic Failures"]},
         cvss=_CVSS_BY_SEV.get(severity, _CVSS_BY_SEV["medium"]),
-        asset={"type": "infrastructure", "application": application,
-               "environment": "authorized", "target": target},
+        asset={
+            "type": "infrastructure",
+            "application": application,
+            "environment": "authorized",
+            "target": target,
+        },
         endpoint={"method": "TLS", "url": target, "auth_required": False},
         description=desc,
-        impact=("Clients cannot establish trust in the endpoint; the condition enables "
-                "machine-in-the-middle attacks and often signals unmanaged/abandoned infrastructure."),
+        impact=(
+            "Clients cannot establish trust in the endpoint; the condition enables "
+            "machine-in-the-middle attacks and often signals unmanaged/abandoned infrastructure."
+        ),
         root_cause="The TLS certificate is expired or self-signed (not issued by a trusted CA).",
         reproduction=Reproduction(
             prerequisites=["Network reachability to the TLS port"],
-            steps=[f"TLS handshake to {host}:{port}", "Read the presented X.509 certificate",
-                   "Observe the expiry / self-signed condition"],
-            deterministic=True),
+            steps=[
+                f"TLS handshake to {host}:{port}",
+                "Read the presented X.509 certificate",
+                "Observe the expiry / self-signed condition",
+            ],
+            deterministic=True,
+        ),
         remediation=Remediation(
             summary="Install a valid, CA-issued certificate and automate renewal.",
             type="config_change",
-            guidance=("Replace the certificate with one from a trusted CA (e.g. ACME/Let's Encrypt), "
-                      "automate renewal well before expiry, and retire unused TLS endpoints (CWE-295)."),
-            effort="low"),
+            guidance=(
+                "Replace the certificate with one from a trusted CA (e.g. ACME/Let's Encrypt), "
+                "automate renewal well before expiry, and retire unused TLS endpoints (CWE-295)."
+            ),
+            effort="low",
+        ),
         references=["https://cwe.mitre.org/data/definitions/295.html"],
         compliance_control_refs=["SOC2:CC6.1", "SOC2:CC6.7"],
         dedupe_key=f"infra-tls:{host}:{port}:cert",
         tags=["infra", "tls", "certificate"],
         verification=Verification(
-            method="tls-cert-probe", validated=False, validated_at=now_iso(),
-            validator="infra-scan", independent_reproduction=False, reproductions=1,
+            method="tls-cert-probe",
+            validated=False,
+            validated_at=now_iso(),
+            validator="infra-scan",
+            independent_reproduction=False,
+            reproductions=1,
             false_positive_checks=[f"certificate read over TLS is {issue}"],
-            confidence_score=0.7),
+            confidence_score=0.7,
+        ),
     )
     f.assert_consistent()
     return f
 
 
-def _tls_proto_finding(engagement_id: str, host: str, port: int, proto: str,
-                       application: str) -> Finding:
+def _tls_proto_finding(engagement_id: str, host: str, port: int, proto: str, application: str) -> Finding:
     target = f"{host}:{port}"
     f = Finding(
         engagement_id=engagement_id,
@@ -466,39 +541,55 @@ def _tls_proto_finding(engagement_id: str, host: str, port: int, proto: str,
         cwe=["CWE-326"],
         owasp={"web_2021": ["A02:2021-Cryptographic Failures"]},
         cvss=_CVSS_BY_SEV["medium"],
-        asset={"type": "infrastructure", "application": application,
-               "environment": "authorized", "target": target},
+        asset={
+            "type": "infrastructure",
+            "application": application,
+            "environment": "authorized",
+            "target": target,
+        },
         endpoint={"method": "TLS", "url": target, "auth_required": False},
-        description=(f"The TLS endpoint at {target} negotiated an obsolete protocol version "
-                     f"({proto}), which has known cryptographic weaknesses."),
+        description=(
+            f"The TLS endpoint at {target} negotiated an obsolete protocol version "
+            f"({proto}), which has known cryptographic weaknesses."
+        ),
         impact="Weak/obsolete TLS can be downgraded or broken, exposing traffic to interception.",
         root_cause="The server still enables a deprecated TLS/SSL protocol version.",
         reproduction=Reproduction(
             prerequisites=["Network reachability to the TLS port"],
             steps=[f"TLS handshake to {host}:{port}", f"Observe the negotiated version is {proto}"],
-            deterministic=True),
+            deterministic=True,
+        ),
         remediation=Remediation(
             summary="Disable SSLv3/TLSv1.0/TLSv1.1; require TLSv1.2+ (prefer TLSv1.3).",
             type="config_change",
-            guidance=("Configure the server/load balancer to accept only TLSv1.2 and TLSv1.3 with "
-                      "modern cipher suites, and disable all earlier protocol versions (CWE-326)."),
-            effort="low"),
+            guidance=(
+                "Configure the server/load balancer to accept only TLSv1.2 and TLSv1.3 with "
+                "modern cipher suites, and disable all earlier protocol versions (CWE-326)."
+            ),
+            effort="low",
+        ),
         references=["https://cwe.mitre.org/data/definitions/326.html"],
         compliance_control_refs=["SOC2:CC6.1", "SOC2:CC6.7"],
         dedupe_key=f"infra-tls:{host}:{port}:proto",
         tags=["infra", "tls", "weak-protocol"],
         verification=Verification(
-            method="tls-cert-probe", validated=False, validated_at=now_iso(),
-            validator="infra-scan", independent_reproduction=False, reproductions=1,
+            method="tls-cert-probe",
+            validated=False,
+            validated_at=now_iso(),
+            validator="infra-scan",
+            independent_reproduction=False,
+            reproductions=1,
             false_positive_checks=[f"server negotiated obsolete protocol {proto}"],
-            confidence_score=0.7),
+            confidence_score=0.7,
+        ),
     )
     f.assert_consistent()
     return f
 
 
-def _tls_findings(engagement_id: str, host: str, ip: str | None, port: int, info: dict,
-                  application: str) -> list[Finding]:
+def _tls_findings(
+    engagement_id: str, host: str, ip: str | None, port: int, info: dict, application: str
+) -> list[Finding]:
     out: list[Finding] = []
     expired = bool(info.get("expired"))
     self_signed = bool(info.get("self_signed"))
@@ -511,17 +602,27 @@ def _tls_findings(engagement_id: str, host: str, ip: str | None, port: int, info
             issue, severity = "expired", "medium"
         else:
             issue, severity = "self-signed", "low"
-        out.append(_tls_cert_finding(engagement_id, host, port, issue, severity,
-                                     not_after, proto, application))
+        out.append(
+            _tls_cert_finding(engagement_id, host, port, issue, severity, not_after, proto, application)
+        )
     if proto in _OBSOLETE_TLS:
         out.append(_tls_proto_finding(engagement_id, host, port, proto, application))
     return out
 
 
 # --------------------------------------------------------------------------- entry point
-def scan_infra(host: str, ports: list[int], engagement_id: str = "", target_url: str = "",
-               application: str = "", resolver=None, scope=None, connect_timeout: float = 1.0,
-               tls: bool = True, service_map: dict | None = None) -> list[Finding]:
+def scan_infra(
+    host: str,
+    ports: list[int],
+    engagement_id: str = "",
+    target_url: str = "",
+    application: str = "",
+    resolver=None,
+    scope=None,
+    connect_timeout: float = 1.0,
+    tls: bool = True,
+    service_map: dict | None = None,
+) -> list[Finding]:
     """Scope-gated, non-destructive live infra / exposed-services scan.
 
     Parameters
@@ -581,9 +682,20 @@ def scan_infra(host: str, ports: list[int], engagement_id: str = "", target_url:
                     connects_ok = 1 + (1 if (second is not None and second.get("open")) else 0)
                     if connects_ok >= 2 and control_closed:
                         banner = first.get("banner") or (second.get("banner") if second else "") or ""
-                        findings.append(_exposed_service_finding(
-                            engagement_id, host, ip, port, svc, severity, banner,
-                            application, control_port, connects_ok))
+                        findings.append(
+                            _exposed_service_finding(
+                                engagement_id,
+                                host,
+                                ip,
+                                port,
+                                svc,
+                                severity,
+                                banner,
+                                application,
+                                control_port,
+                                connects_ok,
+                            )
+                        )
 
             if tls and port in _TLS_PORTS:
                 info = _tls_probe(host, ip, port, timeout=max(connect_timeout, 2.0))

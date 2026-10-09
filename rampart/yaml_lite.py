@@ -1,6 +1,6 @@
 """A tiny, fail-closed YAML-subset loader.
 
-The scope/authorization contract (``SECURITY.md``) is safety-critical, so we want it
+The scope/authorization contract (``rampart.scope.yaml``) is safety-critical, so we want it
 parseable even when PyYAML is not installed. This loader supports exactly the subset
 the contract uses — block maps, block lists, inline flow lists/maps, quoted and plain
 scalars, ints/floats/bools/null, and ``#`` comments — and **raises** on anything it
@@ -8,6 +8,7 @@ does not understand rather than guessing (fail-closed).
 
 If PyYAML *is* installed, :func:`load` delegates to it (it is a strict superset).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,10 +41,8 @@ def _strip_comment(line: str) -> str:
             in_s = not in_s
         elif c == '"' and not in_s:
             in_d = not in_d
-        elif c == "#" and not in_s and not in_d:
-            # a comment starts only at start-of-line or after whitespace
-            if i == 0 or line[i - 1] in " \t":
-                break
+        elif c == "#" and not in_s and not in_d and (i == 0 or line[i - 1] in " \t"):
+            break  # a comment starts only at start-of-line or after whitespace
         out.append(c)
         i += 1
     return "".join(out).rstrip()

@@ -1,9 +1,10 @@
 """Attack-surface mapper — builds the application model (blueprint sections 13, 30.3).
 
 Deterministic-heavy: endpoints come from an OpenAPI spec (grey-box "unlock"); ownership
-ground truth comes from seeded test data per SECURITY.md; the intelligence provider only
+ground truth comes from seeded test data per rampart.scope.yaml; the intelligence provider only
 *labels* which endpoints return ownable objects (light LLM, or the deterministic heuristic).
 """
+
 from __future__ import annotations
 
 import json
@@ -27,37 +28,44 @@ def _endpoints_from_openapi(spec: dict) -> list[Endpoint]:
                 continue
             security = op.get("security", None)
             # security: [] means explicitly public (e.g. login); absent -> assume auth required
-            auth_required = not (security == [])
+            auth_required = security != []
             params = [
-                {"name": p.get("name"), "in": p.get("in"),
-                 "type": (p.get("schema") or {}).get("type", "string")}
-                for p in (op.get("parameters") or []) if p.get("name") and p.get("in")
+                {
+                    "name": p.get("name"),
+                    "in": p.get("in"),
+                    "type": (p.get("schema") or {}).get("type", "string"),
+                }
+                for p in (op.get("parameters") or [])
+                if p.get("name") and p.get("in")
             ]
-            eps.append(Endpoint(
-                id=_slug(method, path),
-                method=method.upper(),
-                path=path,
-                auth_required=auth_required,
-                parameters=params,
-                provenance="spec",
-            ))
+            eps.append(
+                Endpoint(
+                    id=_slug(method, path),
+                    method=method.upper(),
+                    path=path,
+                    auth_required=auth_required,
+                    parameters=params,
+                    provenance="spec",
+                )
+            )
     return eps
 
 
-def build_model(scope: EngagementScope, openapi_path: str | None = None,
-                seed_path: str | None = None, intel=None) -> ApplicationModel:
+def build_model(
+    scope: EngagementScope, openapi_path: str | None = None, seed_path: str | None = None, intel=None
+) -> ApplicationModel:
     model = ApplicationModel(engagement_id=scope.authorization.ticket or "engagement")
 
     # 1) endpoints from spec
     if openapi_path:
-        with open(openapi_path, "r", encoding="utf-8") as fh:
+        with open(openapi_path, encoding="utf-8") as fh:
             spec = json.load(fh)
         model.endpoints = _endpoints_from_openapi(spec)
 
     # 2) seed: roles, objects, permissions, endpoint hints
     seed = {}
     if seed_path:
-        with open(seed_path, "r", encoding="utf-8") as fh:
+        with open(seed_path, encoding="utf-8") as fh:
             seed = json.load(fh)
     model.roles = seed.get("roles") or sorted({a.role for a in scope.test_accounts})
     model.objects = [Obj(**o) for o in seed.get("objects", [])]

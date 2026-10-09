@@ -30,7 +30,7 @@ python scripts/demo.py --llm
 
 # your own authorized endpoint:
 python -m rampart llm-test \
-  --scope-file SECURITY.md \
+  --scope-file rampart.scope.yaml \
   --target http://127.0.0.1:9090 \
   --chat-path /chat \
   --input-field message \       # JSON field that holds the user prompt
@@ -44,7 +44,7 @@ looks for exactly that string, so a hit is unambiguous proof of disclosure.
 
 ## Scope
 
-Your `SECURITY.md` must list the LLM host/port in scope and allow `POST` on the chat path, e.g.:
+Your `rampart.scope.yaml` must list the LLM host/port in scope and allow `POST` on the chat path, e.g.:
 
 ```yaml
 scope:

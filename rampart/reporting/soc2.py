@@ -7,6 +7,7 @@ control now operates effectively — the kind of before/after, operating-over-ti
 SOC 2 **Type 2** examination looks for (a Type 2 opinion still requires evidence across the
 whole review period, which the auditor assembles).
 """
+
 from __future__ import annotations
 
 import re
@@ -27,9 +28,16 @@ TSC = {
 
 # vuln_class -> the primary TSC control it provides evidence for (fallback when a finding has no SOC2 ref).
 _CLASS_TSC = {
-    "IDOR/BOLA": "CC6.1", "BFLA": "CC6.3", "EXCESSIVE_DATA": "CC6.1",
-    "SQLI": "CC6.8", "CMDI": "CC6.8", "XSS": "CC6.8", "PATH_TRAVERSAL": "CC6.1",
-    "OPEN_REDIRECT": "CC6.6", "SSRF": "CC6.6", "LLM": "CC6.8",
+    "IDOR/BOLA": "CC6.1",
+    "BFLA": "CC6.3",
+    "EXCESSIVE_DATA": "CC6.1",
+    "SQLI": "CC6.8",
+    "CMDI": "CC6.8",
+    "XSS": "CC6.8",
+    "PATH_TRAVERSAL": "CC6.1",
+    "OPEN_REDIRECT": "CC6.6",
+    "SSRF": "CC6.6",
+    "LLM": "CC6.8",
     "security-misconfiguration": "CC7.1",
 }
 
@@ -56,18 +64,25 @@ def soc2_report(findings, scan, scope) -> str:
 
     fixed = [f for f in reported if f.state in (State.FIXED,)]
     agent = [f for f in reported if "agent-assessed" in f.tags]
-    open_exc = [f for f in reported if f.verification.validated and f.state not in (State.FIXED,)
-                and "agent-assessed" not in f.tags]
+    open_exc = [
+        f
+        for f in reported
+        if f.verification.validated and f.state not in (State.FIXED,) and "agent-assessed" not in f.tags
+    ]
 
     L = ["# SOC 2 control-effectiveness evidence", ""]
-    L.append(f"*Engagement* **{scope.authorization.ticket or 'engagement'}** · "
-             f"authorized by **{scope.authorization.authorized_by}**")
+    L.append(
+        f"*Engagement* **{scope.authorization.ticket or 'engagement'}** · "
+        f"authorized by **{scope.authorization.authorized_by}**"
+    )
     L.append("")
-    L.append("> **What this is:** automated, reproducible evidence that application security controls "
-             "mapped to the SOC 2 Trust Services Criteria are (or are not) operating effectively. "
-             "**What this is not:** a SOC 2 report or attestation — only a licensed CPA firm issues that. "
-             "A **Type 2** opinion also requires evidence spanning the full review period; the test + "
-             "retest results below are inputs an auditor can rely on, not the opinion itself.")
+    L.append(
+        "> **What this is:** automated, reproducible evidence that application security controls "
+        "mapped to the SOC 2 Trust Services Criteria are (or are not) operating effectively. "
+        "**What this is not:** a SOC 2 report or attestation — only a licensed CPA firm issues that. "
+        "A **Type 2** opinion also requires evidence spanning the full review period; the test + "
+        "retest results below are inputs an auditor can rely on, not the opinion itself."
+    )
     L.append("")
 
     # ---- control coverage summary ----
@@ -92,8 +107,10 @@ def soc2_report(findings, scan, scope) -> str:
     else:
         for f in sorted(open_exc, key=lambda f: f.severity):
             ctrls = ", ".join(sorted(_controls_for(f)))
-            L.append(f"- **[{f.severity.upper()}] {f.title}** — TSC {ctrls} · {', '.join(f.cwe)} · "
-                     f"finding `{f.id}`")
+            L.append(
+                f"- **[{f.severity.upper()}] {f.title}** — TSC {ctrls} · {', '.join(f.cwe)} · "
+                f"finding `{f.id}`"
+            )
             if f.remediation.summary:
                 L.append(f"    - *Remediation:* {f.remediation.summary}")
     L.append("")
@@ -102,27 +119,37 @@ def soc2_report(findings, scan, scope) -> str:
     if agent:
         L.append("## Agent-assessed observations (pending human confirmation)")
         L.append("")
-        L.append("> Reasoning-based findings (e.g. business-logic abuse) the agent flagged but no "
-                 "deterministic oracle can prove. Treat as auditor review items, not confirmed exceptions.")
+        L.append(
+            "> Reasoning-based findings (e.g. business-logic abuse) the agent flagged but no "
+            "deterministic oracle can prove. Treat as auditor review items, not confirmed exceptions."
+        )
         for f in agent:
             ctrls = ", ".join(sorted(_controls_for(f)))
-            L.append(f"- **[{f.severity.upper()}] {f.title}** — TSC {ctrls} · finding `{f.id}` (agent-assessed)")
+            L.append(
+                f"- **[{f.severity.upper()}] {f.title}** — TSC {ctrls} · finding `{f.id}` (agent-assessed)"
+            )
         L.append("")
 
     # ---- operating effectiveness (retest / Type 2 oriented) ----
     L.append("## Operating effectiveness (retest evidence)")
     L.append("")
     if not fixed:
-        L.append("*No retest-confirmed remediations yet. After fixes land, run* `rampart retest` *to "
-                 "produce before/after evidence that each control now operates effectively.*")
+        L.append(
+            "*No retest-confirmed remediations yet. After fixes land, run* `rampart retest` *to "
+            "produce before/after evidence that each control now operates effectively.*"
+        )
     else:
         for f in fixed:
             ctrls = ", ".join(sorted(_controls_for(f)))
             lr = f.verification.last_retest or {}
-            L.append(f"- **{f.title}** — TSC {ctrls}: was CONFIRMED vulnerable, now **{lr.get('result','fixed')}** "
-                     f"on retest at {lr.get('at','')}. Evidence that the control is operating effectively.")
+            L.append(
+                f"- **{f.title}** — TSC {ctrls}: was CONFIRMED vulnerable, now **{lr.get('result', 'fixed')}** "
+                f"on retest at {lr.get('at', '')}. Evidence that the control is operating effectively."
+            )
     L.append("")
     L.append("---")
-    L.append("*Generated by Rampart. Hand this, the evidence bundle, and the hash-chained audit log to "
-             "your auditor as control-testing evidence.*")
+    L.append(
+        "*Generated by Rampart. Hand this, the evidence bundle, and the hash-chained audit log to "
+        "your auditor as control-testing evidence.*"
+    )
     return "\n".join(L)

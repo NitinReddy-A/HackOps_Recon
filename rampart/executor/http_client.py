@@ -10,6 +10,7 @@ Design points that make it safe and replayable:
   session *reference*, never a raw token);
 * returns a hashed, sized, timed response suitable for the audit log and evidence store.
 """
+
 from __future__ import annotations
 
 import http.client
@@ -17,8 +18,8 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
-from ..util import sha256_hex
 from ..schemas.toolcall import ToolAction
+from ..util import sha256_hex
 
 
 @dataclass
@@ -38,8 +39,9 @@ class HttpResponse:
         return sha256_hex(self.body)
 
 
-def raw_request(scheme, host, port, resolved_ip, method, path, query=None,
-                headers=None, body=None, timeout=10.0) -> HttpResponse:
+def raw_request(
+    scheme, host, port, resolved_ip, method, path, query=None, headers=None, body=None, timeout=10.0
+) -> HttpResponse:
     headers = dict(headers or {})
     path_q = path
     if query:
@@ -59,9 +61,14 @@ def raw_request(scheme, host, port, resolved_ip, method, path, query=None,
         raw = resp.read()
         dur = (time.monotonic() - start) * 1000.0
         text = raw.decode("utf-8", errors="replace")
-        hdrs = {k: v for k, v in resp.getheaders()}
-        return HttpResponse(status=resp.status, headers=hdrs, body=text,
-                            url=f"{scheme}://{host}:{port}{path_q}", duration_ms=dur)
+        hdrs = dict(resp.getheaders())
+        return HttpResponse(
+            status=resp.status,
+            headers=hdrs,
+            body=text,
+            url=f"{scheme}://{host}:{port}{path_q}",
+            duration_ms=dur,
+        )
     finally:
         conn.close()
 

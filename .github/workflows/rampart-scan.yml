@@ -3,7 +3,7 @@
 #
 # On this repo it runs as a SELF-CONTAINED DEMO: it spins up the bundled,
 # intentionally-vulnerable demo target (examples/demo_target), scans it against
-# the demo's own committed SECURITY.md authorization contract, and publishes the
+# the demo's own committed rampart.scope.yaml authorization contract, and publishes the
 # full report bundle (SARIF + HTML + Markdown + JSON) as a downloadable workflow
 # artifact. Everything stays on loopback — there is no route to any real asset —
 # so it is safe to run on every push.
@@ -17,7 +17,7 @@
 # github/codeql-action/upload-sarif — see the commented step at the end.
 #
 # TO USE THIS IN YOUR OWN REPOSITORY, copy this file and:
-#   1. Commit a real SECURITY.md authorization contract (see SECURITY.md.example
+#   1. Commit a real rampart.scope.yaml authorization contract (see rampart.scope.yaml.example
 #      at the repo root). It names an accountable owner, the in-scope host(s),
 #      an expiry, and seeded test accounts. Without a valid, unexpired, in-scope
 #      contract Rampart refuses to run (fail-closed) — the authorization gate.
@@ -82,7 +82,7 @@ jobs:
         # In your own repo, add `--ci --fail-on high` to gate the build.
         run: |
           python -m rampart test \
-            --scope-file examples/demo_target/SECURITY.md \
+            --scope-file examples/demo_target/rampart.scope.yaml \
             --target "${{ github.event.inputs.target || 'http://127.0.0.1:8080' }}" \
             --secrets examples/demo_target/secrets.json \
             --openapi examples/demo_target/openapi.json \
