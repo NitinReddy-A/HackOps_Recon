@@ -33,8 +33,8 @@ If you keep those two in mind, you'll fit right in.
 You need **Python 3.10+** and nothing else — the core has zero runtime dependencies.
 
 ```bash
-git clone https://github.com/NitinReddy-A/HackOps_Recon.git
-cd HackOps_Recon
+git clone https://github.com/NitinReddy-A/rampart.git
+cd rampart
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"        # editable install + pytest + ruff + pre-commit
 pre-commit install             # run lint/format on every commit (optional but nice)
@@ -114,7 +114,7 @@ please follow [`SECURITY.md`](SECURITY.md) instead of opening a public issue.
 
 ## Questions
 
-Open a [discussion or issue](https://github.com/NitinReddy-A/HackOps_Recon/issues), or email
+Open a [discussion or issue](https://github.com/NitinReddy-A/rampart/issues), or email
 **nitin.code2@gmail.com**.
 
 By contributing, you agree that your contributions are licensed under the project's

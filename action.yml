@@ -1,7 +1,7 @@
 # Composite GitHub Action for Rampart.
 # Usage in a consumer workflow:
 #
-#   - uses: NitinReddy-A/HackOps_Recon@v1.0.0
+#   - uses: NitinReddy-A/rampart@v1.0.0
 #     with:
 #       target: https://staging.example.com      # authorized target (required)
 #       scope-file: rampart.scope.yaml                   # authorization contract

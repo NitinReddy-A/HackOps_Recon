@@ -86,5 +86,5 @@ All notable changes to Rampart are documented here. The format follows
 - First release: the BOLA/IDOR vertical slice carried end-to-end — scope gate → app model →
   hypothesis → controlled probe → independent validation → finding → advisory patch → retest.
 
-[Unreleased]: https://github.com/NitinReddy-A/HackOps_Recon/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/NitinReddy-A/HackOps_Recon/releases/tag/v1.0.0
+[Unreleased]: https://github.com/NitinReddy-A/rampart/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/NitinReddy-A/rampart/releases/tag/v1.0.0

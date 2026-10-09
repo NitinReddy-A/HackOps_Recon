@@ -57,10 +57,10 @@ all = ["PyYAML>=6.0", "playwright>=1.40", "grpcio>=1.60", "grpcio-reflection>=1.
 rampart = "rampart.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/NitinReddy-A/HackOps_Recon"
-Repository = "https://github.com/NitinReddy-A/HackOps_Recon"
-Issues = "https://github.com/NitinReddy-A/HackOps_Recon/issues"
-Changelog = "https://github.com/NitinReddy-A/HackOps_Recon/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/NitinReddy-A/rampart"
+Repository = "https://github.com/NitinReddy-A/rampart"
+Issues = "https://github.com/NitinReddy-A/rampart/issues"
+Changelog = "https://github.com/NitinReddy-A/rampart/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = { attr = "rampart.version.__version__" }

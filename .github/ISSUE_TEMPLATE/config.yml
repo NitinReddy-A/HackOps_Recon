@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability in Rampart
-    url: https://github.com/NitinReddy-A/HackOps_Recon/blob/main/SECURITY.md
+    url: https://github.com/NitinReddy-A/rampart/blob/main/SECURITY.md
     about: Please report security issues privately — do not open a public issue.
   - name: Questions and ideas
-    url: https://github.com/NitinReddy-A/HackOps_Recon/discussions
+    url: https://github.com/NitinReddy-A/rampart/discussions
     about: For open-ended questions and discussion.
