@@ -411,14 +411,19 @@ class DeterministicProvider(IntelligenceProvider):
         var = ctx.get("object_var", "order")
         owner_attr = ctx.get("owner_attr", "owner_id")
         principal = ctx.get("principal_expr", "current_principal.id")
+        guard = [
+            f"if {var}.{owner_attr} != {principal}:",
+            "    raise Forbidden()  # object-level authorization (CWE-639)",
+        ]
+        # Illustrative sketch only (no file headers): the remediator turns ``insert_before_return``
+        # into a real unified diff against the located source when it has one, and otherwise ships
+        # this sketch as a Markdown advisory — never as an appliable .patch.
         diff = (
             f"  {var} = {ctx.get('fetch_expr', f'{var.capitalize()}.get(id)')}\n"
-            f"- return {var}\n"
-            f"+ if {var}.{owner_attr} != {principal}:\n"
-            f"+     raise Forbidden()          # object-level authorization (CWE-639)\n"
-            f"+ return {var}\n"
+            f"- return {var}\n" + "".join(f"+ {g}\n" for g in guard) + f"+ return {var}\n"
         )
         return {
             "diff": diff,
+            "insert_before_return": guard,
             "explanation": "Adds the missing ownership check immediately after the object is loaded.",
         }
