@@ -12,8 +12,105 @@ import json
 
 from ..schemas.finding import State
 from ..version import __version__
+from .mdsafe import md, md_code, md_fence, md_join
+from .status import (
+    SEV_ORDER,
+    SEV_RANK,
+    is_confirmed,
+    is_fixed,
+    is_static,
+    is_validated,
+    norm_severity,
+    sev_rank,
+)
 
-_SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+_SEV_ORDER = SEV_RANK
+# Same weights the correlation engine uses for the aggregate risk score.
+_SEV_WEIGHT = {"critical": 40, "high": 25, "medium": 10, "low": 3, "info": 1}
+
+
+def _risk_band(score: int) -> str:
+    if score >= 80:
+        return "Critical"
+    if score >= 55:
+        return "High"
+    if score >= 30:
+        return "Medium"
+    return "Low" if score > 0 else "Informational"
+
+
+_CWE_NAMES = {
+    "CWE-16": "Configuration",
+    "CWE-20": "Improper Input Validation",
+    "CWE-22": "Path Traversal",
+    "CWE-77": "Command Injection",
+    "CWE-78": "OS Command Injection",
+    "CWE-79": "Cross-site Scripting (XSS)",
+    "CWE-89": "SQL Injection",
+    "CWE-90": "LDAP Injection",
+    "CWE-91": "XML Injection",
+    "CWE-94": "Code Injection",
+    "CWE-95": "Eval Injection",
+    "CWE-200": "Exposure of Sensitive Information",
+    "CWE-284": "Improper Access Control",
+    "CWE-285": "Improper Authorization",
+    "CWE-287": "Improper Authentication",
+    "CWE-295": "Improper Certificate Validation",
+    "CWE-306": "Missing Authentication for Critical Function",
+    "CWE-311": "Missing Encryption of Sensitive Data",
+    "CWE-319": "Cleartext Transmission of Sensitive Information",
+    "CWE-326": "Inadequate Encryption Strength",
+    "CWE-327": "Use of a Broken or Risky Cryptographic Algorithm",
+    "CWE-347": "Improper Verification of Cryptographic Signature",
+    "CWE-352": "Cross-Site Request Forgery (CSRF)",
+    "CWE-444": "HTTP Request Smuggling",
+    "CWE-502": "Deserialization of Untrusted Data",
+    "CWE-522": "Insufficiently Protected Credentials",
+    "CWE-538": "Insertion of Sensitive Information into Externally-Accessible File",
+    "CWE-601": "Open Redirect",
+    "CWE-611": "XML External Entity (XXE)",
+    "CWE-614": "Sensitive Cookie Without 'Secure' Attribute",
+    "CWE-639": "Authorization Bypass Through User-Controlled Key (IDOR)",
+    "CWE-644": "Improper Neutralization of HTTP Headers for Scripting Syntax",
+    "CWE-693": "Protection Mechanism Failure",
+    "CWE-770": "Allocation of Resources Without Limits or Throttling",
+    "CWE-798": "Use of Hard-coded Credentials",
+    "CWE-862": "Missing Authorization",
+    "CWE-863": "Incorrect Authorization",
+    "CWE-915": "Mass Assignment",
+    "CWE-918": "Server-Side Request Forgery (SSRF)",
+    "CWE-942": "Permissive Cross-domain Policy",
+    "CWE-1004": "Sensitive Cookie Without 'HttpOnly' Flag",
+    "CWE-1021": "Improper Restriction of Rendered UI Layers (Clickjacking)",
+    "CWE-1104": "Use of Unmaintained Third Party Components",
+    "CWE-1336": "Server-Side Template Injection",
+}
+
+
+def _sarif_rule(rid: str, f) -> dict:
+    """A SARIF reportingDescriptor describing the *rule* (CWE / class), not any one finding."""
+    if rid.startswith("CWE-"):
+        name = _CWE_NAMES.get(rid)
+        text = f"{rid}: {name}" if name else f"{rid} ({f.vuln_class or 'weakness'})"
+    else:
+        text = f"Rampart check: {rid}"
+    rule = {"id": rid, "name": f.vuln_class or rid, "shortDescription": {"text": text}}
+    help_uri = next(
+        (r for r in (f.references or []) if isinstance(r, str) and r.startswith(("https://", "http://"))),
+        "",
+    )
+    if not help_uri and rid.startswith("CWE-") and rid[4:].isdigit():
+        help_uri = f"https://cwe.mitre.org/data/definitions/{rid[4:]}.html"
+    if help_uri:  # an empty string is not a valid URI — omit the property instead
+        rule["helpUri"] = help_uri
+    return rule
+
+
+def sev_label(sev) -> str:
+    """Upper-case severity label that tolerates odd values (unknown -> INFO)."""
+    return norm_severity(sev).upper()
+
+
 _SEV_COLOR = {
     "critical": "#b4232c",
     "high": "#d1495b",
@@ -34,7 +131,7 @@ def owasp_tags(f) -> list:
 class ReportBuilder:
     def __init__(self, findings, scope, appmodel, scan, budget_snapshot, audit_events=0):
         self.findings = sorted(
-            findings, key=lambda f: (_SEV_ORDER.get(f.severity, 9), 0 if f.verification.validated else 1)
+            findings, key=lambda f: (sev_rank(f.severity), 0 if f.verification.validated else 1)
         )
         self.scope = scope
         self.appmodel = appmodel
@@ -44,14 +141,26 @@ class ReportBuilder:
 
     # ------------------------------------------------------------ metrics
     def metrics(self) -> dict:
-        confirmed = [f for f in self.findings if f.verification.validated and f.state != State.DROPPED]
+        confirmed = [f for f in self.findings if is_confirmed(f)]
+        fixed = [f for f in self.findings if is_fixed(f)]
         dropped = [f for f in self.findings if f.state == State.DROPPED]
         reported = [f for f in self.findings if f.state != State.DROPPED]
         external = [f for f in reported if "external-scanner" in f.tags]
         by_sev, by_class = {}, {}
         for f in reported:
-            by_sev[f.severity] = by_sev.get(f.severity, 0) + 1
+            if is_fixed(f):
+                continue  # remediated: counted under "fixed", not as an open finding
+            sev = norm_severity(f.severity)
+            by_sev[sev] = by_sev.get(sev, 0) + 1
             by_class[f.vuln_class] = by_class.get(f.vuln_class, 0) + 1
+        # White-box (SAST/SCA/IaC) findings are not runtime-validated, so the correlation risk
+        # score ignores them; surface their exposure separately instead of reporting "0/100".
+        static_open = [f for f in reported if is_static(f) and not is_validated(f) and not is_fixed(f)]
+        static_by_sev = {}
+        for f in static_open:
+            sev = norm_severity(f.severity)
+            static_by_sev[sev] = static_by_sev.get(sev, 0) + 1
+        static_score = min(100, sum(_SEV_WEIGHT[norm_severity(f.severity)] for f in static_open))
         # validation rate is over Rampart's own oracle-gated candidates (exclude external leads)
         own = [f for f in reported if "external-scanner" not in f.tags]
         total_candidates = len(own) + len(dropped)
@@ -62,6 +171,7 @@ class ReportBuilder:
         )
         return {
             "confirmed": len(confirmed),
+            "fixed": len(fixed),
             "reported": len(reported),
             "external_leads": len(external),
             "dropped_candidates": len(dropped),
@@ -88,6 +198,10 @@ class ReportBuilder:
                 [f for f in self.findings if "sast" in f.tags and f.state != State.DROPPED]
             ),
             "source_correlated": len([f for f in self.findings if "source-correlated" in f.tags]),
+            "static_unvalidated": len(static_open),
+            "static_by_severity": static_by_sev,
+            "static_risk_score": static_score,
+            "static_risk_band": _risk_band(static_score),
         }
 
     # --------------------------------------------------------------- JSON
@@ -112,19 +226,13 @@ class ReportBuilder:
         rules, rule_ids = [], set()
         results = []
         for f in self.findings:
-            if f.state == State.DROPPED:
+            # Dropped candidates are not findings; Fixed ones are omitted so code scanning closes them.
+            if f.state == State.DROPPED or is_fixed(f):
                 continue
             rid = (f.cwe[0] if f.cwe else f.vuln_class) or "finding"
             if rid not in rule_ids:
                 rule_ids.add(rid)
-                rules.append(
-                    {
-                        "id": rid,
-                        "name": f.vuln_class or rid,
-                        "shortDescription": {"text": f.title},
-                        "helpUri": (f.references[0] if f.references else ""),
-                    }
-                )
+                rules.append(_sarif_rule(rid, f))
             results.append(f.to_sarif_result())
         doc = {
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
@@ -146,14 +254,17 @@ class ReportBuilder:
         return json.dumps(doc, indent=2, default=str)
 
     # ----------------------------------------------------------- Markdown
+    # Every string that can carry target-controlled text goes through ``md`` / ``md_code`` /
+    # ``md_fence`` (see mdsafe.py): rendered Markdown passes raw HTML through.
     def to_markdown(self) -> str:
         m = self.metrics()
+        auth = self.scope.authorization
         L = []
-        L.append(f"# Rampart assessment report — {self.scope.authorization.ticket or 'engagement'}")
+        L.append(f"# Rampart assessment report — {md(auth.ticket or 'engagement')}")
         L.append("")
         L.append(
-            f"*Authorized by* **{self.scope.authorization.authorized_by}** · "
-            f"*owner* **{self.scope.authorization.owner}** · tool `rampart {__version__}`"
+            f"*Authorized by* **{md(auth.authorized_by)}** · "
+            f"*owner* **{md(auth.owner)}** · tool `rampart {__version__}`"
         )
         L.append("")
         L.append(self._executive_summary_md(m))
@@ -162,6 +273,8 @@ class ReportBuilder:
         L.append(
             f"- **{m['confirmed']}** confirmed finding(s), independently validated with reproducible proof"
         )
+        if m["fixed"]:
+            L.append(f"- **{m['fixed']}** finding(s) verified **fixed** by retest (listed separately)")
         L.append(
             f"- **{m['dropped_candidates']}** candidate(s) dropped by the validation gate (false-positive control)"
         )
@@ -179,9 +292,11 @@ class ReportBuilder:
                 "shown separately, not counted as confirmed)"
             )
         L.append(
-            f"- **Aggregate risk: {m['risk_score']}/100 ({m['risk_band']})** · "
+            f"- **Aggregate risk: {md(m['risk_score'])}/100 ({md(m['risk_band'])})** · "
             f"{m['attack_chains']} attack chain(s) identified"
         )
+        if m["static_unvalidated"]:
+            L.append(f"- **Static-analysis exposure:** {md(self._static_risk_text(m))}")
         L.append("")
         L.append(self._coverage_md(m))
         L.append(self._chains_md())
@@ -189,61 +304,20 @@ class ReportBuilder:
         L.append(self._roadmap_md())
         L.append("## Findings")
         for f in self.findings:
-            if f.state == State.DROPPED:
+            if f.state == State.DROPPED or is_fixed(f):
                 continue
+            L.extend(self._finding_md(f))
+        fixed = [f for f in self.findings if is_fixed(f)]
+        if fixed:
             L.append("")
-            L.append(f"### [{f.severity.upper()}] {f.title}")
+            L.append("## Fixed (verified by retest)")
             L.append("")
-            if "agent-assessed" in f.tags:
-                badge = "🤖 AGENT-ASSESSED (human review recommended)"
-            elif "external-scanner" in f.tags:
-                badge = f"🔎 external lead ({f.verification.validator}, unvalidated)"
-            elif f.verification.validated:
-                badge = "✅ CONFIRMED (validated)"
-            else:
-                badge = f"⏳ {f.confidence}"
             L.append(
-                f"- **Status:** {badge} · state `{f.state}` · {', '.join(f.cwe)} · {', '.join(owasp_tags(f))}"
+                "Previously confirmed findings that a retest no longer reproduces. They are not "
+                "counted as confirmed or open."
             )
-            if f.cvss.vector:
-                L.append(
-                    f"- **CVSS {f.cvss.version}:** {f.cvss.base_score} ({f.cvss.severity}) `{f.cvss.vector}`"
-                )
-            if f.endpoint.get("url"):
-                L.append(f"- **Endpoint:** `{f.endpoint.get('method', '')} {f.endpoint['url']}`")
-            L.append(f"- **Description:** {f.description}")
-            if f.impact:
-                L.append(f"- **Impact:** {f.impact}")
-            if f.root_cause:
-                L.append(f"- **Root cause:** {f.root_cause}")
-            if f.verification.validated:
-                L.append(
-                    f"- **Proof (independent validation, {f.verification.reproductions} reproductions):**"
-                )
-                for chk in f.verification.false_positive_checks:
-                    L.append(f"    - {chk}")
-            if f.reproduction.steps:
-                L.append("- **Reproduction:**")
-                for i, s in enumerate(f.reproduction.steps, 1):
-                    L.append(f"    {i}. {s}")
-            if f.affected_code and f.affected_code.file:
-                L.append(
-                    f"- **Affected code:** `{f.affected_code.file}:{f.affected_code.start_line}` "
-                    f"(via {f.affected_code.detected_by})"
-                )
-            if f.remediation.summary or f.remediation.guidance:
-                L.append(f"- **Remediation:** {f.remediation.summary}")
-                if f.remediation.guidance:
-                    L.append(f"    - {f.remediation.guidance}")
-            if f.remediation.proposed_diff:
-                L.append("- **Advisory patch (not auto-applied):**")
-                L.append("")
-                L.append("    ```diff")
-                for line in f.remediation.proposed_diff.splitlines():
-                    L.append("    " + line)
-                L.append("    ```")
-            if f.compliance_control_refs:
-                L.append(f"- **Compliance evidence:** {', '.join(f.compliance_control_refs)}")
+            for f in fixed:
+                L.extend(self._finding_md(f))
         L.append("")
         L.append("---")
         L.append(
@@ -252,6 +326,73 @@ class ReportBuilder:
         )
         return "\n".join(L)
 
+    def _static_risk_text(self, m) -> str:
+        counts = ", ".join(
+            f"{m['static_by_severity'][s]} {s}" for s in SEV_ORDER if m["static_by_severity"].get(s)
+        )
+        return (
+            f"{m['static_risk_score']}/100 ({m['static_risk_band']}) from "
+            f"{m['static_unvalidated']} unvalidated SAST/SCA/IaC finding(s) ({counts}), "
+            "not included in the aggregate risk score"
+        )
+
+    def _finding_md(self, f) -> list:
+        L = ["", f"### [{sev_label(f.severity)}] {md(f.title)}", ""]
+        if is_fixed(f):
+            badge = "🟢 FIXED (verified by retest)"
+        elif "agent-assessed" in f.tags:
+            badge = "🤖 AGENT-ASSESSED (human review recommended)"
+        elif "external-scanner" in f.tags:
+            badge = f"🔎 external lead ({md(f.verification.validator)}, unvalidated)"
+        elif f.verification.validated:
+            badge = "✅ CONFIRMED (validated)"
+        else:
+            badge = f"⏳ {md(f.confidence)}"
+        L.append(
+            f"- **Status:** {badge} · state {md_code(f.state)} · {md_join(f.cwe)} · {md_join(owasp_tags(f))}"
+        )
+        if f.cvss.vector:
+            L.append(
+                f"- **CVSS {md(f.cvss.version)}:** {md(f.cvss.base_score)} ({md(f.cvss.severity)}) "
+                f"{md_code(f.cvss.vector)}"
+            )
+        if f.endpoint.get("url"):
+            endpoint = f"{f.endpoint.get('method', '')} {f.endpoint['url']}"
+            L.append(f"- **Endpoint:** {md_code(endpoint)}")
+        L.append(f"- **Description:** {md(f.description)}")
+        if f.impact:
+            L.append(f"- **Impact:** {md(f.impact)}")
+        if f.root_cause:
+            L.append(f"- **Root cause:** {md(f.root_cause)}")
+        if f.verification.validated:
+            L.append(
+                f"- **Proof (independent validation, {md(f.verification.reproductions)} reproductions):**"
+            )
+            for chk in f.verification.false_positive_checks:
+                L.append(f"    - {md(chk)}")
+        if is_fixed(f):
+            lr = f.verification.last_retest or {}
+            L.append(f"- **Retest:** {md(lr.get('result', 'fixed'))} at {md(lr.get('at', ''))}")
+        if f.reproduction.steps:
+            L.append("- **Reproduction:**")
+            for i, s in enumerate(f.reproduction.steps, 1):
+                L.append(f"    {i}. {md(s)}")
+        if f.affected_code and f.affected_code.file:
+            loc = f"{f.affected_code.file}:{f.affected_code.start_line}"
+            L.append(f"- **Affected code:** {md_code(loc)} (via {md(f.affected_code.detected_by)})")
+        if f.remediation.summary or f.remediation.guidance:
+            L.append(f"- **Remediation:** {md(f.remediation.summary)}")
+            if f.remediation.guidance:
+                L.append(f"    - {md(f.remediation.guidance)}")
+        if f.compliance_control_refs:
+            L.append(f"- **Compliance evidence:** {md_join(f.compliance_control_refs)}")
+        if f.remediation.proposed_diff:
+            # column-0 fence after the list: literal in every renderer, never parsed as HTML
+            L.append("- **Advisory patch (not auto-applied):**")
+            L.append("")
+            L.extend(md_fence(f.remediation.proposed_diff, "diff"))
+        return L
+
     # -------------------------------------------------------- coverage
     def _coverage_md(self, m) -> str:
         from ..agents import describe_roster
@@ -259,24 +400,24 @@ class ReportBuilder:
         scan = self.scan or {}
         L = ["## Coverage & methodology", ""]
         classes = m.get("classes_tested") or sorted({f.vuln_class for f in self.findings})
-        L.append(f"- **Vulnerability classes tested:** {', '.join(classes) or '—'}")
+        L.append(f"- **Vulnerability classes tested:** {md_join(classes) or '—'}")
         plan = scan.get("plan") or {}
         if plan.get("order"):
-            L.append(f"- **Planner priority:** {', '.join(plan['order'])}")
+            L.append(f"- **Planner priority:** {md_join(plan['order'])}")
         runs = scan.get("scanner_runs") or []
         if runs:
             parts = []
             for r in runs:
                 if r.get("available"):
-                    parts.append(f"{r['scanner']} ({r.get('findings', 0)} leads)")
+                    parts.append(f"{md(r.get('scanner'))} ({md(r.get('findings', 0))} leads)")
                 else:
-                    parts.append(f"{r['scanner']} (not installed)")
+                    parts.append(f"{md(r.get('scanner'))} (not installed)")
             L.append(f"- **External OSS scanners:** {', '.join(parts)}")
         probe_log = scan.get("llm_probe_log") or []
         if probe_log:
-            confirmed = [p for p in probe_log if p["result"] == "confirmed"]
+            confirmed = [p for p in probe_log if p.get("result") == "confirmed"]
             L.append(f"- **OWASP LLM Top-10 probes:** {len(confirmed)}/{len(probe_log)} classes vulnerable")
-        L.append("- **Agent pipeline:** " + " → ".join(r["role"] for r in describe_roster()))
+        L.append("- **Agent pipeline:** " + " → ".join(md(r["role"]) for r in describe_roster()))
         L.append(
             "- **Trust rule:** only findings re-derived by an independent deterministic oracle "
             "are marked *confirmed*; external-scanner results are unvalidated leads."
@@ -286,22 +427,25 @@ class ReportBuilder:
 
     # -------------------------------------------------------- executive summary
     def executive_summary(self, m=None) -> str:
-        """One-paragraph, plain-English verdict for a decision-maker."""
+        """One-paragraph, plain-English verdict for a decision-maker (plain text, not Markdown)."""
         m = m or self.metrics()
         corr = (self.scan or {}).get("correlation") or {}
-        classes = sorted(
-            {f.vuln_class for f in self.findings if f.verification.validated and f.state != State.DROPPED}
-        )
+        classes = sorted({f.vuln_class for f in self.findings if is_confirmed(f)})
         if not m["confirmed"]:
-            return (
-                "No vulnerabilities were confirmed. Every candidate was dropped by the "
-                "independent validation gate, so there are no false positives to triage."
-            )
-        worst = min(
-            corr.get("chains", []),
-            key=lambda c: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(c["severity"], 4),
-            default=None,
-        )
+            if m.get("fixed"):
+                text = (
+                    f"No open vulnerabilities remain confirmed: {m['fixed']} previously confirmed "
+                    "finding(s) were verified fixed by retest."
+                )
+            else:
+                text = (
+                    "No vulnerabilities were confirmed. Every candidate was dropped by the "
+                    "independent validation gate, so there are no false positives to triage."
+                )
+            if m.get("static_unvalidated"):
+                text += f" Static analysis exposure: {self._static_risk_text(m)}."
+            return text
+        worst = min(corr.get("chains", []), key=lambda c: sev_rank(c.get("severity")), default=None)
         bits = [
             f"The assessment confirmed {m['confirmed']} vulnerabilit"
             f"{'y' if m['confirmed'] == 1 else 'ies'} across {len(classes)} class(es) "
@@ -310,22 +454,26 @@ class ReportBuilder:
         ]
         if worst:
             bits.append(
-                f'The most serious exposure is "{worst["title"]}" — '
+                f'The most serious exposure is "{worst.get("title", "")}" — '
                 f"{len(corr.get('chains', []))} attack chain(s) were identified in total."
             )
         if corr.get("roadmap"):
             top = corr["roadmap"][0]
-            bits.append(f"Highest-priority fix: {top['summary']}")
+            bits.append(f"Highest-priority fix: {top.get('summary', '')}")
+        if m.get("fixed"):
+            bits.append(f"{m['fixed']} previously confirmed finding(s) were verified fixed by retest.")
         if m.get("agent_assessed"):
             bits.append(
                 f"Additionally, the reasoning agents flagged {m['agent_assessed']} "
                 "agent-assessed issue(s) (e.g. business-logic abuse) for human confirmation — "
                 "these are reported separately from oracle-confirmed findings."
             )
+        if m.get("static_unvalidated"):
+            bits.append(f"Static analysis exposure: {self._static_risk_text(m)}.")
         return " ".join(bits)
 
     def _executive_summary_md(self, m) -> str:
-        return "## Executive summary\n\n" + self.executive_summary(m) + "\n"
+        return "## Executive summary\n\n" + md(self.executive_summary(m)) + "\n"
 
     # -------------------------------------------------------- chains / roadmap
     def _chains_md(self) -> str:
@@ -341,12 +489,12 @@ class ReportBuilder:
         ]
         for c in chains:
             tag = " _(agent-assessed — human review)_" if c.get("agent_assessed") else ""
-            L.append(f"### [{c['severity'].upper()}] {c['title']}{tag}")
-            L.append(f"- *Why:* {c['rationale']}")
-            for i, step in enumerate(c["steps"], 1):
-                L.append(f"    {i}. {step}")
+            L.append(f"### [{sev_label(c.get('severity'))}] {md(c.get('title', ''))}{tag}")
+            L.append(f"- *Why:* {md(c.get('rationale', ''))}")
+            for i, step in enumerate(c.get("steps") or [], 1):
+                L.append(f"    {i}. {md(step)}")
             if c.get("contributing"):
-                L.append(f"- *Built from:* {', '.join(c['contributing'])}")
+                L.append(f"- *Built from:* {md_join(c['contributing'])}")
             L.append("")
         return "\n".join(L)
 
@@ -357,12 +505,15 @@ class ReportBuilder:
             return ""
         L = ["## Remediation roadmap (prioritized)", ""]
         for i, r in enumerate(roadmap, 1):
-            fixes = f" — fixes {r['count']} finding(s): {', '.join(r['classes'])}" if r.get("count") else ""
+            fixes = ""
+            if r.get("count"):
+                fixes = f" — fixes {md(r['count'])} finding(s): {md_join(r.get('classes'))}"
             L.append(
-                f"{i}. **[{r['severity'].upper()}, {r.get('effort', '?')} effort]** {r['summary']}{fixes}"
+                f"{i}. **[{sev_label(r.get('severity'))}, {md(r.get('effort', '?'))} effort]** "
+                f"{md(r.get('summary', ''))}{fixes}"
             )
             if r.get("guidance"):
-                L.append(f"    - {r['guidance']}")
+                L.append(f"    - {md(r['guidance'])}")
         L.append("")
         return "\n".join(L)
 
@@ -378,13 +529,13 @@ class ReportBuilder:
             "",
         ]
         for p in proofs:
-            L.append(f"### {p['title']}")
-            L.append(f"- **Technique:** {p['technique']}")
+            L.append(f"### {md(p.get('title', ''))}")
+            L.append(f"- **Technique:** {md(p.get('technique', ''))}")
             for i, s in enumerate(p.get("steps", []), 1):
-                L.append(f"    {i}. {s}")
-            L.append(f"- **Demonstrated impact:** {p['impact']}")
+                L.append(f"    {i}. {md(s)}")
+            L.append(f"- **Demonstrated impact:** {md(p.get('impact', ''))}")
             if p.get("samples"):
-                L.append(f"- **Evidence:** {', '.join(str(s) for s in p['samples'][:8])}")
+                L.append(f"- **Evidence:** {md_join(p['samples'][:8])}")
             L.append("")
         return "\n".join(L)
 

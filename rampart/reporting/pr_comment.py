@@ -7,9 +7,42 @@ marker so the poster can update one sticky comment instead of spamming a new one
 
 from __future__ import annotations
 
+import re
+from urllib.parse import quote
+
+from .mdsafe import md_cell, one_line
+from .status import is_confirmed, is_dropped, is_fixed, norm_severity
+
 MARKER = "<!-- rampart-report -->"
 _SEV_ORDER = ["critical", "high", "medium", "low", "info"]
 _SEV_EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+
+_ZWJ = "‍"
+# @user / @org/team mentions and #123 / owner/repo#123 issue references would notify people or
+# cross-link other issues from target-controlled text; a zero-width joiner breaks the auto-link.
+_MENTION = re.compile(r"([@#])(?=[A-Za-z0-9_-])")
+
+
+def _no_ping(s: str) -> str:
+    return _MENTION.sub(lambda m: m.group(1) + _ZWJ, s)
+
+
+def _cell(x, limit: int = 0) -> str:
+    """Untrusted text for a table cell: one line, HTML/markdown/pipe-escaped, no live mentions."""
+    s = one_line(x)
+    if limit and len(s) > limit:
+        s = s[: limit - 1] + "…"
+    return _no_ping(md_cell(s))
+
+
+def _code_cell(x, limit: int = 0) -> str:
+    """Untrusted text shown as a code span in a table cell (backticks replaced, pipes escaped)."""
+    s = one_line(x).replace("`", "'")
+    if limit and len(s) > limit:
+        s = s[: limit - 1] + "…"
+    if not s:
+        return ""
+    return "`" + s.replace("|", "\\|") + "`"
 
 
 def _get(obj, key, default=None):
@@ -38,21 +71,26 @@ def _location(f) -> str:
 def _normalize(f) -> dict:
     verification = _get(f, "verification", {}) or {}
     tags = _get(f, "tags", []) or []
+    cwe = _get(f, "cwe", []) or []
     return {
-        "severity": _get(f, "severity", "info"),
+        "severity": norm_severity(_get(f, "severity", "info")),
         "title": _get(f, "title", "finding"),
         "vuln_class": _get(f, "vuln_class", ""),
-        "cwe": _get(f, "cwe", []) or [],
+        "cwe": list(cwe) if isinstance(cwe, (list, tuple)) else [cwe],
         "location": _location(f),
         "validated": bool(_get(verification, "validated", False)),
         "state": _get(f, "state", ""),
+        "confirmed": is_confirmed(f),
+        "fixed": is_fixed(f),
+        "dropped": is_dropped(f),
         "agent": "agent-assessed" in tags,
     }
 
 
-def _sev_rank(sev: str) -> int:
+def _sev_rank(sev) -> int:
     order = ["info", "low", "medium", "high", "critical"]
-    return order.index(sev) if sev in order else 0
+    sev = norm_severity(sev)
+    return order.index(sev)
 
 
 def render_pr_comment(
@@ -69,9 +107,10 @@ def render_pr_comment(
     set, the header shows whether the severity gate passed.
     """
     norm = [_normalize(f) for f in findings]
-    confirmed = [f for f in norm if f["validated"] and f["state"] != "Dropped"]
-    agent = [f for f in norm if f["agent"] and f["state"] != "Dropped"]
-    dropped = [f for f in norm if f["state"] == "Dropped"]
+    confirmed = [f for f in norm if f["confirmed"]]
+    agent = [f for f in norm if f["agent"] and not f["dropped"] and not f["fixed"]]
+    fixed = [f for f in norm if f["fixed"]]
+    dropped = [f for f in norm if f["dropped"]]
 
     counts = dict.fromkeys(_SEV_ORDER, 0)
     for f in confirmed:
@@ -79,14 +118,15 @@ def render_pr_comment(
 
     gate_line = ""
     if fail_on:
-        threshold = _sev_rank(fail_on)
+        gate = norm_severity(fail_on)
+        threshold = _sev_rank(gate)
         breached = [f for f in confirmed if _sev_rank(f["severity"]) >= threshold]
         if breached:
-            gate_line = f"❌ **Gate failed** — {len(breached)} confirmed finding(s) at or above `{fail_on}`."
+            gate_line = f"❌ **Gate failed** — {len(breached)} confirmed finding(s) at or above `{gate}`."
         else:
-            gate_line = f"✅ **Gate passed** — no confirmed findings at or above `{fail_on}`."
+            gate_line = f"✅ **Gate passed** — no confirmed findings at or above `{gate}`."
 
-    app = f" for `{application}`" if application else ""
+    app = f" for {_code_cell(application, 80)}" if one_line(application) else ""
     lines = [MARKER, f"## 🛡️ Rampart security report{app}", ""]
     if gate_line:
         lines += [gate_line, ""]
@@ -101,16 +141,16 @@ def render_pr_comment(
         lines.append("|---|---|---|---|")
         ordered = sorted(confirmed, key=lambda f: -_sev_rank(f["severity"]))
         for f in ordered[:max_rows]:
-            cwe = ", ".join(f["cwe"][:2]) if f["cwe"] else ""
-            loc = f["location"][:80] if f["location"] else ""
-            title = str(f["title"]).replace("|", "\\|")[:100]
-            lines.append(
-                f"| {_SEV_EMOJI.get(f['severity'], '')} {f['severity']} | {title} | `{loc}` | {cwe} |"
-            )
+            cwe = _cell(", ".join(str(c) for c in f["cwe"][:2]), 40)
+            loc = _code_cell(f["location"], 80)
+            title = _cell(f["title"], 100)
+            lines.append(f"| {_SEV_EMOJI[f['severity']]} {f['severity']} | {title} | {loc} | {cwe} |")
         if len(ordered) > max_rows:
             lines.append(f"| … | _{len(ordered) - max_rows} more_ | | |")
 
     notes = []
+    if fixed:
+        notes.append(f"{len(fixed)} verified fixed by retest")
     if agent:
         notes.append(f"{len(agent)} agent-assessed (needs human review)")
     if dropped:
@@ -118,8 +158,9 @@ def render_pr_comment(
     if notes:
         lines += ["", "> " + " · ".join(notes) + "."]
 
-    if report_url:
-        lines += ["", f"[Full report]({report_url})"]
+    url = one_line(report_url)
+    if url:
+        lines += ["", f"[Full report]({quote(url, safe=':/?#=&%@+,;~')})"]
     lines += ["", f"<sub>Generated by [Rampart](https://github.com/NitinReddy-A/rampart){app}.</sub>"]
     return "\n".join(lines)
 

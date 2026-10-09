@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..reporting.mdsafe import md, md_code, md_join
+from ..reporting.status import is_confirmed, is_fixed, norm_severity, sev_rank, unique_by_id
 from ..schemas.finding import State
 from .frameworks import ALL_FRAMEWORKS, DOMAIN_CONTROLS, FRAMEWORKS, domains_for
 
@@ -33,7 +35,7 @@ def coverage(findings, frameworks=None) -> dict:
     Returns {framework: {control_id: [finding, ...]}} — a control appears only if a finding maps to it.
     """
     frameworks = frameworks or ALL_FRAMEWORKS
-    reported = [f for f in findings if f.state != State.DROPPED]
+    reported = unique_by_id(f for f in findings if f.state != State.DROPPED)
     out: dict[str, dict] = {fw: {} for fw in frameworks}
     for f in reported:
         mapped = map_finding(f)
@@ -44,7 +46,7 @@ def coverage(findings, frameworks=None) -> dict:
 
 
 def _is_exception(f) -> bool:
-    return f.verification.validated and f.state != State.FIXED and "agent-assessed" not in f.tags
+    return is_confirmed(f) and "agent-assessed" not in f.tags
 
 
 def compliance_matrix_report(findings, scope, scan=None, frameworks=None) -> str:
@@ -55,12 +57,12 @@ def compliance_matrix_report(findings, scope, scan=None, frameworks=None) -> str
     """
     frameworks = frameworks or ALL_FRAMEWORKS
     cov = coverage(findings, frameworks)
-    reported = [f for f in findings if f.state != State.DROPPED]
+    reported = unique_by_id(f for f in findings if f.state != State.DROPPED)
     exceptions = [f for f in reported if _is_exception(f)]
 
-    tkt = scope.authorization.ticket or "engagement"
+    tkt = md(scope.authorization.ticket or "engagement")
     L = ["# Compliance control-coverage matrix", ""]
-    L.append(f"*Engagement* **{tkt}** · authorized by **{scope.authorization.authorized_by}**")
+    L.append(f"*Engagement* **{tkt}** · authorized by **{md(scope.authorization.authorized_by)}**")
     L.append("")
     L.append(
         "> Every finding is mapped — by CWE — to the control it provides evidence for across "
@@ -94,7 +96,7 @@ def compliance_matrix_report(findings, scope, scan=None, frameworks=None) -> str
         for ctrl in sorted(ctrls):
             fs = ctrls[ctrl]
             exc = len([f for f in fs if _is_exception(f)])
-            rem = len([f for f in fs if f.state == State.FIXED])
+            rem = len([f for f in fs if is_fixed(f)])
             title = FRAMEWORKS[fw]["controls"].get(ctrl, "")
             L.append(f"| {ctrl} | {title} | {len(fs)} | {exc} | {rem} |")
         L.append("")
@@ -105,13 +107,16 @@ def compliance_matrix_report(findings, scope, scan=None, frameworks=None) -> str
     if not exceptions:
         L.append("*No open control exceptions — no confirmed findings are currently outstanding.*")
     else:
-        for f in sorted(exceptions, key=lambda f: f.severity):
+        for f in sorted(exceptions, key=lambda f: sev_rank(f.severity)):
             mapped = map_finding(f)
             refs = " · ".join(f"{fw} {','.join(mapped[fw])}" for fw in frameworks if mapped.get(fw))
-            L.append(f"- **[{f.severity.upper()}] {f.title}** — {', '.join(f.cwe)} · finding `{f.id}`")
-            L.append(f"    - *Controls:* {refs}")
+            L.append(
+                f"- **[{norm_severity(f.severity).upper()}] {md(f.title)}** — {md_join(f.cwe)} · "
+                f"finding {md_code(f.id)}"
+            )
+            L.append(f"    - *Controls:* {md(refs)}")
             if f.remediation.summary:
-                L.append(f"    - *Remediation:* {f.remediation.summary}")
+                L.append(f"    - *Remediation:* {md(f.remediation.summary)}")
     L.append("")
     L.append("---")
     L.append(
