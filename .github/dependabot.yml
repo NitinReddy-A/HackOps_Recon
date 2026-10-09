@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # Keep the actions used by CI, release, and the composite action up to date.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Only dev/optional tooling lives here; Rampart's core has no runtime dependencies.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

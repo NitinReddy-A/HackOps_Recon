@@ -6,7 +6,16 @@ All notable changes to Rampart are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-09
+
 ### Added
+- **Release pipeline** (`.github/workflows/release.yml`): pushing a `vX.Y.Z` tag builds and
+  smoke-tests the wheel + sdist, attaches them to a GitHub Release with `SHA256SUMS` and signed
+  build-provenance attestations, publishes a multi-arch Docker image to
+  `ghcr.io/nitinreddy-a/rampart`, moves the floating `v1` tag for the GitHub Action, and (once
+  enabled) publishes to PyPI via trusted publishing.
+- CI now builds and smoke-tests the Docker image on every push. Dependabot keeps actions, pip
+  tooling, and the base image current.
 - **Python SDK** (`from rampart import Rampart`): `Rampart(...).scan()` returns a `ScanResult` with
   `.confirmed`, `.failed(on=...)`, `by_severity()`, and in-memory report renderers. A thin wrapper
   over the `Engagement` facade, so it produces identical results to the CLI. See `docs/SDK.md`.
@@ -20,6 +29,15 @@ All notable changes to Rampart are documented here. The format follows
 - Productized the repository for open-source contribution: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
   issue/PR templates, `CHANGELOG.md`, `NOTICE`, ruff lint/format config, pre-commit, and an
   `ARCHITECTURE.md`. Rewrote the README around a clear getting-started and LLM-integration flow.
+- Rewrote the README again around every way to use Rampart (CLI, SDK, GitHub Action, GitLab CI,
+  Docker, MCP, dashboard), with a real report preview, an architecture diagram, and an FAQ.
+- Install instructions and CI templates now point at versioned GitHub releases.
+- Packaging uses an SPDX license expression (`license = "Apache-2.0"`), ahead of setuptools
+  dropping the table form.
+
+### Fixed
+- CI lint failure: ruff is now pinned to one version (0.16.10) in CI, the `dev` extra, and
+  pre-commit, so a new ruff release can't silently change formatting rules.
 
 ## [1.0.0] — 2026-10-08
 

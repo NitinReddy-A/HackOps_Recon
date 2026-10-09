@@ -1,0 +1,210 @@
+# Release pipeline — runs when a version tag (vX.Y.Z) is pushed.
+#
+#   git tag v1.1.0 && git push origin v1.1.0
+#
+# It ships every way of consuming Rampart from the one tag:
+#   * Python SDK + CLI   wheel + sdist attached to the GitHub Release (with SHA256SUMS and
+#                        signed build-provenance attestations), and published to PyPI once
+#                        trusted publishing is configured (see the `pypi` job).
+#   * Docker image       ghcr.io/<owner>/rampart:<version>, :<major>.<minor>, :latest
+#                        (linux/amd64 + linux/arm64).
+#   * GitHub Action      the floating major tag (v1) is moved to this release, so
+#                        `uses: <owner>/rampart@v1` always gets the latest 1.x.
+#
+# The tag must match rampart/version.py, and the release notes come from that version's
+# section in CHANGELOG.md.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & verify distributions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches rampart/version.py
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(python -c 'import rampart.version as v; print(v.__version__)')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Tag v$tag does not match rampart/version.py ($pkg)"; exit 1
+          fi
+          echo "version=$pkg" >> "$GITHUB_OUTPUT"
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check --strict dist/*
+
+      - name: Smoke-test the wheel in a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/rampart --version
+          /tmp/smoke/bin/python -c "from rampart import Rampart, ScanResult; print('SDK import ok')"
+          /tmp/smoke/bin/python -m rampart init --scope-file examples/demo_target/rampart.scope.yaml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release, move the v<major> tag
+      id-token: write        # sign build-provenance attestations
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          # Take everything under "## [VERSION]" up to the next "## [" heading.
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See [CHANGELOG.md](CHANGELOG.md)." > notes.md
+          cat >> notes.md <<EOF
+
+          ## Install
+
+          | | |
+          | --- | --- |
+          | **pipx / pip** | \`pipx install "git+https://github.com/${GITHUB_REPOSITORY}.git@${GITHUB_REF_NAME}"\` |
+          | **Wheel (below)** | \`pip install rampart_appsec-${VERSION}-py3-none-any.whl\` |
+          | **Docker** | \`docker run --rm ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/rampart:${VERSION} --help\` |
+          | **GitHub Action** | \`uses: ${GITHUB_REPOSITORY}@v${VERSION%%.*}\` |
+          | **Claude Code (MCP)** | \`claude mcp add rampart -- python -m rampart.mcp\` |
+
+          Verify a download: \`sha256sum -c SHA256SUMS\` and
+          \`gh attestation verify <file> --repo ${GITHUB_REPOSITORY}\`.
+          EOF
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Rampart $GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            --verify-tag
+
+      - name: Move the floating major tag for the GitHub Action
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"
+
+  docker:
+    name: Docker image (GHCR)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/rampart
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=Rampart
+            org.opencontainers.image.description=Self-hosted, evidence-first AppSec agent for web apps, APIs, and LLM endpoints.
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/rampart
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  pypi:
+    # Off until PyPI trusted publishing is set up, so a release never fails on it. To enable:
+    #   1. On pypi.org, add a "pending publisher" for project `rampart-appsec`:
+    #      owner = this repo's owner, repo = this repo, workflow = release.yml, environment = pypi
+    #   2. In this repo: Settings -> Environments -> New environment "pypi"
+    #   3. Settings -> Variables -> Actions -> add PYPI_PUBLISH = true
+    name: Publish to PyPI
+    needs: build
+    if: vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rampart-appsec
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

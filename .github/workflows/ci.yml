@@ -61,3 +61,24 @@ jobs:
       - name: Run reliability benchmark
         # Exits nonzero on any false positive / false negative, gating the build.
         run: python benchmarks/run_benchmark.py
+
+  docker:
+    # Build the release image on every push so a broken Dockerfile is caught here, not at release time.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: rampart:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke-test image
+        run: |
+          docker run --rm rampart:ci --version
+          docker run --rm -v "$PWD/examples:/work/examples:ro" rampart:ci \
+            init --scope-file examples/demo_target/rampart.scope.yaml

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 92" width="80" height="92" role="img" aria-label="Rampart logo">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3B82C4"/>
+      <stop offset="1" stop-color="#1D4E89"/>
+    </linearGradient>
+  </defs>
+  <!-- a crenellated shield: the rampart wall on top, the shield below -->
+  <path d="M6 6H20V16H33V6H47V16H60V6H74V46C74 66 58 80 40 88C22 80 6 66 6 46Z" fill="url(#g)"/>
+  <path d="M24 48L35 59L57 37" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

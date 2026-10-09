@@ -60,7 +60,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Install from PyPI instead if you are not vendoring the source:
-          #   pip install rampart-appsec
+          #   pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"
           pip install -e .
 
       - name: Start bundled demo target

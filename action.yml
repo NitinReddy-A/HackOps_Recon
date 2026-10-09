@@ -1,14 +1,17 @@
 # Composite GitHub Action for Rampart.
 # Usage in a consumer workflow:
 #
-#   - uses: NitinReddy-A/rampart@v1.0.0
+#   - uses: NitinReddy-A/Rampart@v1              # floating 1.x tag; pin @v1.1.0 to be exact
 #     with:
 #       target: https://staging.example.com      # authorized target (required)
-#       scope-file: rampart.scope.yaml                   # authorization contract
-#       fail-on: high                             # gate severity
-#   - uses: github/codeql-action/upload-sarif@v3
+#       scope-file: rampart.scope.yaml           # authorization contract
+#       fail-on: high                            # gate severity
+#       comment-pr: true                         # sticky PR summary (needs pull-requests: write)
+#   - uses: actions/upload-artifact@v4
+#     if: always()
 #     with:
-#       sarif_file: ${{ steps.<id>.outputs.sarif-path }}
+#       name: rampart-report
+#       path: .rampart/reports/
 #
 # Only scan assets you own or are explicitly authorized to test. Rampart
 # refuses to run without a valid, unexpired, in-scope rampart.scope.yaml contract.
@@ -65,8 +68,8 @@ runs:
     - name: Install Rampart
       shell: bash
       # Install the package that ships with this action (github.action_path is
-      # the action's checked-out directory). Swap for `pip install rampart-appsec`
-      # to pull from PyPI instead.
+      # the action's checked-out directory). This keeps the action and the engine
+      # at exactly the same version.
       run: |
         python -m pip install --upgrade pip
         pip install -e "${{ github.action_path }}"

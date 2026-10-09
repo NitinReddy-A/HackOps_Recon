@@ -14,7 +14,7 @@ claude mcp add rampart -- python -m rampart.mcp
 That's it. In a Claude Code session you can now say things like *"check my scope file is valid"* or
 *"scan http://127.0.0.1:8080 and summarize the confirmed findings"* and Claude will call the tools
 below. (Rampart must be installed in the Python that `python` resolves to — `pip install -e .` in
-your clone, or `pip install rampart-appsec`.)
+your clone, or `pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"`.)
 
 For any other MCP client, run the server over stdio:
 

@@ -675,7 +675,9 @@ def build_parser():
     sp.add_argument("--appmodel-seed", default="", help="seeded object-ownership file")
     sp.add_argument("--secrets", default="", help="secrets file (default: secrets.json next to scope)")
     sp.add_argument(
-        "--intel", default="deterministic", help="intelligence provider: deterministic | claude-code"
+        "--intel",
+        default="deterministic",
+        help="intelligence provider: deterministic | claude-code | openai-compat",
     )
     sp.add_argument("--application", default="target", help="application name for findings")
     sp.add_argument("--login-path", default="/api/login")

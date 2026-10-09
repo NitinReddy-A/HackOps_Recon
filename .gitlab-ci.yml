@@ -29,7 +29,7 @@ rampart-scan:
   variables:
     RAMPART_TARGET: "https://staging.example.internal"   # override in CI/CD variables
   script:
-    - pip install rampart-appsec    # or: pip install -e .
+    - pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"   # or: pip install -e .
     - >
       python -m rampart test
       --scope-file rampart.scope.yaml

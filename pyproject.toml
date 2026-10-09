@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ dynamic = ["version"]
 description = "Open-source, self-hostable, evidence-first application-security agent — find, prove, and help fix web/API vulnerabilities in apps you are authorized to test."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [
   { name = "Nitin", email = "nitin.code2@gmail.com" },
   { name = "Rampart contributors" },
@@ -23,7 +24,6 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Intended Audience :: Information Technology",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -57,10 +57,11 @@ all = ["PyYAML>=6.0", "playwright>=1.40", "grpcio>=1.60", "grpcio-reflection>=1.
 rampart = "rampart.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/NitinReddy-A/rampart"
-Repository = "https://github.com/NitinReddy-A/rampart"
-Issues = "https://github.com/NitinReddy-A/rampart/issues"
-Changelog = "https://github.com/NitinReddy-A/rampart/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/NitinReddy-A/Rampart"
+Documentation = "https://github.com/NitinReddy-A/Rampart#readme"
+Repository = "https://github.com/NitinReddy-A/Rampart"
+Issues = "https://github.com/NitinReddy-A/Rampart/issues"
+Changelog = "https://github.com/NitinReddy-A/Rampart/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = { attr = "rampart.version.__version__" }
