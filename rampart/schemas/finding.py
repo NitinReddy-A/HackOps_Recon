@@ -175,12 +175,19 @@ class Finding:
             "info": "note",
         }.get(self.severity, "warning")
         rule_id = (self.cwe[0] if self.cwe else self.vuln_class) or "finding"
-        loc_uri = self.endpoint.get("url") or self.asset.get("target", "")
+        # artifactLocation.uri must be a real URI / relative file path. A runtime endpoint URL is
+        # one; an asset coordinate such as "PyPI:flask" or a local repo path is not — those go to
+        # logicalLocations / properties instead.
+        loc_uri = self.endpoint.get("url") or ""
+        target = self.asset.get("target", "") or ""
+        if not loc_uri and "://" in target:
+            loc_uri = target
+        locations = [{"physicalLocation": {"artifactLocation": {"uri": loc_uri}}}] if loc_uri else []
         result = {
             "ruleId": rule_id,
             "level": level,
             "message": {"text": f"{self.title} — {self.description}"},
-            "locations": [{"physicalLocation": {"artifactLocation": {"uri": loc_uri}}}],
+            "locations": locations,
             "partialFingerprints": {"dedupeKey/v1": self.dedupe_key or self.id},
             "properties": {
                 "vuln_class": self.vuln_class,
@@ -195,15 +202,17 @@ class Finding:
             },
         }
         if self.affected_code and self.affected_code.file:
-            result["locations"].append(
-                {
-                    "physicalLocation": {
-                        "artifactLocation": {"uri": self.affected_code.file},
-                        "region": {
-                            "startLine": self.affected_code.start_line,
-                            "endLine": self.affected_code.end_line,
-                        },
-                    }
-                }
-            )
+            phys = {"artifactLocation": {"uri": self.affected_code.file}}
+            start = self.affected_code.start_line or 0
+            if start >= 1:  # SARIF regions are 1-based; omit the region when the line is unknown
+                phys["region"] = {"startLine": start, "endLine": max(start, self.affected_code.end_line or 0)}
+            result["locations"].append({"physicalLocation": phys})
+        if self.asset.get("type") == "dependency" and target:
+            eco, _, pkg = target.partition(":")
+            result["properties"]["package"] = {"ecosystem": eco, "name": pkg or target}
+            logical = {"name": pkg or target, "fullyQualifiedName": target, "kind": "package"}
+            if result["locations"]:
+                result["locations"][0]["logicalLocations"] = [logical]
+            else:
+                result["locations"].append({"logicalLocations": [logical]})
         return result

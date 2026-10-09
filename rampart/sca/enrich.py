@@ -22,18 +22,63 @@ EPSS_URL = "https://api.first.org/data/v1/epss"
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 _UA = "rampart-sca/1.0"
 
-# PyPI distribution name -> actual import name(s), where they differ. Default: the name itself.
+# PyPI distribution name (PEP 503-normalised) -> actual import name(s), where they differ.
+# Default: the normalised name with '-' -> '_'. A dist NOT listed here whose guessed import name is
+# never seen is reported as reachability-*unknown* (not "unreachable") unless every third-party
+# import in the repo is already attributed to some declared dependency (see ``reachable``).
 _PY_IMPORT_ALIASES = {
     "pyyaml": ["yaml"],
     "beautifulsoup4": ["bs4"],
     "pillow": ["PIL"],
     "scikit-learn": ["sklearn"],
+    "scikit-image": ["skimage"],
     "python-dateutil": ["dateutil"],
     "msgpack-python": ["msgpack"],
-    "protobuf": ["google"],
+    "protobuf": ["google.protobuf"],
     "opencv-python": ["cv2"],
-    "attrs": ["attr"],
+    "opencv-python-headless": ["cv2"],
+    "opencv-contrib-python": ["cv2"],
+    "attrs": ["attr", "attrs"],
     "setuptools": ["setuptools", "pkg_resources"],
+    "pyjwt": ["jwt"],
+    "pycryptodome": ["Crypto"],
+    "pycrypto": ["Crypto"],
+    "pycryptodomex": ["Cryptodome"],
+    "pyopenssl": ["OpenSSL"],
+    "dnspython": ["dns"],
+    "gitpython": ["git"],
+    "psycopg2-binary": ["psycopg2"],
+    "psycopg-binary": ["psycopg"],
+    "python-jose": ["jose"],
+    "python-multipart": ["multipart", "python_multipart"],
+    "python-dotenv": ["dotenv"],
+    "python-ldap": ["ldap"],
+    "python-magic": ["magic"],
+    "python-docx": ["docx"],
+    "python-pptx": ["pptx"],
+    "python-socketio": ["socketio"],
+    "python-engineio": ["engineio"],
+    "python-gnupg": ["gnupg"],
+    "python3-saml": ["onelogin"],
+    "pysaml2": ["saml2"],
+    "pyserial": ["serial"],
+    "pyzmq": ["zmq"],
+    "pymongo": ["pymongo", "bson", "gridfs"],
+    "mysqlclient": ["MySQLdb"],
+    "mysql-connector-python": ["mysql"],
+    "grpcio": ["grpc"],
+    "djangorestframework": ["rest_framework"],
+    "django-cors-headers": ["corsheaders"],
+    "websocket-client": ["websocket"],
+    "ruamel-yaml": ["ruamel"],
+    "zope-interface": ["zope"],
+    "pywin32": ["win32api", "win32con", "win32com", "pythoncom", "pywintypes"],
+    "jinja2": ["jinja2"],
+    "markupsafe": ["markupsafe"],
+    "werkzeug": ["werkzeug"],
+    "typing-extensions": ["typing_extensions"],
+    "google-cloud-storage": ["google.cloud"],
+    "apache-airflow": ["airflow"],
 }
 
 
@@ -73,13 +118,25 @@ def _epss_http(url: str, timeout: float = 15.0):
 
 
 # --------------------------------------------------------------------------- KEV
-def fetch_kev(fetch=None, timeout: float = 20.0) -> set:
-    """Return the set of CVE ids in the CISA KEV catalog (graceful: empty set)."""
-    fetch = fetch or _kev_http
-    data = fetch(KEV_URL, timeout)
+def fetch_kev(fetch=None, timeout: float = 45.0, retries: int = 1) -> set:
+    """Return the set of CVE ids in the CISA KEV catalog (graceful: empty set).
+
+    The catalog is a ~2 MB download, so the default fetch gets a generous timeout and one retry;
+    a failure is recorded in :data:`last_enrich_notes` so "not in KEV" is never silently implied.
+    """
+    data = None
+    for _ in range(1 + max(0, retries if fetch is None else 0)):
+        data = (fetch or _kev_http)(KEV_URL, timeout)
+        if isinstance(data, dict):
+            break
     if not isinstance(data, dict):
+        last_enrich_notes.append("CISA KEV catalog could not be fetched; KEV status is unknown")
         return set()
     return {v.get("cveID") for v in data.get("vulnerabilities", []) or [] if v.get("cveID")}
+
+
+# Notes from the most recent enrichment (e.g. KEV feed unreachable).
+last_enrich_notes: list[str] = []
 
 
 def _kev_http(url: str, timeout: float = 20.0):
@@ -95,18 +152,43 @@ def _kev_http(url: str, timeout: float = 20.0):
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".rampart", "dist", "build"}
 
 
+def _norm(pkg: str) -> str:
+    return re.sub(r"[-_.]+", "-", pkg or "").lower()
+
+
 def _py_import_names(pkg: str) -> list[str]:
-    return _PY_IMPORT_ALIASES.get(pkg.lower(), [pkg.replace("-", "_").lower()])
+    n = _norm(pkg)
+    return _PY_IMPORT_ALIASES.get(n, [n.replace("-", "_")])
 
 
-def reachable(dep, repo_path: str, graph=None, affected_symbols=None):
+def _import_name_known(pkg: str) -> bool:
+    return _norm(pkg) in _PY_IMPORT_ALIASES
+
+
+def _confidently_unimported(dep, graph, all_deps) -> bool:
+    """A dependency whose (guessed) import name never appears is only *confidently* unimported when
+    the guess is reliable: either the dist->import mapping is known, or every third-party module the
+    repo imports is already attributed to some declared dependency (so nothing unexplained could be
+    this package under a different import name)."""
+    if _import_name_known(dep.name):
+        return True
+    third_party = set(getattr(graph, "third_party_roots", lambda: set())())
+    attributed = set()
+    for d in all_deps or [dep]:
+        if getattr(d, "ecosystem", "PyPI") == "PyPI":
+            attributed |= {n.split(".")[0] for n in _py_import_names(d.name)}
+    return not (third_party - attributed)
+
+
+def reachable(dep, repo_path: str, graph=None, affected_symbols=None, all_deps=None):
     """Reachability of a dependency. For Python this is a **call-graph** analysis (is the package
     actually called, from a path reachable from an entrypoint, and — when the advisory names the
     vulnerable symbol — is *that symbol* on a live path?). For npm it is import-level. Returns a
     ``(bool_or_None, detail_dict)`` pair; ``detail`` is ``{}`` when nothing could be determined.
 
     bool: True (reachable / vulnerable symbol exercised), False (unimported / transitive / test-only /
-    dead), None (no analysable source → unknown, assume reachable).
+    dead), None (no analysable source, or the import name can't be resolved → unknown, assume
+    reachable; no de-prioritisation on uncertainty).
     """
     if not repo_path or not os.path.isdir(repo_path):
         return None, {}
@@ -118,6 +200,8 @@ def reachable(dep, repo_path: str, graph=None, affected_symbols=None):
         if graph is None:
             return None, {}
         detail = reachability(graph, _py_import_names(dep.name), affected_symbols)
+        if detail["tier"] == "unreachable" and not _confidently_unimported(dep, graph, all_deps):
+            detail = dict(detail, tier="unknown-import-name")
         return tier_to_bool(detail["tier"]), detail
     if dep.ecosystem == "npm":
         n = re.escape(dep.name)
@@ -161,7 +245,9 @@ _RANK_SEV = {v: k for k, v in _SEV_RANK.items()}
 
 
 def _cves_of(finding) -> list[str]:
-    out = []
+    """Every CVE id of the finding: the full list carried in ``exploit_intel['cves']`` (set by the
+    SCA scanner; references are truncated for display) plus any CVE named in a reference URL."""
+    out = [c for c in (finding.exploit_intel or {}).get("cves", []) or [] if isinstance(c, str)]
     for ref in finding.references:
         m = re.search(r"(CVE-\d{4}-\d+)", ref)
         if m:
@@ -177,6 +263,7 @@ _TIER_REASON = {
     "imported-unused": "imported but never called (likely transitive/unused)",
     "unreachable": "not imported by first-party source (transitive/unused)",
     "import-level": "imported by first-party source (import-level)",
+    "unknown-import-name": "import name of this distribution could not be resolved (reachability unknown)",
 }
 
 
@@ -224,7 +311,10 @@ def adjust(finding, dep, epss_map: dict, kev_set: set, reach, reach_detail=None)
     else:
         priority = "P3"
 
+    prior = finding.exploit_intel or {}
     finding.exploit_intel = {
+        "cves": cves,
+        "advisory_ids": prior.get("advisory_ids", []),
         "epss": round(epss, 4) if epss is not None else None,
         "epss_percentile": round(percentile, 4) if percentile is not None else None,
         "kev": kev,
@@ -281,6 +371,7 @@ def enrich_findings(
     fetch_kev_fn=None,
     online: bool = False,
     affected_by_key: dict = None,
+    all_deps=None,
 ) -> list:
     """Enrich SCA findings in place with EPSS/KEV + call-graph reachability, re-sorted by priority.
 
@@ -292,11 +383,26 @@ def enrich_findings(
     if not findings:
         return findings
     affected_by_key = affected_by_key or {}
+    if all_deps is None and repo_path and os.path.isdir(repo_path):
+        try:
+            from .parsers import collect_dependencies, collect_unpinned
+
+            all_deps = list(collect_dependencies(repo_path)) + list(collect_unpinned(repo_path))
+        except Exception:  # noqa: BLE001 - attribution is best-effort
+            all_deps = None
+    elif all_deps is not None and repo_path and os.path.isdir(repo_path):
+        try:
+            from .parsers import collect_unpinned
+
+            all_deps = list(all_deps) + list(collect_unpinned(repo_path))
+        except Exception:  # noqa: BLE001
+            pass
     all_cves = []
     for f in findings:
         all_cves.extend(_cves_of(f))
     want_net = online or fetch_epss_fn is not None or fetch_kev_fn is not None
     epss_map = fetch_epss(all_cves, fetch=fetch_epss_fn) if want_net else {}
+    last_enrich_notes.clear()
     kev_set = fetch_kev(fetch=fetch_kev_fn) if want_net else set()
     # Build the Python call graph once and reuse it for every PyPI dependency.
     graph = None
@@ -315,7 +421,9 @@ def enrich_findings(
             ckey = (dep.key(), tuple(affected))
             if ckey not in reach_cache:
                 try:
-                    reach_cache[ckey] = reachable(dep, repo_path, graph=graph, affected_symbols=affected)
+                    reach_cache[ckey] = reachable(
+                        dep, repo_path, graph=graph, affected_symbols=affected, all_deps=all_deps
+                    )
                 except Exception:  # noqa: BLE001
                     reach_cache[ckey] = (None, {})
             r, detail = reach_cache[ckey]

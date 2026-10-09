@@ -8,7 +8,10 @@ How it works:
   1. Parse every first-party ``.py`` file. For each function (and each module's top-level code)
      record (a) the first-party functions it calls and (b) the dependency symbols it uses.
   2. Build a name-resolved call graph over first-party functions and compute the set reachable from
-     entrypoints (module top-level code in non-test files + ``main`` + ``if __name__ == '__main__'``).
+     entrypoints: module top-level code in non-test files, ``main``, ``if __name__ == '__main__'``,
+     every *decorated* function (framework-registered handlers: Flask/FastAPI routes, Celery tasks,
+     click commands, …) and every function *referenced* as a call argument (``path('x/', views.index)``,
+     ``Thread(target=worker)``, ``add_url_rule(view_func=f)``), which frameworks invoke for us.
   3. A dependency symbol is *reachable* if it is used at an entrypoint or inside a reachable function
      in non-test code; *test-only* if only in tests; *imported-unused* if imported but never called;
      *unreachable* if never imported. When the advisory names affected symbols, a reachable use of
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 
 _SKIP_DIRS = {
     ".git",
@@ -56,7 +60,7 @@ class _Node:
 
     def __init__(self, qual, file, is_test, is_entry=False):
         self.qual = qual
-        self.calls: set[str] = set()  # simple callee names
+        self.calls: set[str] = set()  # simple callee (or referenced-callback) names
         self.dep_uses: set[str] = set()  # full dependency symbols, e.g. "flask.render_template"
         self.file = file
         self.is_test = is_test
@@ -89,7 +93,8 @@ class _ModuleVisitor(ast.NodeVisitor):
         if node.level and not node.module:
             return  # relative import of nothing concrete
         mod = node.module or ""
-        root = mod.split(".")[0]
+        # relative imports are first-party: mark the root so it never matches a dependency name
+        root = ("." if node.level else "") + mod.split(".")[0]
         for a in node.names:
             if a.name == "*":
                 continue
@@ -101,10 +106,19 @@ class _ModuleVisitor(ast.NodeVisitor):
     def _enter_func(self, node):
         parent = self._stack[-1]
         qual = f"{self.module}:{node.name}" if parent is self._top else f"{parent.qual}.{node.name}"
-        n = _Node(qual, self.rel, self.is_test, is_entry=(node.name == "main" and not self.is_test))
+        # Decorated functions are registered with a framework (route / task / CLI command / signal
+        # handler …) and invoked by it, not by a first-party call — treat them as entrypoints.
+        entry = not self.is_test and (node.name == "main" or bool(node.decorator_list))
+        n = _Node(qual, self.rel, self.is_test, is_entry=entry)
         self.nodes.append(n)
+        # decorators and default values are evaluated in the PARENT scope
+        for d in node.decorator_list:
+            self.visit(d)
+        for d in list(node.args.defaults) + [x for x in node.args.kw_defaults if x is not None]:
+            self.visit(d)
         self._stack.append(n)
-        self.generic_visit(node)
+        for stmt in node.body:
+            self.visit(stmt)
         self._stack.pop()
 
     def visit_FunctionDef(self, node):
@@ -114,15 +128,27 @@ class _ModuleVisitor(ast.NodeVisitor):
         self._enter_func(node)
 
     def visit_ClassDef(self, node):
-        # methods are visited with a Class-qualified name via the stack
+        # methods are visited with a Class-qualified name via the stack. The class BODY itself runs
+        # when its enclosing scope runs (import time for a module-level class), so the holder node
+        # is part of the graph: an entrypoint at module level, else reached from its parent scope.
         prev = self._stack[-1]
         holder = _Node(
             f"{prev.qual}.{node.name}" if prev is not self._top else f"{self.module}:{node.name}",
             self.rel,
             self.is_test,
+            is_entry=(prev is self._top and not self.is_test)
+            or (bool(node.decorator_list) and not self.is_test),
         )
+        self.nodes.append(holder)
+        if prev is not self._top:
+            prev.calls.add(node.name)
+        for d in node.decorator_list:
+            self.visit(d)
+        for b in list(node.bases) + [k.value for k in node.keywords]:
+            self.visit(b)
         self._stack.append(holder)
-        self.generic_visit(node)
+        for stmt in node.body:
+            self.visit(stmt)
         self._stack.pop()
 
     # ---- `if __name__ == "__main__":` block is an entrypoint ----
@@ -154,6 +180,15 @@ class _ModuleVisitor(ast.NodeVisitor):
             sym = self._resolve(callee)
             if sym:
                 cur.dep_uses.add(sym)
+        # Functions passed as arguments (callbacks / URL-conf views / thread targets) are invoked by
+        # the callee: record them as edges from the current scope.
+        for arg in list(node.args) + [k.value for k in node.keywords]:
+            if isinstance(arg, ast.Starred):
+                arg = arg.value
+            if isinstance(arg, ast.Name):
+                cur.calls.add(arg.id)
+            elif isinstance(arg, ast.Attribute):
+                cur.calls.add(arg.attr)
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
@@ -181,12 +216,24 @@ class _ModuleVisitor(ast.NodeVisitor):
         return None
 
 
+_STDLIB = set(getattr(sys, "stdlib_module_names", ())) | {"__future__"}
+
+
 class RepoGraph:
     def __init__(self):
         self.nodes: list[_Node] = []
         self.by_name: dict[str, list[_Node]] = {}  # simple func name -> nodes
         self.imports_by_root: dict[str, bool] = {}
+        self.first_party: set[str] = set()  # module / package names defined in the repo itself
         self._reachable: set[str] | None = None
+
+    def third_party_roots(self) -> set[str]:
+        """Imported top-level modules that are neither stdlib, relative, nor first-party."""
+        return {
+            r
+            for r in self.imports_by_root
+            if r and not r.startswith(".") and r not in _STDLIB and r not in self.first_party
+        }
 
     def _index(self):
         for n in self.nodes:
@@ -226,16 +273,20 @@ def analyze_repo(repo_path: str, max_files: int = 6000) -> RepoGraph | None:
                 break
             path = os.path.join(root, fn)
             rel = os.path.relpath(path, repo_path).replace("\\", "/")
+            parts = rel[:-3].split("/")
+            g.first_party.update(parts)
             try:
-                with open(path, encoding="utf-8", errors="ignore") as fh:
-                    tree = ast.parse(fh.read(800_000), filename=rel)
-            except (OSError, SyntaxError, ValueError):
+                with open(path, "rb") as fh:
+                    raw = fh.read(800_000)
+                # parse BYTES so a UTF-8 BOM / PEP 263 coding cookie (latin-1 …) is honoured
+                tree = ast.parse(raw, filename=rel)
+            except (OSError, SyntaxError, ValueError, UnicodeError, RecursionError, MemoryError):
                 continue
             module = rel[:-3].replace("/", ".")
             v = _ModuleVisitor(module, rel, _is_test_path(rel))
             try:
                 v.visit(tree)
-            except RecursionError:
+            except (RecursionError, MemoryError):
                 continue
             g.nodes.extend(v.nodes)
             for rootpkg, _full in v.imports.values():
