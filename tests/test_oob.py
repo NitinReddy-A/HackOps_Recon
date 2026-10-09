@@ -67,3 +67,45 @@ def test_blind_xxe_confirmed_in_active_mode(tmp_path, vuln_server):
 def test_blind_xxe_clean_on_fixed(tmp_path, fixed_server):
     findings = _active_eng(tmp_path, fixed_server.port).run_oob()
     assert not [f for f in findings if f.vuln_class == "XXE"]
+
+
+# --------------------------------------------------------------------- C-15 collaborator host
+class _NoCallRunner:
+    def get(self, *a, **k):
+        raise AssertionError("nothing may be injected when the collaborator is unreachable")
+
+    post = get
+
+
+class _OneParamModel:
+    class _Ep:
+        method = "GET"
+        path = "/fetch"
+        parameters = [{"in": "query", "name": "url"}]
+
+    endpoints = [_Ep()]
+
+
+def test_loopback_collaborator_skips_remote_target_with_reason():
+    from rampart.oob import blind_ssrf_scan, blind_xxe_scan, oob_skip_reason
+
+    c = OOBCollaborator()  # default: loopback bind + advertise (safe)
+    assert c.is_loopback
+    out = blind_ssrf_scan(_NoCallRunner(), c, _OneParamModel(), "https://app.example.com")
+    assert out == [] and "not loopback" in out.skip_reason
+    out = blind_xxe_scan(_NoCallRunner(), c, _OneParamModel(), "https://app.example.com")
+    assert out == [] and out.skip_reason
+    assert oob_skip_reason("http://127.0.0.1:8080", c) == ""
+    assert oob_skip_reason("http://localhost:8080", c) == ""
+
+
+def test_external_collaborator_url_is_advertised():
+    from rampart.oob import oob_skip_reason
+
+    c = OOBCollaborator(host="0.0.0.0", port=0, public_url="http://oob.example.net:8000/")
+    assert c.base_url == "http://oob.example.net:8000"
+    assert not c.is_loopback
+    assert oob_skip_reason("https://app.example.com", c) == ""
+    c.port = 1234
+    tok, url = c.new_token()
+    assert url == f"http://oob.example.net:8000/{tok}"

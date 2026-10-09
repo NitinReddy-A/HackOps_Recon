@@ -19,9 +19,13 @@ from .engine import (
     PlaywrightDriver,
     RenderResult,
     StubDriver,
+    audited_on_request,
     available,
+    browser_skip_reason,
+    install_hint,
     run_dom_xss_oracle,
     run_stored_xss_oracle,
+    same_origin_allow,
 )
 
 __all__ = [
@@ -32,5 +36,9 @@ __all__ = [
     "run_dom_xss_oracle",
     "run_stored_xss_oracle",
     "available",
+    "browser_skip_reason",
+    "install_hint",
+    "same_origin_allow",
+    "audited_on_request",
     "DOMXSS_TOKEN",
 ]

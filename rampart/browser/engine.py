@@ -32,9 +32,11 @@ import importlib
 import os
 import secrets
 from dataclasses import dataclass, field
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from ..validation.oracle import OracleVerdict
+
+install_hint = "pip install rampart-appsec[browser] && python -m playwright install chromium"
 
 # A module-level, per-process unique canary. If attacker-controlled markup carrying this token
 # executes in the DOM, the token lands in RenderResult.executed_markers — our proof of execution.
@@ -46,6 +48,32 @@ _BINDING = "__rampart_xss"
 # A benign, markup-free control value. A non-executing value must NOT trigger the canary; if it
 # does, the "execution" is environment noise, not our injection — so we refuse to confirm.
 _BENIGN_CONTROL = "rampart_benign_control"
+
+
+def same_origin_allow(target_url: str):
+    """Build the DEFAULT request predicate: allow only the target's own origin (scheme+host+port).
+
+    Returned callable ``allow(url, method) -> bool``. The integration pass passes its own
+    predicate (the policy pipeline's scope check) instead; this is the safe default when none is
+    given. A relative/opaque URL (``about:blank``, ``data:``) is allowed — it issues no network.
+    """
+    t = urlsplit(target_url or "")
+    t_origin = (t.scheme, (t.hostname or "").lower(), t.port or _default_port(t.scheme))
+
+    def allow(url: str, method: str = "GET") -> bool:  # noqa: ARG001 - method kept for parity
+        try:
+            u = urlsplit(url or "")
+        except ValueError:
+            return False
+        if not u.scheme or u.scheme in ("about", "data", "blob", "javascript"):
+            return True  # not a network fetch to another origin
+        return (u.scheme, (u.hostname or "").lower(), u.port or _default_port(u.scheme)) == t_origin
+
+    return allow
+
+
+def _default_port(scheme: str):
+    return {"http": 80, "https": 443}.get((scheme or "").lower())
 
 
 # --------------------------------------------------------------------------- data
@@ -64,10 +92,21 @@ class RenderResult:
     console: list = field(default_factory=list)
     error: str = ""
     url: str = ""
+    # Out-of-scope / excluded sub-requests the route handler aborted (url, method).
+    blocked_requests: list = field(default_factory=list)
+    # Every sub-request the page attempted, as (url, method, allowed) — for auditing.
+    requests: list = field(default_factory=list)
+    # The RAW top-level HTTP response body (before JS ran) — lets a caller tell a server-reflected
+    # payload (present here) from a pure DOM-sink one (absent here, injected client-side).
+    response_body: str = ""
 
     @property
     def ok(self) -> bool:
         return not self.error
+
+    @property
+    def skipped(self) -> bool:
+        return bool(self.error)
 
 
 # --------------------------------------------------------------------------- lazy import
@@ -99,7 +138,14 @@ class BrowserDriver:
     def is_available(self) -> bool:
         return False
 
-    def render(self, url: str, headers: dict | None = None, timeout: float = 10.0) -> RenderResult:
+    def render(
+        self,
+        url: str,
+        headers: dict | None = None,
+        timeout: float = 10.0,
+        allow=None,
+        on_request=None,
+    ) -> RenderResult:
         raise NotImplementedError
 
 
@@ -124,14 +170,25 @@ class PlaywrightDriver(BrowserDriver):
         except Exception:  # noqa: BLE001 — browser not installed
             return False
 
-    def render(self, url: str, headers: dict | None = None, timeout: float = 10.0) -> RenderResult:
+    def render(
+        self,
+        url: str,
+        headers: dict | None = None,
+        timeout: float = 10.0,
+        allow=None,
+        on_request=None,
+    ) -> RenderResult:
         """Render ``url`` in headless Chromium and report execution evidence.
 
         Robust by contract: any failure (no Playwright, no browser, navigation error, timeout)
         returns an empty :class:`RenderResult` with ``error`` set — it never raises.
 
-        Scope: the caller guarantees ``url`` is an authorized, in-scope target (see module docs);
-        the browser issues its own network requests and is not policed by Rampart.
+        Scope enforcement (C-3): a ``context.route("**/*", …)`` handler ABORTS every sub-request
+        (image/script/iframe/fetch/XHR, and the follow-up of any redirect) whose URL is not
+        permitted by ``allow(url, method) -> bool``. ``allow`` defaults to same-origin-only
+        (:func:`same_origin_allow` of ``url``); the integration pass passes the policy pipeline's
+        scope check. Each attempted sub-request is reported to ``on_request(url, method, allowed)``
+        for auditing, and aborted ones are also recorded in ``result.blocked_requests``.
         """
         result = RenderResult(url=url)
         try:
@@ -140,8 +197,11 @@ class PlaywrightDriver(BrowserDriver):
             result.error = f"playwright unavailable: {exc}"
             return result
 
+        allow = allow or same_origin_allow(url)
         markers: list = []
         console: list = []
+        blocked: list = []
+        requests: list = []
 
         def _record(token):
             try:
@@ -152,11 +212,82 @@ class PlaywrightDriver(BrowserDriver):
                 pass
             return True
 
+        def _route(route):
+            req = route.request
+            req_url = req.url
+            method = req.method
+            try:
+                permitted = bool(allow(req_url, method))
+            except Exception:  # noqa: BLE001 - a broken predicate denies (fail-closed)
+                permitted = False
+            requests.append((req_url, method, permitted))
+            if on_request is not None:
+                try:
+                    on_request(req_url, method, permitted)
+                except Exception:  # noqa: BLE001 - auditing must never break the render
+                    pass
+            if permitted:
+                try:
+                    # Fetch WITHOUT auto-following redirects. Chromium follows a FULFILLED redirect
+                    # internally WITHOUT raising a new route event, so an off-origin 3xx would
+                    # silently leave scope — we therefore inspect the Location ourselves and abort
+                    # a redirect whose target is not permitted.
+                    resp = route.fetch(max_redirects=0)
+                    status = getattr(resp, "status", 0)
+                    if 300 <= status < 400:
+                        location = ""
+                        try:
+                            location = (resp.headers or {}).get("location", "")
+                        except Exception:  # noqa: BLE001
+                            location = ""
+                        abs_loc = urljoin(req_url, location) if location else ""
+                        permitted_redirect = True
+                        if abs_loc:
+                            try:
+                                permitted_redirect = bool(allow(abs_loc, "GET"))
+                            except Exception:  # noqa: BLE001
+                                permitted_redirect = False
+                        if not permitted_redirect:
+                            requests.append((abs_loc, "GET", False))
+                            if on_request is not None:
+                                try:
+                                    on_request(abs_loc, "GET", False)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                            blocked.append((abs_loc, "GET"))
+                            route.abort("blockedbyclient")
+                            return
+                    # Capture the RAW top-level document body (pre-JS) for reflected-vs-DOM triage.
+                    if not result.response_body:
+                        is_doc = method == "GET"
+                        try:
+                            is_doc = req.is_navigation_request()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        if is_doc:
+                            try:
+                                result.response_body = resp.text()
+                            except Exception:  # noqa: BLE001
+                                pass
+                    route.fulfill(response=resp)
+                except Exception:  # noqa: BLE001 - fall back to a normal continue
+                    try:
+                        route.continue_()
+                    except Exception:  # noqa: BLE001
+                        pass
+            else:
+                blocked.append((req_url, method))
+                try:
+                    route.abort("blockedbyclient")
+                except Exception:  # noqa: BLE001
+                    pass
+
         try:
             with sync_api.sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 try:
                     context = browser.new_context(extra_http_headers=dict(headers or {}))
+                    context.route("**/*", _route)
                     page = context.new_page()
                     # The injected canary calls window.__rampart_xss('<TOKEN>') if it executes.
                     page.expose_function(_BINDING, _record)
@@ -185,6 +316,8 @@ class PlaywrightDriver(BrowserDriver):
 
         result.executed_markers = markers
         result.console = console
+        result.blocked_requests = blocked
+        result.requests = requests
         return result
 
 
@@ -206,7 +339,14 @@ class StubDriver(BrowserDriver):
     def is_available(self) -> bool:
         return True
 
-    def render(self, url: str, headers: dict | None = None, timeout: float = 10.0) -> RenderResult:
+    def render(
+        self,
+        url: str,
+        headers: dict | None = None,
+        timeout: float = 10.0,
+        allow=None,
+        on_request=None,
+    ) -> RenderResult:
         self.calls.append(url)
         for substr, resp in self._responses.items():
             if substr in url:
@@ -227,9 +367,53 @@ def available() -> bool:
         return False
 
 
+def browser_skip_reason() -> str:
+    """ "" when the browser pass can run, else a structured skip reason for the integration pass
+    (C-13), e.g. ``"browser: skipped — pip install rampart-appsec[browser] && python -m
+    playwright install chromium"``."""
+    return "" if available() else f"browser: skipped — {install_hint}"
+
+
+def audited_on_request(guard):
+    """Adapt a :class:`~rampart.infra.sidechannel.SideChannelGuard` to the ``on_request`` hook.
+
+    Returns ``on_request(url, method, allowed)`` that records ONE audit event + consumes ONE
+    budget request per browser sub-request (allowed ones; a denied one is audited as blocked).
+    ``guard=None`` -> ``None`` (no auditing). Use together with an ``allow`` predicate: the guard
+    here audits, the predicate decides."""
+    if guard is None:
+        return None
+
+    def on_request(url, method, allowed):
+        try:
+            host = urlsplit(url or "").hostname or ""
+        except ValueError:
+            host = ""
+        guard.admit(host, {"kind": "browser-request", "method": method, "url": url}, allowed=allowed)
+
+    return on_request
+
+
 def _canary_payload(token: str) -> str:
-    """Markup that, if reflected/stored *unescaped* and executed, calls the binding with TOKEN."""
-    return f'"><script>window.{_BINDING}&&window.{_BINDING}({token!r})</script>'
+    """The primary canary (image/onerror). Unlike a bare ``<script>``, this EXECUTES when assigned
+    through ``innerHTML`` (the DOM sink in demo's /dom?x=), and also when reflected into markup."""
+    return f'"><img src=x onerror="window.{_BINDING}&&window.{_BINDING}(\'{token}\')">'
+
+
+def _canary_payloads(token: str) -> list[str]:
+    """All execution-canary variants, tried in turn. Each runs via ``innerHTML`` assignment:
+
+    * ``<img src=x onerror=…>`` — fires on the failed image load;
+    * ``<svg onload=…>`` — fires on SVG insertion;
+    * ``"><script>…</script>`` — the classic reflected-XSS variant (does NOT run via innerHTML,
+      but does when reflected into the served HTML) kept so server-reflected sinks still execute.
+    """
+    call = f"window.{_BINDING}&&window.{_BINDING}('{token}')"
+    return [
+        f'"><img src=x onerror="{call}">',
+        f'"><svg onload="{call}">',
+        f'"><script>{call}</script>',
+    ]
 
 
 def _build_url(base_url: str, path: str, param: str, value: str) -> str:
@@ -259,19 +443,30 @@ def _executed(render: RenderResult, token: str) -> bool:
 
 # --------------------------------------------------------------------------- oracles
 def run_dom_xss_oracle(
-    driver: BrowserDriver, base_url: str, path: str, param: str, reproductions: int = 2
+    driver: BrowserDriver,
+    base_url: str,
+    path: str,
+    param: str,
+    reproductions: int = 2,
+    allow=None,
+    on_request=None,
 ) -> OracleVerdict:
-    """Confirm DOM/reflected XSS by *execution*, not reflection.
+    """Confirm *DOM-based* XSS by *execution*, and DEDUPE it from server-reflected XSS (C-4).
 
-    Renders ``base_url + path?param=<executing canary>`` in a real browser. CONFIRMED only if the
-    canary TOKEN actually executes (lands in ``executed_markers``) on ``reproductions``+ renders
-    AND a benign control value does NOT execute it. Mirrors the deterministic FP discipline of
-    the HTTP oracles: a positive signal alone is never enough.
+    For each innerHTML-capable canary (:func:`_canary_payloads`), renders
+    ``base_url + path?param=<canary>`` in a real browser. CONFIRMED only when ALL hold:
+
+    * the canary TOKEN actually executes (lands in ``executed_markers``) on ``reproductions``+
+      fresh renders, AND a benign control value does NOT execute it; AND
+    * the **raw** payload is NOT present in the server's HTTP response body for that request —
+      i.e. the sink is client-side (``innerHTML`` etc.), not a server reflection. When the server
+      already echoes the payload into its HTML, this is REFLECTED XSS (reported by the HTTP
+      oracle), so the DOM oracle skips it to avoid a double count.
+
+    ``allow``/``on_request`` are forwarded to the driver so the scope route-guard and request
+    auditing apply to the browser's own sub-requests.
     """
     token = DOMXSS_TOKEN
-    mal_url = _build_url(base_url, path, param, _canary_payload(token))
-    benign_url = _build_url(base_url, path, param, _BENIGN_CONTROL)
-
     reasons: list = []
     fp: list = []
 
@@ -284,8 +479,12 @@ def run_dom_xss_oracle(
             controls={"token": token, "engine_available": False},
         )
 
+    def _render(u):
+        return driver.render(u, allow=allow, on_request=on_request)
+
     # negative control: a markup-free value must not execute the canary
-    control = driver.render(benign_url)
+    benign_url = _build_url(base_url, path, param, _BENIGN_CONTROL)
+    control = _render(benign_url)
     control_executed = _executed(control, token)
     reasons.append(
         ("PASS" if not control_executed else "FAIL")
@@ -293,26 +492,50 @@ def run_dom_xss_oracle(
     )
     fp.append(f"control executed_markers={list(control.executed_markers or [])}")
 
-    # the payload must actually execute, reproduced N times from fresh renders
-    repro_ok = 0
     consoles: list = []
-    for _ in range(max(1, reproductions)):
-        r = driver.render(mal_url)
-        consoles.extend(r.console or [])
-        if _executed(r, token):
-            repro_ok += 1
+    chosen_payload = ""
+    repro_ok = 0
+    server_reflected = False
+    for payload in _canary_payloads(token):
+        mal_url = _build_url(base_url, path, param, payload)
+        ok = 0
+        reflected = False
+        for _ in range(max(1, reproductions)):
+            r = _render(mal_url)
+            consoles.extend(r.console or [])
+            if payload in (r.response_body or ""):
+                reflected = True
+            if _executed(r, token):
+                ok += 1
+        if ok >= reproductions:
+            chosen_payload, repro_ok, server_reflected = payload, ok, reflected
+            break
+
     payload_executes = repro_ok >= reproductions
     reasons.append(
         ("PASS" if payload_executes else "FAIL")
-        + f": injected canary EXECUTED in the DOM on {repro_ok}/{reproductions} renders"
+        + f": an innerHTML-capable canary EXECUTED in the DOM on {repro_ok}/{reproductions} renders"
+    )
+    # Dedupe: if the server reflected the raw payload into its response, this is reflected XSS.
+    is_dom_sink = payload_executes and not server_reflected
+    reasons.append(
+        ("PASS" if is_dom_sink else "SKIP")
+        + ": the raw payload is "
+        + ("ABSENT from" if is_dom_sink else "PRESENT in")
+        + " the server's HTTP response body — "
+        + ("client-side DOM sink (DOM-XSS)" if is_dom_sink else "server-reflected XSS, deduped here")
     )
     fp.append(
         "execution proven by a JS binding/console callback in the live DOM, "
         "not by the payload merely appearing in the HTML source"
     )
     fp.append(f"reproduced {repro_ok}/{reproductions} times via headless render")
+    fp.append(
+        "classified DOM-based only because the raw payload was NOT in the server response body "
+        "(so the write happened in client JS, e.g. innerHTML), de-duplicating server-reflected XSS"
+    )
 
-    validated = payload_executes and not control_executed
+    validated = payload_executes and not control_executed and is_dom_sink
     return OracleVerdict(
         validated=validated,
         vuln_class="DOM_XSS",
@@ -325,14 +548,22 @@ def run_dom_xss_oracle(
             "engine_available": True,
             "control_executed": control_executed,
             "payload_executes": payload_executes,
-            "probe_url": mal_url,
+            "server_reflected": server_reflected,
+            "is_dom_sink": is_dom_sink,
+            "payload": chosen_payload,
             "control_url": benign_url,
         },
     )
 
 
 def run_stored_xss_oracle(
-    driver: BrowserDriver, write_outcome_bool: bool, read_url: str, token: str, reproductions: int = 2
+    driver: BrowserDriver,
+    write_outcome_bool: bool,
+    read_url: str,
+    token: str,
+    reproductions: int = 2,
+    allow=None,
+    on_request=None,
 ) -> OracleVerdict:
     """Confirm *stored* XSS — the read/verify half only.
 
@@ -363,7 +594,7 @@ def run_stored_xss_oracle(
     consoles: list = []
     if write_outcome_bool:
         for _ in range(max(1, reproductions)):
-            r = driver.render(read_url)
+            r = driver.render(read_url, allow=allow, on_request=on_request)
             consoles.extend(r.console or [])
             if _executed(r, token):
                 repro_ok += 1

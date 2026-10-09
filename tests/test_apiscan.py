@@ -9,6 +9,8 @@ The fake endpoints mirror rampart.schemas.appmodel.Endpoint (.method/.path/.para
 .auth_required), so the scanner works unchanged against the real application model.
 """
 
+import json
+import re
 from dataclasses import dataclass, field
 
 from rampart.apiscan import api_scan, graphql_depth_scan, method_tampering_scan
@@ -77,7 +79,7 @@ class FakeRunner:
         if isinstance(body, list):  # array batching
             if secure:
                 return FakeOutcome(True, 400, '{"errors":[{"message":"Batching is not allowed."}]}')
-            return FakeOutcome(True, 200, '{"data":[{"__typename":"Query"},{"__typename":"Query"}]}')
+            return FakeOutcome(True, 200, '[{"data":{"__typename":"Query"}},{"data":{"__typename":"Query"}}]')
         q = str((body or {}).get("query", ""))
         if "uesr" in q:  # misspelled field
             if secure:
@@ -165,6 +167,48 @@ def test_graphql_batching_is_firm():
     assert f.state == State.EVIDENCE_FOUND
     assert "CWE-770" in f.cwe
     f.assert_consistent()
+
+
+_ALIAS_RE = re.compile(r"(\w+)\s*:\s*__typename")
+
+
+class _SpecGqlRunner(FakeRunner):
+    """Mirrors a spec-style server: batching rejected, <=10 aliases answered. ``reject_with_200``
+    wraps rejections in HTTP 200 + ``errors`` (common in real servers)."""
+
+    def __init__(self, reject_with_200=False, alias_limit=10):
+        super().__init__()
+        self.reject_with_200 = reject_with_200
+        self.alias_limit = alias_limit
+
+    def _graphql(self, path, body):
+        rej = 200 if self.reject_with_200 else 400
+        if isinstance(body, list):
+            return FakeOutcome(True, rej, '{"errors":[{"message":"Batched operations are not allowed"}]}')
+        aliases = _ALIAS_RE.findall(str((body or {}).get("query", "")))
+        if len(aliases) > self.alias_limit:
+            return FakeOutcome(True, rej, '{"errors":[{"message":"Too many aliases"}]}')
+        if aliases:
+            return FakeOutcome(True, 200, json.dumps({"data": dict.fromkeys(aliases, "Query")}))
+        return FakeOutcome(True, 200, '{"errors":[{"message":"Cannot query field on type Query."}]}')
+
+
+def test_graphql_two_alias_answer_is_not_batching():
+    """Regression C-6: every GraphQL server answers a 2-alias query; that alone must not fire."""
+    findings = graphql_depth_scan(_SpecGqlRunner(), _gql_model(), "http://t", "demo")
+    assert [f for f in findings if f.vuln_class == "GRAPHQL_BATCHING"] == []
+
+
+def test_graphql_200_with_errors_is_a_rejection():
+    findings = graphql_depth_scan(_SpecGqlRunner(reject_with_200=True), _gql_model(), "http://t", "demo")
+    assert [f for f in findings if f.vuln_class == "GRAPHQL_BATCHING"] == []
+
+
+def test_graphql_large_alias_fanout_without_errors_fires():
+    runner = _SpecGqlRunner(alias_limit=10_000)
+    findings = graphql_depth_scan(runner, _gql_model(), "http://t", "demo")
+    b = [f for f in findings if f.vuln_class == "GRAPHQL_BATCHING"]
+    assert len(b) == 1 and "100 aliases" in b[0].description
 
 
 # --------------------------------------------------------------- GraphQL secure -> nothing

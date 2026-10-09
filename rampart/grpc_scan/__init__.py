@@ -5,9 +5,10 @@ load time; it is imported lazily inside :func:`available` / :func:`_list_service
 package always imports cleanly. With ``grpcio``/``grpcio-reflection`` absent (or the server
 unreachable / reflection disabled), :func:`scan_grpc` degrades to a no-op and returns ``[]``.
 
-Trust boundary: a gRPC channel makes its OWN network requests and is NOT policed by Rampart's
-scope choke-point, so the caller must only ever point :func:`scan_grpc` at an already in-scope,
-authorized host:port.
+Trust boundary: a gRPC channel makes its OWN network requests outside Rampart's HTTP policy
+pipeline, so :func:`scan_grpc` enforces the ``scope`` it is given (host, scoped port, resolved-IP
+allowlist; fail-closed) and audits/budgets every RPC. A missing dependency or an out-of-scope
+target is reported via the result's ``skip_reason``.
 """
 
 from __future__ import annotations

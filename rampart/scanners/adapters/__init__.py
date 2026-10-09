@@ -26,8 +26,11 @@ ADAPTERS = {
 }
 
 
-def build_adapters(names, repo: str = "", timeout: float = 300.0) -> list:
-    """Instantiate the requested adapters. 'all' expands to every adapter."""
+def build_adapters(names, repo: str = "", timeout: float = 300.0, scope=None, active: bool = False) -> list:
+    """Instantiate the requested adapters. 'all' expands to every adapter.
+
+    ``scope``/``active`` are passed to every adapter so network tools can derive safe flags
+    (e.g. nuclei rate limit from ``limits.max_requests_per_host_per_min``)."""
     if isinstance(names, str):
         names = [n.strip() for n in names.split(",") if n.strip()]
     if not names:
@@ -38,7 +41,7 @@ def build_adapters(names, repo: str = "", timeout: float = 300.0) -> list:
     for n in names:
         cls = ADAPTERS.get(n)
         if cls:
-            out.append(cls(repo=repo, timeout=timeout))
+            out.append(cls(repo=repo, timeout=timeout, scope=scope, active=active))
     return out
 
 
@@ -54,6 +57,7 @@ def doctor() -> dict:
                 "category": a.category,
                 "network": a.network,
                 "available": avail,
+                "skip_reason": a.skip_reason() if avail else "",
                 "version": a.version() if avail else "",
                 "install_hint": a.install_hint,
                 "help_uri": a.help_uri,

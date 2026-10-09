@@ -8,6 +8,6 @@ a tiny stdlib HTTP server you self-host (loopback by default).
 """
 
 from .blind import blind_ssrf_scan, blind_xxe_scan
-from .collaborator import OOBCollaborator
+from .collaborator import OOBCollaborator, oob_skip_reason
 
-__all__ = ["OOBCollaborator", "blind_ssrf_scan", "blind_xxe_scan"]
+__all__ = ["OOBCollaborator", "blind_ssrf_scan", "blind_xxe_scan", "oob_skip_reason"]

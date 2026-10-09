@@ -120,3 +120,207 @@ def test_dom_xss_oracle_degrades_when_engine_unavailable(monkeypatch):
     v = run_dom_xss_oracle(PlaywrightDriver(), BASE, "/page", "q")
     assert v.validated is False
     assert v.controls["engine_available"] is False
+
+
+# --------------------------------------------------------------------- C-4 reflected/DOM dedupe
+def test_dom_xss_deduped_when_server_reflects_payload():
+    """If the raw payload appears in the server HTTP body, it is reflected XSS -> DOM oracle skips."""
+    from rampart.browser.engine import _canary_payloads
+
+    first = _canary_payloads(DOMXSS_TOKEN)[0]
+
+    # Simulate a server that REFLECTS the first canary into its HTML AND executes it.
+    stub = StubDriver(
+        {"__rampart_xss": RenderResult(executed_markers=[DOMXSS_TOKEN], response_body=f"<p>{first}</p>")}
+    )
+    v = run_dom_xss_oracle(stub, BASE, "/api/search", "q")
+    assert v.validated is False  # reflected, not DOM-based
+    assert v.controls["server_reflected"] is True
+    assert any("deduped" in r for r in v.reasons)
+
+
+def test_dom_xss_confirmed_when_payload_absent_from_body():
+    # Executes but the raw payload is NOT in the server body -> client-side DOM sink (innerHTML).
+    stub = StubDriver(
+        {"__rampart_xss": RenderResult(executed_markers=[DOMXSS_TOKEN], response_body="<div id=out></div>")}
+    )
+    v = run_dom_xss_oracle(stub, BASE, "/dom", "x")
+    assert v.validated is True
+    assert v.controls["is_dom_sink"] is True
+
+
+def test_canary_payloads_use_innerhtml_capable_markup():
+    from rampart.browser.engine import _canary_payload, _canary_payloads
+
+    assert "onerror" in _canary_payload("TOK")  # primary is img/onerror, not a bare <script>
+    kinds = _canary_payloads("TOK")
+    assert any("onerror" in p for p in kinds) and any("onload" in p for p in kinds)
+
+
+# --------------------------------------------------------------------- C-13 skip reason
+def test_browser_skip_reason(monkeypatch):
+    monkeypatch.setattr("rampart.browser.engine.available", lambda: False)
+    assert engine.browser_skip_reason().startswith("browser: skipped —")
+    monkeypatch.setattr("rampart.browser.engine.available", lambda: True)
+    assert engine.browser_skip_reason() == ""
+
+
+# --------------------------------------------------------------------- C-11 on_request auditing
+def test_oracle_forwards_allow_and_on_request_to_driver():
+    seen = {}
+
+    class _Spy(StubDriver):
+        def render(self, url, headers=None, timeout=10.0, allow=None, on_request=None):
+            seen["allow"] = allow
+            seen["on_request"] = on_request
+            return super().render(url, headers, timeout, allow, on_request)
+
+    spy = _Spy({"__rampart_xss": RenderResult(executed_markers=[DOMXSS_TOKEN])})
+
+    def sentinel_allow(u, m="GET"):
+        return True
+
+    def sentinel_audit(u, m, ok):
+        return None
+
+    run_dom_xss_oracle(spy, BASE, "/dom", "x", allow=sentinel_allow, on_request=sentinel_audit)
+    assert seen["allow"] is sentinel_allow
+    assert seen["on_request"] is sentinel_audit
+
+
+# --------------------------------------------------------------------- same-origin default predicate
+def test_same_origin_allow_default():
+    from rampart.browser.engine import same_origin_allow
+
+    allow = same_origin_allow("http://127.0.0.1:18850/page")
+    assert allow("http://127.0.0.1:18850/img", "GET") is True
+    assert allow("http://127.0.0.1:18851/img", "GET") is False  # different port
+    assert allow("http://evil.example.com/x", "GET") is False  # different host
+    assert allow("about:blank", "GET") is True  # non-network
+    assert allow("data:text/html,x", "GET") is True
+
+
+# --------------------------------------------------------------------- C-3 route guard (real browser)
+def test_route_guard_blocks_out_of_scope_subrequests(tmp_path):
+    import pytest
+
+    pytest.importorskip("playwright.sync_api")
+    if not available():
+        pytest.skip("chromium not installed")
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits = {"a": [], "b": []}
+
+    def server(port, role, other=0):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                hits[role].append(self.path)
+                if role == "a" and self.path.startswith("/redir"):
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{other}/redirected")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = (
+                    (
+                        f'<img src="http://127.0.0.1:{other}/img">'
+                        f'<iframe src="http://127.0.0.1:{other}/frame"></iframe>'
+                        "<p>hi</p>"
+                    ).encode()
+                    if role == "a"
+                    else b"out-of-scope"
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        s = ThreadingHTTPServer(("127.0.0.1", port), H)
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+        return s
+
+    import socket
+
+    def _free():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    pa, pb = _free(), _free()
+    a = server(pa, "a", pb)
+    b = server(pb, "b")
+    audited = []
+    try:
+        drv = PlaywrightDriver()
+        r = drv.render(
+            f"http://127.0.0.1:{pa}/page",
+            on_request=lambda u, m, ok: audited.append((u, ok)),
+        )
+    finally:
+        a.shutdown()
+        b.shutdown()
+    # the out-of-scope origin (port pb) must never have been hit by the browser
+    assert hits["b"] == [], hits["b"]
+    assert any(f":{pb}" in u and ok is False for u, ok in audited)
+    assert any(f":{pb}" in u for u, m in r.blocked_requests)
+
+
+def test_route_guard_blocks_redirect_to_other_origin(tmp_path):
+    import pytest
+
+    pytest.importorskip("playwright.sync_api")
+    if not available():
+        pytest.skip("chromium not installed")
+    import socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits = {"a": [], "b": []}
+
+    def _free():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    pa, pb = _free(), _free()
+
+    def server(port, role, other=0):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                hits[role].append(self.path)
+                if role == "a":
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{other}/redirected")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = b"out-of-scope"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        s = ThreadingHTTPServer(("127.0.0.1", port), H)
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+        return s
+
+    a = server(pa, "a", pb)
+    b = server(pb, "b")
+    try:
+        PlaywrightDriver().render(f"http://127.0.0.1:{pa}/redir")
+    finally:
+        a.shutdown()
+        b.shutdown()
+    assert hits["b"] == [], "a redirect to another origin must be blocked by the route guard"

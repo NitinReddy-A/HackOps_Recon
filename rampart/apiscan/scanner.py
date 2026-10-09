@@ -19,6 +19,7 @@ tunnelled over a gated Tier-2 POST and run ONLY when ``active=True``.
 
 from __future__ import annotations
 
+import json
 import re
 
 from ..schemas.finding import CVSS, Finding, Remediation, Reproduction, State, Verification
@@ -301,13 +302,46 @@ def method_tampering_scan(
 # server's "Did you mean …?" field suggestion when suggestions are enabled.
 _GQL_TYPO_QUERY = "query { uesr }"
 _GQL_BATCH = [{"query": "{ __typename }"}, {"query": "{ __typename }"}]
-_GQL_ALIAS_QUERY = "query { a0: __typename a1: __typename }"
+# Alias amplification is only an indicator when a LARGE fan-out is accepted: every spec-compliant
+# GraphQL server answers a 2-alias query, so a small count proves nothing.
+_GQL_ALIAS_COUNT = 100
+_GQL_ALIAS_QUERY = "query { " + " ".join(f"a{i}: __typename" for i in range(_GQL_ALIAS_COUNT)) + " }"
 # Tolerate JSON/backslash-escaped quotes around the suggested field, e.g. Did you mean \"user\"?
 _DID_YOU_MEAN = re.compile(r"(?i)did you mean\s+[\"'\\]*([A-Za-z_][A-Za-z0-9_]*)")
 _GQL_REJECTED = re.compile(
     r"(?i)(not allowed|not permitted|disabled|not supported|too many|"
     r"forbidden|rejected|limit exceeded)"
 )
+
+
+def _json_body(resp):
+    try:
+        return json.loads(getattr(resp, "body", "") or "")
+    except (ValueError, TypeError):
+        return None
+
+
+def _batch_accepted(resp) -> bool:
+    """Real array batching: HTTP 200 + a JSON ARRAY with one result per operation, each carrying
+    ``data`` and no ``errors``. A 200 that wraps an ``errors`` key is a rejection."""
+    if not (getattr(resp, "executed", False) and resp.status == 200):
+        return False
+    body = _json_body(resp)
+    if not isinstance(body, list) or len(body) < len(_GQL_BATCH):
+        return False
+    return all(isinstance(r, dict) and isinstance(r.get("data"), dict) and not r.get("errors") for r in body)
+
+
+def _alias_accepted(resp) -> bool:
+    """Large alias fan-out accepted: HTTP 200, JSON object with NO ``errors`` key, and ``data``
+    echoing at least :data:`_GQL_ALIAS_COUNT` aliases."""
+    if not (getattr(resp, "executed", False) and resp.status == 200):
+        return False
+    body = _json_body(resp)
+    if not isinstance(body, dict) or "errors" in body:
+        return False
+    data = body.get("data")
+    return isinstance(data, dict) and len(data) >= _GQL_ALIAS_COUNT
 
 
 def _gql_endpoints(appmodel) -> list:
@@ -463,28 +497,20 @@ def graphql_depth_scan(runner, appmodel, target_url, application, engagement_id=
             rationale="graphql batching probe: array of 2 trivial queries",
             summary="graphql batching probe",
         )
-        accepted = (
-            getattr(batch, "executed", False)
-            and batch.status == 200
-            and not _GQL_REJECTED.search(batch.body or "")
-        )
-        mech = "array batching (2 queries in one request)"
+        accepted = _batch_accepted(batch)
+        mech = "array batching (2 operations in one request, each answered with its own result)"
         if not accepted:
             alias = runner.post(
                 path,
                 {"query": _GQL_ALIAS_QUERY},
                 session=None,
                 payload_class="benign-read",
-                rationale="graphql alias-amplification probe: multiple aliases",
+                rationale=f"graphql alias-amplification probe: {_GQL_ALIAS_COUNT} aliases",
                 summary="graphql alias probe",
             )
-            if (
-                getattr(alias, "executed", False)
-                and alias.status == 200
-                and not _GQL_REJECTED.search(alias.body or "")
-            ):
+            if _alias_accepted(alias):
                 accepted = True
-                mech = "alias amplification (multiple aliases in one query)"
+                mech = f"alias amplification ({_GQL_ALIAS_COUNT} aliases in one query, no errors)"
         if accepted:
             findings.append(
                 _firm_graphql_finding(

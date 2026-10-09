@@ -52,8 +52,9 @@ def test_scan_grpc_returns_finding_when_reflection_lists_services(monkeypatch):
         scan_mod, "_list_services", lambda host, port, scheme, timeout=8.0: ["pkg.A", "pkg.B"]
     )
     findings = scan_grpc("h", 50051, "grpc", "app", "http://h:50051")
-    assert len(findings) == 1
-    f = findings[0]
+    refl = [f for f in findings if f.vuln_class == "information-disclosure"]
+    assert len(refl) == 1
+    f = refl[0]
     assert "CWE-200" in f.cwe
     assert f.verification.validated is True
     assert "pkg.A" in f.description and "pkg.B" in f.description
@@ -144,8 +145,9 @@ def test_scan_grpc_reflection_description_mentions_methods(monkeypatch):
         scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: [_m("pkg.A", "GetThing")]
     )
     findings = scan_grpc("h", 50051, "grpc", "app", "http://h:50051")  # active defaults False
-    assert len(findings) == 1  # still only the reflection exposure finding by default
-    f = findings[0]
+    # reflection exposure + the PASSIVE plaintext-transport observation (scheme 'grpc'); no invocation
+    assert sorted(f.vuln_class for f in findings) == ["GRPC_PLAINTEXT", "information-disclosure"]
+    f = [x for x in findings if x.vuln_class == "information-disclosure"][0]
     assert f.vuln_class == "information-disclosure"
     assert "CWE-200" in f.cwe
     assert "pkg.A" in f.description
@@ -310,3 +312,158 @@ def test_scan_grpc_active_extends_with_method_findings(monkeypatch):
     assert "GRPC_UNAUTH_METHOD" in classes  # confirmed unauth (GetUser open, GetAdmin gated)
     for f in findings:
         f.assert_consistent()
+
+
+# --------------------------------------------------------------------- C-7 read classifier
+def test_read_classifier_rejects_mutating_words_anywhere():
+    for name in (
+        "Checkout",
+        "CheckoutCart",
+        "GetOrCreateUser",
+        "get_or_create_user",
+        "ReadAndDelete",
+        "QueryAndPurge",
+        "HealthReset",
+        "ListAndDrop",
+        "Getaway",  # first word must be EXACTLY a read verb
+        "Lister",
+        "CountAndIncrement",
+        "FetchThenSend",
+        "SearchAndTransfer",
+        "StatusSet",
+    ):
+        assert _is_read_method(name) is False, name
+
+
+def test_read_classifier_accepts_plain_reads():
+    for name in (
+        "GetUser",
+        "ListOrders",
+        "list_orders",
+        "Check",
+        "HealthCheck",
+        "Ping",
+        "Watch",
+        "DescribeTable",
+        "FindById",
+        "LookupHTTPRoute",
+        "ShowStatus",
+        "ViewProfile",
+        "Status",
+    ):
+        assert _is_read_method(name) is True, name
+
+
+def test_active_never_invokes_compound_mutators(monkeypatch):
+    methods = [_m("pkg.S", n) for n in ("GetOrCreateUser", "CheckoutCart", "HealthReset", "GetUser")]
+    monkeypatch.setattr(scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: methods)
+    calls = []
+
+    def rec(host, port, scheme, full_method, metadata=None, request_bytes=b"", timeout=8.0):
+        calls.append(full_method)
+        return {"code": "OK", "ok": True, "response_len": 1, "details": ""}
+
+    monkeypatch.setattr(scan_mod, "_invoke_method", rec)
+    scan_grpc_methods("h", 50051, "grpc", "app", "http://h:50051", active=True)
+    assert set(calls) == {"/pkg.S/GetUser"}
+
+
+# --------------------------------------------------------------------- C-12 engagement id / passive
+def _fake_invoke_x_open(h, p, s, full, **k):
+    is_x = full.endswith("GetX")
+    return {"code": "OK" if is_x else "UNAUTHENTICATED", "ok": is_x, "response_len": 3, "details": ""}
+
+
+def test_scan_grpc_stamps_engagement_id_and_plaintext_is_passive(monkeypatch):
+    monkeypatch.setattr(scan_mod, "_list_services", lambda host, port, scheme, timeout=8.0: ["pkg.A"])
+    monkeypatch.setattr(
+        scan_mod, "_list_methods", lambda host, port, scheme, timeout=8.0: [_m("pkg.A", "GetX")]
+    )
+
+    def boom(*a, **k):
+        raise AssertionError("passive scan must not invoke RPCs")
+
+    monkeypatch.setattr(scan_mod, "_invoke_method", boom)
+    findings = scan_grpc("h", 50051, "grpc", "app", "http://h:50051", engagement_id="ENG-42")
+    assert {f.vuln_class for f in findings} == {"information-disclosure", "GRPC_PLAINTEXT"}
+    assert all(f.engagement_id == "ENG-42" for f in findings)
+
+
+def test_scan_grpc_active_engagement_id_on_method_findings(monkeypatch):
+    monkeypatch.setattr(scan_mod, "_list_services", lambda host, port, scheme, timeout=8.0: ["pkg.A"])
+    monkeypatch.setattr(
+        scan_mod,
+        "_list_methods",
+        lambda host, port, scheme, timeout=8.0: [_m("pkg.A", "GetX"), _m("pkg.A", "GetY")],
+    )
+    monkeypatch.setattr(scan_mod, "_invoke_method", _fake_invoke_x_open)
+    findings = scan_grpc("h", 50051, "grpc", "app", "http://h:50051", active=True, engagement_id="E1")
+    assert "GRPC_UNAUTH_METHOD" in {f.vuln_class for f in findings}
+    assert all(f.engagement_id == "E1" for f in findings)
+    assert [f.vuln_class for f in findings].count("GRPC_PLAINTEXT") == 1  # no duplicate
+
+
+# --------------------------------------------------------------------- C-13 structured skip
+def test_scan_grpc_missing_dependency_has_skip_reason(monkeypatch):
+    def _missing(*a, **k):
+        raise ImportError("No module named 'grpc'")
+
+    monkeypatch.setattr(scan_mod, "_list_services", _missing)
+    out = scan_grpc("h", 50051, "grpc", "app", "http://h:50051")
+    assert out == []
+    assert out.skip_reason == "grpc: skipped — pip install rampart-appsec[grpc]"
+
+
+# --------------------------------------------------------------------- scope + audit/budget (C-11)
+def _gscope(ports):
+    from rampart.schemas.scope import EngagementScope
+
+    return EngagementScope.from_dict(
+        {
+            "kind": "EngagementScope",
+            "scope": {
+                "in_scope": [{"host": "127.0.0.1", "ports": list(ports)}],
+                "resolved_ip_allowlist": ["127.0.0.1/32"],
+            },
+        }
+    )
+
+
+def _loop(_h):
+    return ["127.0.0.1"]
+
+
+def test_scan_grpc_refuses_port_not_in_scope(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("no channel may be opened for an out-of-scope port")
+
+    monkeypatch.setattr(scan_mod, "_list_services", boom)
+    out = scan_grpc("127.0.0.1", 50051, "grpc", "app", "", scope=_gscope([8080]), resolver=_loop)
+    assert out == [] and "not authorized" in out.skip_reason
+
+
+def test_scan_grpc_audits_each_rpc_and_honours_kill(monkeypatch, tmp_path):
+    from rampart.audit import AuditLog
+    from rampart.policy.budget import BudgetTracker
+    from rampart.schemas.scope import Limits
+
+    monkeypatch.setattr(scan_mod, "_list_services", lambda host, port, scheme, timeout=8.0: ["pkg.A"])
+    monkeypatch.setattr(
+        scan_mod,
+        "_list_methods",
+        lambda host, port, scheme, timeout=8.0: [_m("pkg.A", "GetX"), _m("pkg.A", "GetY")],
+    )
+    monkeypatch.setattr(scan_mod, "_invoke_method", _fake_invoke_x_open)
+    audit = AuditLog(str(tmp_path / "a.jsonl"))
+    budget = BudgetTracker(Limits())
+    kw = {"scope": _gscope([50051]), "resolver": _loop, "active": True}
+    scan_grpc("127.0.0.1", 50051, "grpc", "app", "", engagement_id="E", audit=audit, budget=budget, **kw)
+    events = audit.read_all()
+    # list_services + method enumeration + 2 invocations + 1 reproduction = 5 RPC admissions
+    assert len(events) == 5
+    assert budget.total_requests == 5
+    assert all(e.action["kind"] == "grpc-rpc" and e.engagement_id == "E" for e in events)
+
+    budget.kill("stop")
+    out = scan_grpc("127.0.0.1", 50051, "grpc", "app", "", budget=budget, **kw)
+    assert out == [] and "kill-switch" in out.skip_reason

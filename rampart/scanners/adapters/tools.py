@@ -68,18 +68,55 @@ class NucleiAdapter(ScannerAdapter):
             )
         return out
 
+    # Intrusive/fuzz template tags run only when the operator authorized active testing (--active);
+    # denial-of-service templates are never run, even with --active (Tier-3 destructive).
+    _EXCLUDE_TAGS_PASSIVE = ("intrusive", "dos", "fuzz")
+    _EXCLUDE_TAGS_ACTIVE = ("dos",)
+
+    def rate_limit(self) -> int:
+        """Requests/second derived from the scope: ``max_requests_per_host_per_min / 60`` (>= 1)."""
+        limits = getattr(self.scope, "limits", None)
+        per_min = getattr(limits, "max_requests_per_host_per_min", None) or 120
+        try:
+            return max(1, int(per_min) // 60)
+        except (TypeError, ValueError):
+            return 2
+
+    def build_argv(self, target_url) -> list:
+        """The nuclei command line, constrained by scope (C-9).
+
+        * ``-ni`` — disable the interactsh/OAST client (no external callback server);
+        * ``-rl <rate>`` — cap requests/second from the engagement limits (:meth:`rate_limit`);
+        * ``-etags`` — exclude intrusive/dos/fuzz templates unless ``active`` (dos always excluded);
+        * ``-dr`` — never follow redirects (so a redirect cannot carry the scan off-host);
+        * excluded paths — nuclei has no per-path allow/deny for a single ``-u`` target, so each
+          scoped exclusion is documented in docs/EXTERNAL_TOOLS.md and surfaced via
+          :meth:`excluded_paths` for the integration pass (it narrows ``-u``/seeds upstream).
+        """
+        argv = [
+            self.resolved_binary(),
+            "-u",
+            target_url,
+            "-jsonl",
+            "-silent",
+            "-disable-update-check",
+            "-ni",
+            "-dr",
+            "-rl",
+            str(self.rate_limit()),
+        ]
+        tags = self._EXCLUDE_TAGS_ACTIVE if self.active else self._EXCLUDE_TAGS_PASSIVE
+        if tags:
+            argv += ["-etags", ",".join(tags)]
+        argv += list(self.extra_args)
+        return argv
+
+    def excluded_paths(self) -> list:
+        """Scope path-exclusions nuclei cannot enforce itself (documented; for the integration pass)."""
+        return list(getattr(self.scope, "paths_exclude", None) or [])
+
     def run(self, appmodel, target_url, application) -> list:
-        r = self._exec(
-            [
-                self.resolved_binary(),
-                "-u",
-                target_url,
-                "-jsonl",
-                "-silent",
-                "-disable-update-check",
-                *self.extra_args,
-            ]
-        )
+        r = self._exec(self.build_argv(target_url))
         return self._parse(r.stdout, application, target_url)
 
 
@@ -160,16 +197,52 @@ class SemgrepAdapter(_SarifRepoAdapter):
     binary = "semgrep"
     category = "sast"
     network = False
-    install_hint = "pip install semgrep (prefer Opengrep — Semgrep registry rules are not OSS since 2024)"
+    install_hint = (
+        "pip install semgrep AND set RAMPART_SEMGREP_CONFIG to a local rules path/pack "
+        "(prefer Opengrep — Semgrep registry rules are not OSS since 2024)"
+    )
     help_uri = "https://semgrep.dev"
 
-    def _cmd(self, repo):
-        # NOTE: `--config auto` pulls Semgrep's registry rules (restrictive license since 2024-12)
-        # and needs network. Default to a local/offline config; override via RAMPART_SEMGREP_CONFIG.
+    def _config(self):
+        """The configured ruleset, or ``None`` when none is provided (C-16).
+
+        There is intentionally NO default: ``--config p/default`` and ``--config auto`` both fetch
+        from Semgrep's registry over the network (and the registry rules are non-OSS since 2024-12),
+        which contradicts an 'offline SAST' promise. A ruleset must be opted into explicitly via
+        ``RAMPART_SEMGREP_CONFIG`` (a local path, a local pack, or e.g. ``p/ci`` if the operator
+        accepts the network fetch)."""
         import os
 
-        config = os.environ.get("RAMPART_SEMGREP_CONFIG", "p/default")
+        return os.environ.get("RAMPART_SEMGREP_CONFIG") or None
+
+    def skip_reason(self) -> str:
+        if not self._config():
+            return (
+                "semgrep: skipped — set RAMPART_SEMGREP_CONFIG to a local rules path/pack. "
+                "(No default is used: '--config p/default'/'auto' fetch non-OSS registry rules over "
+                "the network. Prefer the Opengrep adapter for offline SAST.)"
+            )
+        return ""
+
+    def uses_network(self) -> bool:
+        # A local file/dir config is offline; a registry pack (p/…, r/…, auto) fetches rules.
+        cfg = self._config() or ""
+        import os
+
+        if cfg and (os.path.sep in cfg or os.path.exists(cfg)):
+            return False
+        return bool(cfg)
+
+    def _cmd(self, repo):
+        config = self._config()
+        if not config:  # defensive: supervisor should have skipped via skip_reason()
+            return []
         return [self.resolved_binary(), "scan", "--config", config, "--sarif", "-q", repo, *self.extra_args]
+
+    def run(self, appmodel, target_url, application) -> list:
+        if not self._config():
+            return []  # no config => do not shell semgrep (see skip_reason)
+        return super().run(appmodel, target_url, application)
 
 
 class OpengrepAdapter(_SarifRepoAdapter):
@@ -207,7 +280,7 @@ class GitleaksAdapter(_SarifRepoAdapter):
     install_hint = "install gitleaks (secret scanning) from https://github.com/gitleaks/gitleaks"
     help_uri = "https://gitleaks.io"
 
-    def _cmd(self, repo):
+    def _cmd(self, repo, report_path="/dev/stdout"):
         return [
             self.resolved_binary(),
             "detect",
@@ -217,10 +290,37 @@ class GitleaksAdapter(_SarifRepoAdapter):
             "--report-format",
             "sarif",
             "--report-path",
-            "/dev/stdout",
+            report_path,
             "--redact",
             *self.extra_args,
         ]
+
+    def run(self, appmodel, target_url, application) -> list:
+        """Write the SARIF report to a temp FILE and read it back (C-17).
+
+        ``--report-path /dev/stdout`` does not exist on Windows (gitleaks fails to open it), so we
+        hand gitleaks a real temp path and parse the file afterwards. gitleaks also exits non-zero
+        when leaks are found, so the report is read regardless of the return code."""
+        if not self.repo:
+            return []
+        import os
+        import tempfile
+
+        fd, report = tempfile.mkstemp(prefix="rampart-gitleaks-", suffix=".sarif")
+        os.close(fd)
+        try:
+            self._exec(self._cmd(self.repo, report))
+            try:
+                with open(report, encoding="utf-8", errors="replace") as fh:
+                    sarif = json.loads(fh.read() or "{}")
+            except (OSError, json.JSONDecodeError):
+                return []
+            return sarif_to_findings(self, sarif, application, target_url)
+        finally:
+            try:
+                os.unlink(report)
+            except OSError:
+                pass
 
 
 class TrivyAdapter(_SarifRepoAdapter):
