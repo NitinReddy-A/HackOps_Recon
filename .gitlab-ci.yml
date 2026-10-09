@@ -28,12 +28,15 @@ rampart-scan:
       allow_failure: true
   variables:
     RAMPART_TARGET: "https://staging.example.internal"   # override in CI/CD variables
+    RAMPART_VERSION: "1.2.0"
   script:
-    - pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"   # or: pip install -e .
+    # Install a pinned release wheel (python:*-slim images have no git). Bump the version to upgrade.
+    - pip install "https://github.com/NitinReddy-A/Rampart/releases/download/v${RAMPART_VERSION}/rampart_appsec-${RAMPART_VERSION}-py3-none-any.whl"
     - >
       python -m rampart test
       --scope-file rampart.scope.yaml
       --target "$RAMPART_TARGET"
+      --crawl
       --report sarif,md,json
       --work-dir .rampart
       --ci --fail-on high

@@ -17,7 +17,7 @@
 # github/codeql-action/upload-sarif — see the commented step at the end.
 #
 # TO USE THIS IN YOUR OWN REPOSITORY, copy this file and:
-#   1. Commit a real rampart.scope.yaml authorization contract (see rampart.scope.yaml.example
+#   1. Commit a real rampart.scope.yaml authorization contract (see rampart.scope.example.yaml
 #      at the repo root). It names an accountable owner, the in-scope host(s),
 #      an expiry, and seeded test accounts. Without a valid, unexpired, in-scope
 #      contract Rampart refuses to run (fail-closed) — the authorization gate.
@@ -49,18 +49,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install Rampart
         run: |
           python -m pip install --upgrade pip
-          # Install from PyPI instead if you are not vendoring the source:
-          #   pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"
+          # In your own repo, use the composite action (uses: NitinReddy-A/Rampart@v1)
+          # or install a pinned release instead of the local checkout.
           pip install -e .
 
       - name: Start bundled demo target
@@ -80,10 +82,13 @@ jobs:
         # writes SARIF for code scanning. No --ci gate here: the demo is
         # intentionally vulnerable, so findings are expected and informational.
         # In your own repo, add `--ci --fail-on high` to gate the build.
+        # The target goes through env (not ${{ }} inside the script) so it can't inject shell.
+        env:
+          TARGET: ${{ github.event.inputs.target || 'http://127.0.0.1:8080' }}
         run: |
           python -m rampart test \
             --scope-file examples/demo_target/rampart.scope.yaml \
-            --target "${{ github.event.inputs.target || 'http://127.0.0.1:8080' }}" \
+            --target "$TARGET" \
             --secrets examples/demo_target/secrets.json \
             --openapi examples/demo_target/openapi.json \
             --report sarif,html,md,json \
@@ -93,7 +98,7 @@ jobs:
       - name: Publish report bundle
         # Upload even if the scan step failed, so the reports are still available.
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: rampart-report
           path: .rampart/reports/
@@ -105,8 +110,7 @@ jobs:
       #
       # - name: Upload SARIF to code scanning
       #   if: always()
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
+      #   uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
       #     sarif_file: .rampart/reports/report.sarif
       #     category: rampart
       #

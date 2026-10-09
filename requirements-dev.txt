@@ -1,4 +1,6 @@
-# Rampart core has NO runtime dependencies (Python 3.10+ stdlib only).
-# These are only for development / optional niceties.
+# Rampart's core has NO runtime dependencies (Python 3.10+ stdlib only).
+# Contributors: prefer `pip install -e ".[dev]"`, which installs the same tools.
 pytest>=7.0
-PyYAML>=6.0   # optional: richer SECURITY.md parsing (a strict fallback parser is built in)
+ruff==0.16.10
+pre-commit>=3.5
+PyYAML>=6.0   # optional: scope parsing via PyYAML (a strict built-in parser is used otherwise)

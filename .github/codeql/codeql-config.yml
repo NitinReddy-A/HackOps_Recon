@@ -1,0 +1,10 @@
+name: Rampart CodeQL config
+
+queries:
+  - uses: security-extended
+
+# Intentionally vulnerable code that exists to be scanned, not shipped.
+paths-ignore:
+  - examples/demo_target
+  - benchmarks/fixtures
+  - tests

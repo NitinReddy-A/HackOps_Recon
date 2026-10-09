@@ -1,13 +1,14 @@
 # Composite GitHub Action for Rampart.
 # Usage in a consumer workflow:
 #
-#   - uses: NitinReddy-A/Rampart@v1              # floating 1.x tag; pin @v1.1.0 to be exact
+#   - uses: NitinReddy-A/Rampart@v1              # floating 1.x tag; pin a release tag or SHA to be exact
 #     with:
 #       target: https://staging.example.com      # authorized target (required)
 #       scope-file: rampart.scope.yaml           # authorization contract
+#       openapi: openapi.json                    # optional: grey-box (otherwise the site is crawled)
 #       fail-on: high                            # gate severity
 #       comment-pr: true                         # sticky PR summary (needs pull-requests: write)
-#   - uses: actions/upload-artifact@v4
+#   - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
 #     if: always()
 #     with:
 #       name: rampart-report
@@ -15,8 +16,11 @@
 #
 # Only scan assets you own or are explicitly authorized to test. Rampart
 # refuses to run without a valid, unexpired, in-scope rampart.scope.yaml contract.
+#
+# Every input reaches the shell through an environment variable, never through ${{ }}
+# interpolation inside a script, so a value containing quotes or `;` can't inject commands.
 name: "Rampart AppSec Scan"
-description: "Authorized, evidence-first web/API/LLM security scan that emits SARIF for GitHub code scanning."
+description: "Authorized, evidence-first web/API/LLM security scan that gates your build on proven vulnerabilities."
 author: "Rampart contributors"
 
 branding:
@@ -24,23 +28,39 @@ branding:
   color: "blue"
 
 inputs:
+  target:
+    description: "Authorized target base URL, e.g. https://staging.example.com."
+    required: true
   scope-file:
     description: "Path to the rampart.scope.yaml authorization contract."
     required: false
     default: "rampart.scope.yaml"
-  target:
-    description: "Authorized target base URL, e.g. https://staging.example.com."
-    required: true
-  report:
-    description: "Comma list of report formats to generate (html,md,json,sarif,compliance)."
+  openapi:
+    description: "Optional OpenAPI spec (grey-box). Gives Rampart every endpoint and parameter."
     required: false
-    default: "sarif"
+    default: ""
+  crawl:
+    description: "Discover endpoints by crawling the target (true/false). Recommended unless you pass an OpenAPI spec."
+    required: false
+    default: "true"
+  secrets:
+    description: "Optional secrets.json resolving the scope's test_accounts (authenticated testing)."
+    required: false
+    default: ""
+  report:
+    description: "Comma list of report formats (html,md,json,sarif,compliance,soc2). json is always added."
+    required: false
+    default: "sarif,html"
   fail-on:
-    description: "CI gate severity: low|medium|high|critical. The action exits nonzero on a validated finding at or above this."
+    description: "CI gate severity: low|medium|high|critical. The action fails on a confirmed finding at or above this."
     required: false
     default: "high"
   scanners:
     description: "Optional external OSS adapters to also run (e.g. nuclei,semgrep or 'all'). Empty uses only the built-in oracles."
+    required: false
+    default: ""
+  args:
+    description: "Extra space-separated `rampart test` flags, e.g. '--authz --api-scan'. Split on whitespace; never evaluated by a shell."
     required: false
     default: ""
   work-dir:
@@ -48,7 +68,7 @@ inputs:
     required: false
     default: ".rampart"
   comment-pr:
-    description: "On a pull_request event, post a sticky findings summary as a PR comment. Requires the workflow to grant `pull-requests: write`."
+    description: "On a pull_request event, post a sticky findings summary as a PR comment. Requires `pull-requests: write`."
     required: false
     default: "false"
 
@@ -56,51 +76,77 @@ outputs:
   sarif-path:
     description: "Path to the generated SARIF report."
     value: ${{ steps.sarif.outputs.sarif-path }}
+  report-dir:
+    description: "Directory holding every generated report."
+    value: ${{ steps.sarif.outputs.report-dir }}
 
 runs:
   using: composite
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: "3.12"
 
     - name: Install Rampart
       shell: bash
-      # Install the package that ships with this action (github.action_path is
-      # the action's checked-out directory). This keeps the action and the engine
-      # at exactly the same version.
+      # Install the package that ships with this action, so the action and the engine
+      # are always exactly the same version.
       run: |
         python -m pip install --upgrade pip
-        pip install -e "${{ github.action_path }}"
+        python -m pip install "$GITHUB_ACTION_PATH"
 
     - name: Run Rampart assessment
       id: rampart
       shell: bash
+      env:
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_SCOPE_FILE: ${{ inputs.scope-file }}
+        INPUT_OPENAPI: ${{ inputs.openapi }}
+        INPUT_CRAWL: ${{ inputs.crawl }}
+        INPUT_SECRETS: ${{ inputs.secrets }}
+        INPUT_REPORT: ${{ inputs.report }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_SCANNERS: ${{ inputs.scanners }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_WORK_DIR: ${{ inputs.work-dir }}
       run: |
-        python -m rampart test \
-          --scope-file "${{ inputs.scope-file }}" \
-          --target "${{ inputs.target }}" \
-          --work-dir "${{ inputs.work-dir }}" \
-          --report "${{ inputs.report }},json" \
-          ${{ inputs.scanners != '' && format('--scanners {0}', inputs.scanners) || '' }} \
-          --ci \
-          --fail-on "${{ inputs.fail-on }}"
-      # Expose the SARIF path (<work-dir>/reports/report.sarif) for a follow-up
-      # github/codeql-action/upload-sarif step. Always set it, even on gate failure.
+        set -euo pipefail
+        report="$INPUT_REPORT"
+        case ",$report," in *,json,*) ;; *) report="${report:+$report,}json" ;; esac
 
-    - name: Expose SARIF path
+        cmd=(python -m rampart test
+          --scope-file "$INPUT_SCOPE_FILE"
+          --target "$INPUT_TARGET"
+          --work-dir "$INPUT_WORK_DIR"
+          --report "$report"
+          --ci --fail-on "$INPUT_FAIL_ON")
+        [ "$INPUT_CRAWL" = "true" ] && cmd+=(--crawl)
+        [ -n "$INPUT_OPENAPI" ] && cmd+=(--openapi "$INPUT_OPENAPI")
+        [ -n "$INPUT_SECRETS" ] && cmd+=(--secrets "$INPUT_SECRETS")
+        [ -n "$INPUT_SCANNERS" ] && cmd+=(--scanners "$INPUT_SCANNERS")
+        if [ -n "$INPUT_ARGS" ]; then
+          read -r -a extra <<< "$INPUT_ARGS"
+          cmd+=("${extra[@]}")
+        fi
+        "${cmd[@]}"
+
+    - name: Expose report paths
       id: sarif
       if: always()
       shell: bash
-      run: echo "sarif-path=${{ inputs.work-dir }}/reports/report.sarif" >> "$GITHUB_OUTPUT"
+      env:
+        INPUT_WORK_DIR: ${{ inputs.work-dir }}
+      run: |
+        echo "sarif-path=$INPUT_WORK_DIR/reports/report.sarif" >> "$GITHUB_OUTPUT"
+        echo "report-dir=$INPUT_WORK_DIR/reports" >> "$GITHUB_OUTPUT"
 
     - name: Comment on the pull request
       if: always() && inputs.comment-pr == 'true' && github.event_name == 'pull_request'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        INPUT_WORK_DIR: ${{ inputs.work-dir }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        python -m rampart pr-comment \
-          --work-dir "${{ inputs.work-dir }}" \
-          --fail-on "${{ inputs.fail-on }}" || true
+        python -m rampart pr-comment --work-dir "$INPUT_WORK_DIR" --fail-on "$INPUT_FAIL_ON" || true

@@ -38,4 +38,6 @@ services:
       - .:/work
     command: ["serve", "--host", "0.0.0.0", "--port", "8787", "--work-dir", ".rampart"]
     ports:
-      - "8787:8787"
+      # Published on loopback only: the dashboard has no authentication, so never expose
+      # it on 0.0.0.0. Reach it at http://127.0.0.1:8787.
+      - "127.0.0.1:8787:8787"

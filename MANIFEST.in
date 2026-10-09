@@ -1,0 +1,10 @@
+# Make the sdist self-contained: the test suite, its fixtures, and the demo target it scans.
+include LICENSE NOTICE README.md CHANGELOG.md SECURITY.md
+include rampart.scope.example.yaml
+include tests/conftest.py
+graft tests
+graft examples
+graft benchmarks
+prune benchmarks/__pycache__
+global-exclude *.py[cod] __pycache__ .DS_Store
+exclude benchmarks/results.json
