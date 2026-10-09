@@ -25,6 +25,28 @@ _SQL_ERROR = re.compile(
 # A host we claim to redirect to but NEVER fetch — the oracle only inspects the Location header.
 _REDIRECT_CANARY_HOST = "rampart-oracle-canary.example"
 
+# Tokens that legitimately change between two identical requests (clocks, ids, nonces). They are
+# masked before boolean-based response comparison so a time-varying page cannot fake a difference.
+_DYNAMIC_TOKENS = [
+    re.compile(
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?"
+    ),  # ISO-8601 datetime
+    re.compile(
+        r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) "
+        r"\d{4} \d{2}:\d{2}:\d{2} GMT"
+    ),  # HTTP-date
+    re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),  # UUID
+    re.compile(r"\b[0-9a-fA-F]{16,}\b"),  # hex nonce / token / hash
+    re.compile(r"(?<![\d.])\d{10}(?:\d{3})?(?:\.\d+)?(?![\d])"),  # epoch seconds / millis
+]
+
+
+def _normalize_dynamic(body: str) -> str:
+    out = body or ""
+    for rx in _DYNAMIC_TOKENS:
+        out = rx.sub("<dyn>", out)
+    return out
+
 
 def _headers_ci(response) -> dict:
     return {str(k).lower(): v for k, v in (getattr(response, "headers", {}) or {}).items()}
@@ -171,9 +193,31 @@ def run_sqli_oracle(runner, hyp: dict, reproductions: int = 2) -> OracleVerdict:
         hypothesis_id=hid,
         summary="sqli false",
     )
-    if not all(o.executed for o in (base, err, ctrl, t, fcond)):
+    # second fetch of each condition: a real boolean sink is stable per condition
+    t2 = runner.get(
+        path,
+        session=None,
+        query={param: base_val + "' AND '1'='1"},
+        payload_class="boundary-probe",
+        rationale="probe: always-true boolean condition (stability re-fetch)",
+        hypothesis_id=hid,
+        summary="sqli true 2",
+    )
+    fcond2 = runner.get(
+        path,
+        session=None,
+        query={param: base_val + "' AND '1'='2"},
+        payload_class="boundary-probe",
+        rationale="probe: always-false boolean condition (stability re-fetch)",
+        hypothesis_id=hid,
+        summary="sqli false 2",
+    )
+    if not all(o.executed for o in (base, err, ctrl, t, fcond, t2, fcond2)):
         return OracleVerdict(
-            False, "SQLI", reasons=["probe blocked by policy"], evidence=_collect(base, err, ctrl, t, fcond)
+            False,
+            "SQLI",
+            reasons=["probe blocked by policy"],
+            evidence=_collect(base, err, ctrl, t, fcond, t2, fcond2),
         )
 
     err_sig = bool(_SQL_ERROR.search(err.body))
@@ -181,9 +225,12 @@ def run_sqli_oracle(runner, hyp: dict, reproductions: int = 2) -> OracleVerdict:
     ctrl_sig = bool(_SQL_ERROR.search(ctrl.body))
     error_based = err_sig and not base_sig and not ctrl_sig
 
-    true_like_base = (t.status == base.status) and (t.body == base.body)
-    false_differs = fcond.body != t.body
-    boolean_based = true_like_base and false_differs
+    nb, nt, nt2 = _normalize_dynamic(base.body), _normalize_dynamic(t.body), _normalize_dynamic(t2.body)
+    nf, nf2 = _normalize_dynamic(fcond.body), _normalize_dynamic(fcond2.body)
+    true_like_base = (t.status == t2.status == base.status) and (nt == nt2 == nb)
+    false_stable = (fcond.status == fcond2.status) and (nf == nf2)
+    false_differs = (nf != nt) or (fcond.status != t.status)
+    boolean_based = true_like_base and false_stable and false_differs
 
     reasons, fp = [], []
     reasons.append(
@@ -192,7 +239,8 @@ def run_sqli_oracle(runner, hyp: dict, reproductions: int = 2) -> OracleVerdict:
     )
     reasons.append(
         ("PASS" if boolean_based else "FAIL")
-        + ": AND 1=1 matches the baseline while AND 1=2 differs (boolean-based inference)"
+        + ": AND 1=1 matches the baseline (twice) while AND 1=2 is stable and differs "
+        "(boolean-based inference; clocks/ids/nonces masked)"
     )
     fp.append(f"benign control '{_CANARY}' errored: {ctrl_sig} (should be False)")
     fp.append(f"baseline errored: {base_sig} (should be False)")
@@ -213,16 +261,30 @@ def run_sqli_oracle(runner, hyp: dict, reproductions: int = 2) -> OracleVerdict:
                 )
                 ok = r.executed and bool(_SQL_ERROR.search(r.body))
             else:
-                r = runner.get(
+                # re-fetch BOTH conditions and compare them to each other (never to a stale response)
+                rt = runner.get(
+                    path,
+                    session=None,
+                    query={param: base_val + "' AND '1'='1"},
+                    payload_class="boundary-probe",
+                    rationale=f"reproduction #{i + 1} boolean-based (true)",
+                    hypothesis_id=hid,
+                    summary=f"sqli repro {i + 1} true",
+                )
+                rf = runner.get(
                     path,
                     session=None,
                     query={param: base_val + "' AND '1'='2"},
                     payload_class="boundary-probe",
-                    rationale=f"reproduction #{i + 1} boolean-based",
+                    rationale=f"reproduction #{i + 1} boolean-based (false)",
                     hypothesis_id=hid,
-                    summary=f"sqli repro {i + 1}",
+                    summary=f"sqli repro {i + 1} false",
                 )
-                ok = r.executed and r.body != t.body
+                ok = (
+                    rt.executed
+                    and rf.executed
+                    and (_normalize_dynamic(rt.body) != _normalize_dynamic(rf.body) or rt.status != rf.status)
+                )
             repro_ok += 1 if ok else 0
         fp.append(f"reproduced {repro_ok}/{reproductions} times from clean requests")
 
@@ -232,7 +294,7 @@ def run_sqli_oracle(runner, hyp: dict, reproductions: int = 2) -> OracleVerdict:
         reasons=reasons,
         false_positive_checks=fp,
         reproductions=repro_ok,
-        evidence=_collect(base, err, ctrl, t, fcond),
+        evidence=_collect(base, err, ctrl, t, fcond, t2, fcond2),
         controls={
             "error_based": error_based,
             "boolean_based": boolean_based,

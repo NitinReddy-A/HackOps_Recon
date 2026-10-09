@@ -27,7 +27,8 @@ class Task:
     deps: list = field(default_factory=list)
     kind: str = "agent"
     id: str = ""
-    status: str = "pending"  # pending | running | done | error
+    status: str = "pending"  # pending | queued | running | done | error
+    # ``started`` is when a worker thread actually began running the task (not when it was queued).
     value: Any = None
     error: str = ""
     started: float = 0.0
@@ -80,7 +81,7 @@ class TaskGraph:
 
     def _pending_or_running(self) -> bool:
         with self._lock:
-            return any(t.status in ("pending", "running") for t in self.tasks.values())
+            return any(t.status in ("pending", "queued", "running") for t in self.tasks.values())
 
 
 def run_graph(graph: TaskGraph, max_workers: int = 16, on_event=None) -> GraphResult:
@@ -91,20 +92,35 @@ def run_graph(graph: TaskGraph, max_workers: int = 16, on_event=None) -> GraphRe
     result = GraphResult(tasks=graph.tasks)
     t0 = time.monotonic()
     inflight = {}  # future -> task
+    # Peak concurrency counts tasks actually *executing* on a worker thread — not futures
+    # submitted (those can far exceed max_workers while they wait in the pool's queue).
+    run_lock = threading.Lock()
+    running = 0
     peak = 0
 
-    def _submit(executor, task):
-        task.status = "running"
-        task.started = time.monotonic()
-        ctx = graph._ctx(task)
+    def _wrapped(task, ctx):
+        nonlocal running, peak
+        with run_lock:
+            running += 1
+            peak = max(peak, running)
+            task.status = "running"
+            task.started = time.monotonic()
         if on_event:
             on_event("start", task)
-        return executor.submit(task.run, ctx)
+        try:
+            return task.run(ctx)
+        finally:
+            with run_lock:
+                running -= 1
+
+    def _submit(executor, task):
+        task.status = "queued"  # submitted to the pool; becomes "running" when a worker picks it up
+        ctx = graph._ctx(task)
+        return executor.submit(_wrapped, task, ctx)
 
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
         for t in graph._ready():
             inflight[_submit(executor, t)] = t
-        peak = max(peak, len(inflight))
 
         while inflight:
             done, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
@@ -132,7 +148,6 @@ def run_graph(graph: TaskGraph, max_workers: int = 16, on_event=None) -> GraphRe
             for t in graph._ready():
                 if t.status == "pending":
                     inflight[_submit(executor, t)] = t
-            peak = max(peak, len(inflight))
 
     result.max_concurrency = peak
     result.duration_s = round(time.monotonic() - t0, 3)
