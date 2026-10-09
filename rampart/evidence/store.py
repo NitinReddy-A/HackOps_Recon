@@ -13,6 +13,9 @@ import secrets as _secrets
 from ..schemas.finding import Evidence
 from ..util import redact_headers, scrub_secrets, sha256_hex
 
+# Stored HTTP response bodies are capped so one huge endpoint cannot bloat the evidence store.
+MAX_EVIDENCE_BODY_CHARS = 256 * 1024
+
 
 class EvidenceStore:
     def __init__(self, base_dir: str):
@@ -64,7 +67,18 @@ class EvidenceStore:
     def put_response(self, response, summary: str = "") -> Evidence:
         hdrs = redact_headers(response.headers or {})
         header_txt = "\n".join(f"{k}: {v}" for k, v in hdrs.items())
-        text = f"HTTP {response.status}\n{header_txt}\n\n{response.body}"
+        body = response.body or ""
+        notes = []
+        if getattr(response, "truncated", False):
+            notes.append("[rampart: response body was truncated by the HTTP client size cap]")
+        if len(body) > MAX_EVIDENCE_BODY_CHARS:
+            notes.append(
+                f"[rampart: evidence body truncated to {MAX_EVIDENCE_BODY_CHARS} of {len(body)} characters]"
+            )
+            body = body[:MAX_EVIDENCE_BODY_CHARS]
+        if notes:
+            body = body + "\n" + "\n".join(notes)
+        text = f"HTTP {response.status}\n{header_txt}\n\n{body}"
         return self.put_text("http_response", summary or f"HTTP {response.status}", text)
 
     def read(self, uri_or_digest: str) -> str:

@@ -30,6 +30,12 @@ class OracleVerdict:
     evidence: list = field(default_factory=list)
     diff: dict = field(default_factory=dict)
     controls: dict = field(default_factory=dict)
+    # Control health. ``controls_ok`` is False when the baselines that make a verdict meaningful
+    # failed (target down/erroring, owner can't read their own object). ``inconclusive`` means a
+    # "not validated" result must NOT be read as "fixed". Defaults keep oracles that don't set
+    # them behaving exactly as before.
+    controls_ok: bool = True
+    inconclusive: bool = False
 
 
 def _path_for(hyp: dict, object_id: str) -> str:
@@ -144,6 +150,29 @@ def run_bola_oracle(
         fp.append(f"reproduced {repro_ok}/{reproductions} times from clean sessions")
 
     validated = all_ok and repro_ok >= reproductions
+
+    # Control health: without working baselines a negative result says nothing about the fix.
+    executed_all = all(getattr(o, "executed", True) for o in (b_own, a_own, probe, unauth, absent))
+    controls_ok = (
+        executed_all
+        and a_own.status == 200
+        and contains_signature(a_own.body, vic_sig)
+        and isinstance(b_own.status, int)
+        and 200 <= b_own.status < 300
+    )
+    # A real denial: the cross-account read is refused, or succeeds without the victim's data.
+    probe_denied = probe.status in (401, 403, 404) or (
+        isinstance(probe.status, int) and 200 <= probe.status < 300 and not sig_present
+    )
+    inconclusive = (not validated) and not (controls_ok and probe_denied)
+    if not controls_ok:
+        fp.append(
+            "INCONCLUSIVE: baseline controls failed "
+            f"(executed={executed_all}, victim-own={a_own.status}, attacker-own={b_own.status})"
+        )
+    elif inconclusive:
+        fp.append(f"INCONCLUSIVE: probe returned {probe.status}, not a clear denial")
+
     evidence = []
     for outcome in (b_own, a_own, probe, unauth, absent):
         evidence.extend(outcome.evidence)
@@ -157,4 +186,6 @@ def run_bola_oracle(
         evidence=evidence,
         diff=diff_summary(b_own.response, probe.response),
         controls=checks,
+        controls_ok=controls_ok,
+        inconclusive=inconclusive,
     )

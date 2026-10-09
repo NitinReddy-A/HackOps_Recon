@@ -10,6 +10,9 @@ never be confirmed (fail-closed).
 
 from __future__ import annotations
 
+import http.client
+
+from ..executor.session import SessionError
 from ..runner import ProbeRunner
 from ..schemas.finding import Finding, State, Verification
 from ..util import now_iso
@@ -95,13 +98,32 @@ class Validator:
     def retest(self, finding: Finding, hyp: dict, reproductions: int = 2) -> str:
         """Replay the stored reproduction against the (possibly patched) target.
 
-        Returns 'Fixed' if the oracle no longer fires, 'Regression'/'still-vulnerable' otherwise.
+        Returns 'Fixed' only when the oracle no longer fires AND its controls were healthy and the
+        probe was a real denial; 'inconclusive' when the target could not give a meaningful answer
+        (down, erroring, sessions failing) — the finding's state is then left unchanged;
+        'Regression'/'still-vulnerable' otherwise.
         """
         oracle = get_oracle(finding.vuln_class)
         if oracle is None:
             return "still-vulnerable"
         runner = self._runner("retest", profile=finding.vuln_class)
-        verdict = oracle(runner, self.sessions, hyp, reproductions)
+        try:
+            verdict = oracle(runner, self.sessions, hyp, reproductions)
+        except (OSError, SessionError, http.client.HTTPException) as exc:
+            finding.verification.last_retest = {
+                "result": "inconclusive",
+                "at": now_iso(),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            return "inconclusive"
+        if not verdict.validated and (verdict.inconclusive or not verdict.controls_ok):
+            finding.verification.last_retest = {
+                "result": "inconclusive",
+                "at": now_iso(),
+                "reproductions": verdict.reproductions,
+                "controls": verdict.controls,
+            }
+            return "inconclusive"
         finding.verification.last_retest = {
             "result": "still-vulnerable" if verdict.validated else "fixed",
             "at": now_iso(),

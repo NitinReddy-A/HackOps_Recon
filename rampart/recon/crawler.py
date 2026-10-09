@@ -71,6 +71,13 @@ class _LinkFormParser(HTMLParser):
             self._cur = None
 
 
+def _split_pq(path_q: str) -> tuple[str, str]:
+    """Split a stored ``path?query`` without re-parsing it as a URL (a path such as ``//[x``
+    would otherwise be read as a malformed netloc and raise)."""
+    path, _, query = (path_q or "").partition("?")
+    return path.split("#", 1)[0] or "/", query.split("#", 1)[0]
+
+
 def _slug(method: str, path: str) -> str:
     import re
 
@@ -97,12 +104,19 @@ class Crawler:
         return any(path_glob_match(p, path) for p in hs.paths_include)
 
     def _same_host(self, url: str, base_path: str) -> str | None:
-        """Resolve a possibly-relative URL; return its path(+query) if same-host & in scope."""
-        absolute = urljoin(f"{self.scheme}://{self.host}:{self.port}{base_path}", url)
-        u = urlparse(absolute)
+        """Resolve a possibly-relative URL; return its path(+query) if same-host & in scope.
+
+        Malformed hrefs (e.g. ``http://[bad/x``) are skipped, never allowed to crash the crawl."""
+        host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+        try:
+            absolute = urljoin(f"{self.scheme}://{host}:{self.port}{base_path}", url)
+            u = urlparse(absolute)
+            hostname = u.hostname
+        except (ValueError, TypeError):
+            return None
         if u.scheme and u.scheme not in ("http", "https"):
             return None
-        if u.hostname and u.hostname.lower() != self.host.lower():
+        if hostname and hostname.lower() != self.host.strip("[]").lower():
             return None
         path = u.path or "/"
         if not self._in_scope(path):
@@ -132,12 +146,12 @@ class Crawler:
 
         while queue and result.pages_visited < self.max_pages:
             path_q, depth = queue.pop(0)
-            base_path = urlparse(path_q).path or "/"
+            base_path, raw_query = _split_pq(path_q)
             if base_path in seen_paths or depth > self.max_depth:
                 continue
             seen_paths.add(base_path)
 
-            query = {k: v[0] for k, v in parse_qs(urlparse(path_q).query).items()}
+            query = {k: v[0] for k, v in parse_qs(raw_query).items()}
             outcome = self.runner.get(
                 base_path,
                 session=None,
@@ -178,7 +192,7 @@ class Crawler:
                 fp = self._same_host(form["action"] or base_path, base_path)
                 if fp is None:
                     continue
-                fpath = urlparse(fp).path or "/"
+                fpath, _ = _split_pq(fp)
                 loc = "query" if form["method"] == "GET" else "body"
                 _record(form["method"], fpath, [(n, loc) for n in form["inputs"]])
 
@@ -187,8 +201,8 @@ class Crawler:
                 resolved = self._same_host(href, base_path)
                 if resolved is None:
                     continue
-                lp = urlparse(resolved).path or "/"
-                lq = parse_qs(urlparse(resolved).query)
+                lp, lraw = _split_pq(resolved)
+                lq = parse_qs(lraw)
                 if lq:
                     _record("GET", lp, [(k, "query") for k in lq])
                 if lp not in seen_paths:
