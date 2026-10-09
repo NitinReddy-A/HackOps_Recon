@@ -9,13 +9,22 @@ Exposed-service findings are CONFIRMED observation-oracle findings (two independ
 a closed-control-port negative control); TLS findings are ``firm`` evidence. :func:`scan_infra`
 is graceful — unreachable/refused/timeout/out-of-scope all yield ``[]`` and it never raises.
 
-Trust boundary: these sockets bypass Rampart's HTTP policy choke-point, so the caller must only
-point :func:`scan_infra` at an already in-scope, authorized host:port (same contract as the
-gRPC / headless-browser engines). Passing a ``resolver`` + ``scope`` adds a fail-closed IP check.
+Trust boundary: these sockets bypass Rampart's HTTP policy choke-point, so :func:`scan_infra`
+enforces scope itself (fail-closed): it requires a ``scope`` + ``resolver``, and only ever connects
+to ports listed in the host's scoped ``ports``. :mod:`.sidechannel` holds the audit/budget guard
+shared with the gRPC and browser engines.
 """
 
 from __future__ import annotations
 
 from .scanner import SENSITIVE_SERVICES, is_sensitive_port, scan_infra
+from .sidechannel import ScanOutcome, SideChannelGuard, skip_reason_of
 
-__all__ = ["SENSITIVE_SERVICES", "is_sensitive_port", "scan_infra"]
+__all__ = [
+    "SENSITIVE_SERVICES",
+    "is_sensitive_port",
+    "scan_infra",
+    "ScanOutcome",
+    "SideChannelGuard",
+    "skip_reason_of",
+]

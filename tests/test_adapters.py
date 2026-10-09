@@ -112,3 +112,95 @@ def test_unavailable_adapter_skips_cleanly():
     a = NucleiAdapter()
     if not a.is_available():
         assert a.install_hint and a.help_uri
+
+
+# --------------------------------------------------------------------- C-9 nuclei scope argv
+class _Limits:
+    max_requests_per_host_per_min = 240
+
+
+class _Scope:
+    limits = _Limits()
+    paths_exclude = ["/admin/**", "/logout"]
+
+
+def test_nuclei_argv_is_scope_constrained_passive():
+    argv = NucleiAdapter(scope=_Scope(), active=False).build_argv("http://127.0.0.1:18850/")
+    assert "-ni" in argv  # no interactsh / OAST
+    assert "-dr" in argv  # no redirects off-host
+    # rate = 240/60 = 4
+    assert argv[argv.index("-rl") + 1] == "4"
+    assert "intrusive,dos,fuzz" in argv  # intrusive/dos/fuzz excluded when passive
+    assert NucleiAdapter(scope=_Scope()).excluded_paths() == ["/admin/**", "/logout"]
+
+
+def test_nuclei_argv_active_keeps_intrusive_but_not_dos():
+    argv = NucleiAdapter(scope=_Scope(), active=True).build_argv("http://127.0.0.1:18850/")
+    tags = argv[argv.index("-etags") + 1]
+    assert tags == "dos"  # only dos excluded under --active
+
+
+def test_nuclei_rate_limit_floor_is_one():
+    class _Tiny:
+        class limits:
+            max_requests_per_host_per_min = 30
+
+    argv = NucleiAdapter(scope=_Tiny()).build_argv("http://t/")
+    assert argv[argv.index("-rl") + 1] == "1"  # 30//60 == 0 -> floored to 1
+
+
+# --------------------------------------------------------------------- C-16 semgrep honesty
+def test_semgrep_skips_without_config(monkeypatch):
+    from rampart.scanners.adapters.tools import SemgrepAdapter
+
+    monkeypatch.delenv("RAMPART_SEMGREP_CONFIG", raising=False)
+    a = SemgrepAdapter(repo="x")
+    assert a.skip_reason()
+    assert a._cmd("x") == []
+    assert a.run(None, "http://t", "demo") == []
+
+
+def test_semgrep_runs_with_local_config(monkeypatch, tmp_path):
+    from rampart.scanners.adapters.tools import SemgrepAdapter
+
+    rules = tmp_path / "rules.yml"
+    rules.write_text("rules: []\n")
+    monkeypatch.setenv("RAMPART_SEMGREP_CONFIG", str(rules))
+    a = SemgrepAdapter(repo="x")
+    assert a.skip_reason() == ""
+    assert a.uses_network() is False
+    assert str(rules) in a._cmd("x")
+
+
+def test_semgrep_registry_config_is_flagged_network(monkeypatch):
+    from rampart.scanners.adapters.tools import SemgrepAdapter
+
+    monkeypatch.setenv("RAMPART_SEMGREP_CONFIG", "p/ci")
+    assert SemgrepAdapter(repo="x").uses_network() is True
+
+
+# --------------------------------------------------------------------- C-17 gitleaks tempfile
+def test_gitleaks_writes_tempfile_not_dev_stdout(tmp_path, monkeypatch):
+    from rampart.scanners.adapters import tools
+    from rampart.scanners.adapters.tools import GitleaksAdapter
+
+    seen = {}
+
+    def fake_exec(self, cmd):
+        # the report path must be a real writable file, never /dev/stdout
+        rp = cmd[cmd.index("--report-path") + 1]
+        seen["report_path"] = rp
+        assert rp != "/dev/stdout"
+        with open(rp, "w", encoding="utf-8") as fh:
+            json.dump(_SEMGREP_SARIF, fh)
+
+        class _R:
+            returncode = 1  # gitleaks returns non-zero when leaks are found
+
+        return _R()
+
+    monkeypatch.setattr(tools.ScannerAdapter, "_exec", fake_exec)
+    monkeypatch.setattr(GitleaksAdapter, "resolved_binary", lambda self: "gitleaks")
+    findings = GitleaksAdapter(repo=str(tmp_path)).run(None, "http://t", "demo")
+    assert seen["report_path"] != "/dev/stdout"
+    assert len(findings) == 1  # report parsed despite non-zero exit

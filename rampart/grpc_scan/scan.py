@@ -12,15 +12,18 @@ Graceful degradation
 ``grpcio`` / ``grpcio-reflection`` are an **optional** extra. This module imports cleanly with
 them absent — every grpc import is done lazily *inside* :func:`available` and
 :func:`_list_services`. :func:`scan_grpc` never raises: if the packages are missing (or the
-server is unreachable / reflection is disabled) it simply returns ``[]`` and the caller logs the
-install hint. The zero-dependency core is unaffected.
+server is unreachable / reflection is disabled) it returns an empty result; a missing package is
+reported as ``result.skip_reason == "grpc: skipped — pip install rampart-appsec[grpc]"`` so the
+caller can print it. The zero-dependency core is unaffected.
 
 Trust boundary
 --------------
 :func:`_list_services` opens its **own** gRPC channel to ``host:port``; that traffic does NOT
-pass through Rampart's HTTP policy choke-point (the ``ProbeRunner`` / scope pipeline). The caller
-MUST therefore only ever point :func:`scan_grpc` at a host:port that is already authorized and
-in-scope for the engagement; this module trusts the caller on scope and enforces none itself.
+pass through Rampart's HTTP policy choke-point (the ``ProbeRunner`` / scope pipeline). When given a
+``scope`` (+ ``resolver``), :func:`scan_grpc` enforces it itself and fails closed — the host must be
+in scope, the port must be one of its scoped ``ports`` and every resolved IP must be allowlisted —
+and every RPC is audited/budgeted through :class:`~rampart.infra.sidechannel.SideChannelGuard`.
+With ``scope=None`` (library/test use) the caller remains responsible for scope.
 
 Testing seam
 ------------
@@ -32,6 +35,10 @@ live gRPC server nor ``grpcio`` installed.
 
 from __future__ import annotations
 
+import inspect
+import re
+
+from ..infra.sidechannel import ScanOutcome, guard_from
 from ..schemas.finding import CVSS, Evidence, Finding, Remediation, Reproduction, State, Verification
 from ..util import now_iso
 
@@ -227,7 +234,7 @@ def _reflection_finding(services, application, target_url, engagement_id: str = 
 
 
 # --------------------------------------------------------------------------- method-listing seam
-def _list_methods(host, port, scheme="grpc", timeout: float = 8.0) -> list:
+def _list_methods(host, port, scheme="grpc", timeout: float = 8.0, guard=None) -> list:
     """Enumerate each service's **methods** via server reflection (network seam, lazy grpc).
 
     Lists the services (``list_services='*'``) then, for each, fetches the ``FileDescriptorProto``
@@ -236,7 +243,8 @@ def _list_methods(host, port, scheme="grpc", timeout: float = 8.0) -> list:
     Raises ``ImportError`` when ``grpcio``/``grpcio-reflection`` are absent (like
     :func:`_list_services`); descriptor parsing is best-effort and any per-symbol error is skipped.
     Callers wrap this in try/except and degrade to ``[]``; tests monkeypatch it so neither a live
-    server nor grpcio is ever needed.
+    server nor grpcio is ever needed. ``guard`` (a :class:`SideChannelGuard`) admits + audits each
+    per-service ``file_containing_symbol`` RPC; a denied RPC is skipped.
     """
     import grpc  # lazy — module imports fine without grpcio installed
     from google.protobuf import descriptor_pb2
@@ -268,6 +276,19 @@ def _list_methods(host, port, scheme="grpc", timeout: float = 8.0) -> list:
         # 2) fetch the file descriptor that CONTAINS each service symbol, then walk its methods.
         seen: set = set()
         for svc_name in services:
+            if guard is not None:
+                ok, _why = guard.admit(
+                    str(host),
+                    {
+                        "kind": "grpc-rpc",
+                        "method": "POST",
+                        "port": port,
+                        "path": "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
+                        "purpose": f"file_containing_symbol={svc_name}",
+                    },
+                )
+                if not ok:
+                    continue
             req = reflection_pb2.ServerReflectionRequest(file_containing_symbol=svc_name)
             try:
                 responses = stub.ServerReflectionInfo(iter([req]), timeout=timeout)
@@ -357,54 +378,83 @@ def _invoke_method(
 
 
 # --------------------------------------------------------------------------- read/mutate classification
-READ_PREFIXES = (
-    "get",
-    "list",
-    "describe",
-    "query",
-    "fetch",
-    "search",
-    "lookup",
-    "read",
-    "health",
-    "check",
-    "watch",
-    "count",
-    "exists",
+# The FIRST word of a method name must be exactly one of these for it to count as a read.
+READ_VERBS = frozenset(
+    {
+        "get",
+        "list",
+        "read",
+        "describe",
+        "query",
+        "search",
+        "find",
+        "fetch",
+        "lookup",
+        "check",
+        "count",
+        "health",
+        "watch",
+        "ping",
+        "status",
+        "show",
+        "view",
+        "exists",
+    }
 )
-MUTATING_PREFIXES = (
-    "create",
-    "update",
-    "delete",
-    "set",
-    "remove",
-    "put",
-    "add",
-    "mutate",
-    "write",
-    "cancel",
-    "stop",
-    "start",
-    "reset",
-    "patch",
-    "drop",
-    "purge",
-    "rotate",
-    "issue",
-    "revoke",
-)
+# If ANY word of the method name is one of these, it is treated as mutating (never auto-invoked).
+MUTATING_VERBS = frozenset(
+    {
+        "create", "update", "delete", "del", "remove", "rm", "purge", "reset", "set", "put", "post",
+        "add", "write", "checkout", "buy", "pay", "send", "cancel", "drop", "insert", "upsert",
+        "modify", "patch", "execute", "exec", "run", "start", "stop", "kill", "transfer", "approve",
+        "grant", "revoke", "mutate", "rotate", "issue", "submit", "commit", "apply", "assign",
+        "unassign", "register", "unregister", "enable", "disable", "restart", "reboot", "shutdown",
+        "destroy", "erase", "clear", "truncate", "wipe", "import", "upload", "merge", "move", "rename",
+        "replace", "refund", "charge", "order", "place", "book", "reserve", "confirm", "accept",
+        "reject", "deny", "block", "unblock", "ban", "unban", "lock", "unlock", "invite", "publish",
+        "unpublish", "deploy", "trigger", "invoke", "call", "process", "sync", "flush", "evict",
+        "expire", "invalidate", "archive", "unarchive", "restore", "rollback", "scale", "resize",
+        "attach", "detach", "link", "unlink", "subscribe", "unsubscribe", "follow", "unfollow",
+        "like", "vote", "mark", "save", "store", "push", "pop", "enqueue", "dequeue", "increment",
+        "decrement", "incr", "decr", "toggle", "change", "edit", "generate", "new", "make", "init",
+        "initialize", "provision", "deprovision", "allocate", "release", "claim", "redeem",
+        "withdraw", "deposit", "sell", "purchase", "mint", "burn", "seed", "migrate", "upgrade",
+        "install", "uninstall", "reindex", "compact", "verify", "login", "logout", "signup",
+        "signin", "signout", "authenticate", "authorize", "consume", "ack", "nack", "acquire",
+        "renew", "refresh", "retry", "resend", "notify", "emit", "broadcast", "dispatch", "schedule",
+        "unschedule", "suspend", "resume", "pause", "terminate", "close", "open", "fork", "clone",
+        "copy", "export", "batch", "bulk", "fire",
+    }
+)  # fmt: skip
+# Back-compat aliases (pre-word-split names).
+READ_PREFIXES = tuple(sorted(READ_VERBS))
+MUTATING_PREFIXES = tuple(sorted(MUTATING_VERBS))
+
+_CAMEL_1 = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_CAMEL_2 = re.compile(r"([a-z0-9])([A-Z])")
+
+
+def _method_words(method_name) -> list[str]:
+    """Split ``GetOrCreateUser`` / ``get_or_create_user`` / ``HTTPGetX`` into lower-case words."""
+    name = str(method_name or "")
+    name = _CAMEL_1.sub(r"\1_\2", name)
+    name = _CAMEL_2.sub(r"\1_\2", name)
+    return [w for w in re.split(r"[^A-Za-z0-9]+", name.lower()) if w]
 
 
 def _is_read_method(method_name) -> bool:
-    """True iff ``method_name`` starts with a READ prefix and NOT a mutating prefix (case-insensitive).
+    """True iff the method is unambiguously a READ (fail-closed classifier).
 
-    Mutating wins ties, so active invocation is fail-closed: anything that looks like a write is
-    never auto-invoked.
+    The name is split into words (CamelCase and snake_case); it is a read only when the FIRST
+    word is exactly a read verb (:data:`READ_VERBS`) AND NO word is a mutating verb
+    (:data:`MUTATING_VERBS`). So ``GetUser``/``list_orders`` are reads, while ``Checkout``,
+    ``GetOrCreateUser``, ``ReadAndDelete``, ``QueryAndPurge``, ``HealthReset`` and ``Getaway``
+    are not — anything that might write is never auto-invoked.
     """
-    name = str(method_name or "").lower()
-    if any(name.startswith(p) for p in MUTATING_PREFIXES):
+    words = _method_words(method_name)
+    if not words or words[0] not in READ_VERBS:
         return False
-    return any(name.startswith(p) for p in READ_PREFIXES)
+    return not any(w in MUTATING_VERBS for w in words)
 
 
 # --------------------------------------------------------------------------- method-level findings
@@ -651,6 +701,75 @@ def _unauth_firm_finding(application, target_url, engagement_id, open_methods) -
     return f
 
 
+# --------------------------------------------------------------------------- scope / audit helpers
+_SKIP_MISSING = f"grpc: skipped — {install_hint}"
+
+
+def _call_seam(fn, *args, guard=None, **kw):
+    """Call a network seam, passing ``guard`` only if the (possibly monkeypatched) seam accepts it."""
+    if guard is not None:
+        try:
+            params = inspect.signature(fn).parameters
+            if "guard" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+                kw["guard"] = guard
+        except (TypeError, ValueError):
+            pass
+    return fn(*args, **kw)
+
+
+def _scope_refusal(scope, resolver, host, port) -> str:
+    """ "" when ``host:port`` is authorized by ``scope`` (host in scope, port in its ``ports``,
+    every resolved IP allowlisted); otherwise the refusal reason. ``scope=None`` = caller-trusted."""
+    if scope is None:
+        return ""
+    try:
+        hs = scope.host_scope(str(host))
+    except Exception:  # noqa: BLE001
+        hs = None
+    if hs is None:
+        return f"grpc: refused — host {host!r} is not in scope"
+    try:
+        allowed_ports = {int(p) for p in (getattr(hs, "ports", None) or [])}
+        port_i = int(port)
+    except (TypeError, ValueError):
+        return f"grpc: refused — invalid port {port!r}"
+    if port_i not in allowed_ports:
+        return (
+            f"grpc: refused — port {port_i} is not authorized for {host!r} (allowed: {sorted(allowed_ports)})"
+        )
+    if resolver is None:
+        from ..policy.allowlist import default_resolver as resolver
+    try:
+        ips = [str(i) for i in (resolver(str(host)) or [])]
+    except Exception:  # noqa: BLE001
+        ips = []
+    if not ips:
+        return f"grpc: refused — could not resolve {host!r} (fail-closed)"
+    for ip in ips:
+        try:
+            ok = bool(scope.ip_allowed(ip))
+        except Exception:  # noqa: BLE001
+            ok = False
+        if not ok:
+            return f"grpc: refused — resolved IP {ip} for {host!r} is not in resolved_ip_allowlist"
+    return ""
+
+
+def _admit(guard, host, port, path: str, purpose: str) -> bool:
+    ok, _why = guard.admit(
+        str(host),
+        {"kind": "grpc-rpc", "method": "POST", "port": port, "path": path, "purpose": purpose},
+    )
+    return ok
+
+
+_REFLECTION_RPC = "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"
+
+
+def _is_insecure(scheme) -> bool:
+    return str(scheme or "").lower() in ("grpc", "http", "h2c", "")
+
+
 def scan_grpc_methods(
     host,
     port,
@@ -661,24 +780,43 @@ def scan_grpc_methods(
     active: bool = False,
     read_only: bool = True,
     timeout: float = 8.0,
+    methods: list | None = None,
+    include_plaintext: bool = True,
+    audit=None,
+    budget=None,
+    guard=None,
 ) -> list:
-    """Per-RPC gRPC checks: plaintext transport + (active-only) unauthenticated-method invocation.
+    """Per-RPC gRPC checks: plaintext transport (passive) + (active-only) unauthenticated invocation.
 
-    Enumeration (``_list_methods``) is always non-destructive. Actual RPC INVOCATION happens ONLY
-    when ``active=True`` and, while ``read_only=True`` (the default), ONLY for read-ish methods
-    (:func:`_is_read_method`) — mutating RPCs are never auto-invoked. Returns ``[]`` on any failure
+    Enumeration (``_list_methods``) is always non-destructive; pass ``methods`` to reuse an
+    enumeration already done. Actual RPC INVOCATION happens ONLY when ``active=True`` and, while
+    ``read_only=True`` (the default), ONLY for unambiguous read methods (:func:`_is_read_method`)
+    — mutating RPCs are never auto-invoked. Every RPC is admitted/audited/budgeted through the
+    guard (``audit``/``budget``); a killed budget stops the sweep. Returns ``[]`` on any failure
     or when nothing is reachable. Never raises.
 
     Findings:
-      * ``GRPC_PLAINTEXT`` (firm) — emitted when the server answered AND the scheme is insecure.
+      * ``GRPC_PLAINTEXT`` (firm) — emitted when the server answered AND the scheme is insecure
+        (passive; ``include_plaintext=False`` lets :func:`scan_grpc` avoid a duplicate).
       * ``GRPC_UNAUTH_METHOD`` (confirmed) — aggregated, only if >=1 read-ish method is invocable
         unauthenticated AND >=1 method is properly gated (negative control). If every probed method
         is open (no control) a firm "verify intended" indicator is emitted instead (fail-closed).
     """
-    try:
-        methods = _list_methods(host, port, scheme, timeout=timeout)
-    except Exception:  # noqa: BLE001 — grpcio absent / unreachable / RPC error: degrade to no-op
-        methods = []
+    g = guard_from(
+        guard,
+        audit=audit,
+        budget=budget,
+        engagement_id=engagement_id,
+        tool="grpc-scan",
+        actor_role="grpc-worker",
+    )
+    if methods is None:
+        if not _admit(g, host, port, _REFLECTION_RPC, "list_services + method enumeration"):
+            return []
+        try:
+            methods = _call_seam(_list_methods, host, port, scheme, timeout=timeout, guard=g)
+        except Exception:  # noqa: BLE001 — grpcio absent / unreachable / RPC error: degrade to no-op
+            methods = []
     if not methods:
         return []
 
@@ -686,8 +824,7 @@ def scan_grpc_methods(
     findings: list = []
 
     # --- plaintext transport: the server answered, so if the channel is insecure this is firm. ---
-    insecure = str(scheme or "").lower() in ("grpc", "http", "h2c", "")
-    if insecure:
+    if include_plaintext and _is_insecure(scheme):
         findings.append(_plaintext_finding(application, url, engagement_id, scheme))
 
     # --- unauthenticated invocation: active-gated, read-ish only by default. ---
@@ -697,12 +834,16 @@ def scan_grpc_methods(
     open_methods: list = []  # read-ish methods that answered OK/data with NO auth
     gated_methods: list = []  # negative controls: UNAUTHENTICATED / PERMISSION_DENIED
     for m in methods:
+        if g.killed:
+            break
         name = m.get("method", "")
         full = m.get("full_method", "")
         if not full:
             continue
         # read_only=True (default) => invoke ONLY read-ish methods; never mutating ones.
         if read_only and not _is_read_method(name):
+            continue
+        if not _admit(g, host, port, full, "unauthenticated read invocation"):
             continue
         try:
             res = _invoke_method(host, port, scheme, full, metadata=None, request_bytes=b"", timeout=timeout)
@@ -727,13 +868,17 @@ def scan_grpc_methods(
     if gated_methods:
         first_open = open_methods[0]
         # Reproduce the first open method a 2nd time (independent re-derivation -> reproductions>=2).
-        try:
-            rep = _invoke_method(
-                host, port, scheme, first_open, metadata=None, request_bytes=b"", timeout=timeout
-            )
-        except Exception:  # noqa: BLE001
-            rep = {}
-        rep_code = str(rep.get("code") or "OK")
+        rep: dict = {}
+        if _admit(g, host, port, first_open, "unauthenticated read invocation (reproduction)"):
+            try:
+                rep = _invoke_method(
+                    host, port, scheme, first_open, metadata=None, request_bytes=b"", timeout=timeout
+                )
+            except Exception:  # noqa: BLE001
+                rep = {}
+        rep_code = str(rep.get("code") or "")
+        if rep_code.upper() != "OK" and rep.get("ok") is not True:
+            return findings  # the open result did not reproduce -> fail-closed, no confirmed finding
         findings.append(
             _unauth_confirmed_finding(
                 application, url, engagement_id, open_methods, gated_methods[0], first_open, rep_code
@@ -747,34 +892,85 @@ def scan_grpc_methods(
 
 # --------------------------------------------------------------------------- entry point
 def scan_grpc(
-    host, port, scheme, application, target_url, timeout: float = 8.0, active: bool = False
-) -> list:
+    host,
+    port,
+    scheme,
+    application,
+    target_url,
+    timeout: float = 8.0,
+    active: bool = False,
+    engagement_id: str = "",
+    scope=None,
+    resolver=None,
+    audit=None,
+    budget=None,
+    guard=None,
+) -> ScanOutcome:
     """Scan a gRPC endpoint for a server-reflection exposure (+ per-RPC checks).
 
-    Attempts gRPC server reflection via :func:`_list_services`; if it lists services, returns a
-    single confirmed CWE-200 finding, now enriched with the enumerated methods (via
-    :func:`_list_methods`, graceful on failure). When ``active=True`` the returned list is extended
-    with :func:`scan_grpc_methods` (plaintext-transport + read-ish unauthenticated-invocation
-    checks). ``active`` defaults to ``False`` so existing callers are unaffected. Returns ``[]``
-    when grpcio is absent, the server is unreachable, reflection is disabled, or anything goes
-    wrong. Never raises.
+    * Scope (when ``scope`` is given): ``host`` must be in scope, ``port`` must be one of its
+      scoped ``ports`` and every resolved IP must be allowlisted — otherwise NO channel is opened
+      and the result carries ``skip_reason``. (``scope=None`` keeps the legacy caller-trusted mode.)
+    * Reflection via :func:`_list_services`; if it lists services, a confirmed CWE-200 finding
+      enriched with the enumerated methods (:func:`_list_methods`, graceful on failure).
+    * Passive: a firm ``GRPC_PLAINTEXT`` finding when the server answered over an insecure scheme.
+    * ``active=True``: read-only unauthenticated-invocation checks (:func:`scan_grpc_methods`).
+
+    ``engagement_id`` is stamped on every finding; ``audit``/``budget`` record + meter one event per
+    RPC. Returns a :class:`ScanOutcome` (a list; ``skip_reason`` is set when grpcio is missing —
+    ``"grpc: skipped — pip install rampart-appsec[grpc]"`` — or the target is out of scope). Never
+    raises.
     """
+    out = ScanOutcome()
+    refusal = _scope_refusal(scope, resolver, host, port)
+    if refusal:
+        out.skip_reason = refusal
+        return out
+    g = guard_from(
+        guard,
+        audit=audit,
+        budget=budget,
+        engagement_id=engagement_id,
+        tool="grpc-scan",
+        actor_role="grpc-worker",
+    )
+    if not _admit(g, host, port, _REFLECTION_RPC, "list_services"):
+        out.skip_reason = "grpc: stopped — budget exhausted or kill-switch engaged"
+        return out
     try:
-        services = _list_services(host, port, scheme, timeout=timeout)
-    except Exception:  # noqa: BLE001 — grpcio absent / unreachable / RPC error: degrade to no-op
-        return []
+        services = _call_seam(_list_services, host, port, scheme, timeout=timeout)
+    except ImportError:
+        out.skip_reason = _SKIP_MISSING
+        return out
+    except Exception:  # noqa: BLE001 — unreachable / RPC error: degrade to no-op
+        return out
     if not services:
-        return []
+        return out
     url = target_url or f"{scheme or 'grpc'}://{host}:{port}"
-    try:
-        methods = _list_methods(host, port, scheme, timeout=timeout)
-    except Exception:  # noqa: BLE001 — method listing is best-effort; reflection finding still stands
-        methods = []
-    findings = [_reflection_finding(services, application, url, engagement_id="", methods=methods)]
-    if active:
-        findings.extend(
+    methods: list = []
+    if _admit(g, host, port, _REFLECTION_RPC, "list_services + method enumeration"):
+        try:
+            methods = _call_seam(_list_methods, host, port, scheme, timeout=timeout, guard=g)
+        except Exception:  # noqa: BLE001 — method listing is best-effort; reflection finding still stands
+            methods = []
+    out.append(_reflection_finding(services, application, url, engagement_id=engagement_id, methods=methods))
+    # Passive: the server answered reflection, so an insecure scheme is itself the observation.
+    if _is_insecure(scheme):
+        out.append(_plaintext_finding(application, url, engagement_id, scheme))
+    if active and methods:
+        out.extend(
             scan_grpc_methods(
-                host, port, scheme, application, url, engagement_id="", active=True, timeout=timeout
+                host,
+                port,
+                scheme,
+                application,
+                url,
+                engagement_id=engagement_id,
+                active=True,
+                timeout=timeout,
+                methods=methods,
+                include_plaintext=False,
+                guard=g,
             )
         )
-    return findings
+    return out

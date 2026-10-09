@@ -2,10 +2,41 @@
 
 from __future__ import annotations
 
+import ipaddress
 import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+
+def _is_loopback_host(host: str) -> bool:
+    h = (host or "").strip("[]").lower()
+    if h in ("localhost", "localhost.localdomain") or h.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def oob_skip_reason(target_url: str, collaborator) -> str:
+    """ "" if the OOB pass can produce a meaningful result, else why it must be skipped.
+
+    A loopback collaborator (the safe default) can only be called back by a target running on
+    this same machine. Injecting ``http://127.0.0.1:<port>/…`` into a REMOTE target would make
+    that target request its OWN loopback interface — never our listener — so every probe would
+    be a guaranteed miss (and a pointless request into the target's internal services). In that
+    case we skip with this reason instead of injecting.
+    """
+    target_host = urlsplit(target_url or "").hostname or ""
+    if getattr(collaborator, "is_loopback", True) and not _is_loopback_host(target_host):
+        return (
+            f"oob: skipped — target {target_host or target_url!r} is not loopback and no external "
+            "collaborator is configured (the default 127.0.0.1 listener is unreachable from it); "
+            "set an externally reachable collaborator URL to enable blind SSRF/XXE"
+        )
+    return ""
 
 
 class OOBCollaborator:
@@ -20,9 +51,16 @@ class OOBCollaborator:
         c.stop()
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 0):
+    def __init__(self, host: str = "127.0.0.1", port: int = 0, public_url: str = ""):
+        """``host``/``port``: where the listener binds (loopback by default — safe).
+
+        ``public_url``: the externally reachable base URL injected into payloads when the
+        listener sits behind NAT / a tunnel / a separate collaborator host (e.g.
+        ``http://oob.example.net:8000``). Empty = advertise ``http://<host>:<port>``.
+        """
         self.host = host
         self._want_port = port
+        self.public_url = (public_url or "").rstrip("/")
         self._hits: dict[str, list] = {}
         self._lock = threading.Lock()
         self._httpd = None
@@ -68,7 +106,18 @@ class OOBCollaborator:
 
     @property
     def base_url(self) -> str:
+        if self.public_url:
+            return self.public_url
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def advertised_host(self) -> str:
+        return urlsplit(self.base_url).hostname or ""
+
+    @property
+    def is_loopback(self) -> bool:
+        """True when the URL injected into payloads points at a loopback address."""
+        return _is_loopback_host(self.advertised_host)
 
     def new_token(self) -> tuple[str, str]:
         tok = "oob" + secrets.token_hex(8)

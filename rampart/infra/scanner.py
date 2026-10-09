@@ -25,20 +25,22 @@ Oracle / trust model (mirrors :mod:`rampart.scanners.misconfig`)
 ----------------------------------------------------------------
 For an exposed sensitive service the observation *is* the oracle: the service either accepts a
 TCP connection or it does not. We re-derive the observation on **two independent connects**
-(two reproductions) and we run a **negative control** — a connect to a port we expect closed on
-the same host — so a host that answers on *everything* (a tarpit / accept-all firewall) cannot
-produce a false "open". Only when the control port is confirmed closed do we emit a
-``confidence='confirmed'`` / ``verification.validated=True`` finding. TLS certificate / protocol
-findings are weaker evidence (``confidence='firm'``, ``validated=False``).
+(two reproductions) and we run a **negative control** — a connect to an *in-scope* port we
+expect closed on the same host — so a host that answers on *everything* (a tarpit / accept-all
+firewall) cannot produce a false "open". Only when the control port is confirmed closed do we
+emit a ``confidence='confirmed'`` / ``verification.validated=True`` finding; when the scope
+authorizes no spare port to use as a control the finding is honestly downgraded to ``firm``.
+TLS certificate / protocol findings are weaker evidence (``confidence='firm'``,
+``validated=False``).
 
 Trust boundary
 --------------
 Like the gRPC and headless-browser engines, this scanner opens its **own** sockets that do NOT
-pass through Rampart's HTTP policy choke-point (the ``ProbeRunner`` / scope pipeline). The caller
-is therefore responsible for only ever pointing :func:`scan_infra` at a host:port that is already
-authorized and in-scope. As a defence-in-depth aid, :func:`scan_infra` will — when given a
-``resolver`` and a ``scope`` — resolve the host and fail **closed** unless the resolved IP is
-inside ``scope.ip_allowed`` before it opens a single socket.
+pass through Rampart's HTTP policy choke-point (the ``ProbeRunner`` / scope pipeline). It
+therefore enforces scope itself and fails **closed**: no scope → no connection; host not in scope,
+unresolvable, or any resolved IP outside ``resolved_ip_allowlist`` → no connection; and only the
+host's scoped ``ports`` (including the negative-control port) are ever connected to. Every
+connect is audited and budgeted through :class:`~rampart.infra.sidechannel.SideChannelGuard`.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ from datetime import datetime, timezone
 
 from ..schemas.finding import CVSS, Finding, Remediation, Reproduction, State, Verification
 from ..util import now_iso
+from .sidechannel import ScanOutcome, guard_from
 
 # --------------------------------------------------------------------------- service catalogue
 # port -> (service_name, severity). These are services that should generally NOT be reachable
@@ -81,10 +84,10 @@ _TLS_PORTS: frozenset[int] = frozenset({443, 8443})
 # Obsolete / weak negotiated protocol versions (CWE-326).
 _OBSOLETE_TLS: frozenset[str] = frozenset({"SSLv2", "SSLv3", "TLSv1", "TLSv1.0", "TLSv1.1"})
 
-# High ports used as a NEGATIVE CONTROL: we expect them closed. If a sensitive port looks open
-# but one of these ALSO looks open, the host is answering indiscriminately and we must not
-# confirm. Several candidates make the control robust to an occasional unlucky collision.
-_CONTROL_PORTS: tuple[int, ...] = (59991, 60997, 61999)
+# NEGATIVE CONTROL ports are no longer hard-coded: a control connect is still a connection to
+# the target, so it must be authorized like any other. Controls are chosen from the host's
+# scoped ``ports`` (see :func:`_control_candidates`); with none available, findings are reported
+# ``firm`` (accept-all host not ruled out) instead of ``confirmed``.
 
 # Minimal, PASSIVE banner signatures: if a service volunteers a banner, does it look like the
 # protocol we expect on that port? Matching is case-insensitive substring over the decoded
@@ -221,18 +224,26 @@ def _tcp_probe(host: str, ip: str | None, port: int, timeout: float = 1.0) -> di
         return None
 
 
-def _negative_control(host: str, ip: str | None, timeout: float) -> tuple[bool, int]:
-    """Probe high ports we expect closed. Return (control_is_closed, control_port_used).
+def _control_candidates(
+    scoped_ports: set, requested: set, smap: dict, explicit: list | None = None
+) -> list[int]:
+    """In-scope ports usable as a NEGATIVE CONTROL (expected closed). Never an unscoped port.
 
-    ``control_is_closed`` is True as soon as one candidate is confirmed NOT open — proving the
-    host is not answering indiscriminately, which is the precondition for honestly confirming a
-    sensitive port. If every candidate looks open (or none could be probed), returns False.
+    ``explicit`` (operator-chosen control ports) wins, but is still intersected with the scope.
+    Otherwise: every scoped port that is not itself a candidate (not requested, not a sensitive
+    service, not a TLS port) — e.g. a ``ports: [8080, 6379, 18999]`` scope uses 18999.
     """
-    for port in _CONTROL_PORTS:
-        probe = _tcp_probe(host, ip, port, timeout=timeout)
-        if probe is not None and probe.get("open") is False:
-            return True, port
-    return False, _CONTROL_PORTS[0]
+    if explicit:
+        out = []
+        for p in explicit:
+            try:
+                p = int(p)
+            except (TypeError, ValueError):
+                continue
+            if p in scoped_ports and p not in smap and p not in out:
+                out.append(p)
+        return out
+    return [p for p in sorted(scoped_ports) if p not in requested and p not in smap and p not in _TLS_PORTS]
 
 
 # --------------------------------------------------------------------------- minimal X.509 parse
@@ -368,10 +379,15 @@ def _exposed_service_finding(
     severity: str,
     banner: str,
     application: str,
-    control_port: int,
+    control_port: int | None,
     reproductions: int,
 ) -> Finding:
-    """Build the CONFIRMED 'exposed sensitive service' finding (observation-oracle, validated)."""
+    """Build the 'exposed sensitive service' finding (observation-oracle).
+
+    CONFIRMED/validated when an in-scope negative-control port was proven closed; ``firm`` and
+    unvalidated when no in-scope control port was available (``control_port=None``) — an
+    accept-all host / tarpit cannot then be ruled out, so we refuse to claim confirmation.
+    """
     severity = severity if severity in _CVSS_BY_SEV else "medium"
     target = f"{host}:{port}"
     snippet = _banner_snippet(banner)
@@ -387,10 +403,17 @@ def _exposed_service_finding(
     if hint:
         desc += f" The banner matches the expected '{svc}' protocol signature ({hint!r})."
 
-    fp_checks = [
-        "service answered on 2 independent connects (two reproductions)",
-        f"a closed control port (:{control_port}) on the same host did NOT answer (negative control)",
-    ]
+    controlled = control_port is not None
+    fp_checks = ["service answered on 2 independent connects (two reproductions)"]
+    if controlled:
+        fp_checks.append(
+            f"a closed in-scope control port (:{control_port}) on the same host did NOT answer (negative control)"
+        )
+    else:
+        fp_checks.append(
+            "NO negative control: the scope authorizes no spare port to use as a closed control, so an "
+            "accept-all host / tarpit is not ruled out (reported firm, not confirmed)"
+        )
     if hint:
         fp_checks.append(f"banner confirmed the '{svc}' protocol (signature {hint!r})")
 
@@ -399,8 +422,8 @@ def _exposed_service_finding(
         title=f"Exposed sensitive service: {svc} on :{port}",
         vuln_class="EXPOSED_SERVICE",
         severity=severity,
-        confidence="confirmed",
-        state=State.VALIDATED,
+        confidence="confirmed" if controlled else "firm",
+        state=State.VALIDATED if controlled else State.EVIDENCE_FOUND,
         cwe=["CWE-284", "CWE-668"],
         owasp={"web_2021": ["A05:2021-Security Misconfiguration"]},
         cvss=_CVSS_BY_SEV[severity],
@@ -441,13 +464,13 @@ def _exposed_service_finding(
         tags=["infra", "exposed-service", "network"],
         verification=Verification(
             method="tcp-connect-probe",
-            validated=True,
+            validated=controlled,
             validated_at=now_iso(),
             validator="infra-scan",
             independent_reproduction=True,
             reproductions=reproductions,
             false_positive_checks=fp_checks,
-            confidence_score=0.9,
+            confidence_score=0.9 if controlled else 0.6,
         ),
     )
     f.assert_consistent()
@@ -611,9 +634,12 @@ def _tls_findings(
 
 
 # --------------------------------------------------------------------------- entry point
+_NO_SCOPE = "infra: refused — no scope contract given (fail-closed; no connection made)"
+
+
 def scan_infra(
     host: str,
-    ports: list[int],
+    ports: list[int] | None = None,
     engagement_id: str = "",
     target_url: str = "",
     application: str = "",
@@ -622,85 +648,181 @@ def scan_infra(
     connect_timeout: float = 1.0,
     tls: bool = True,
     service_map: dict | None = None,
-) -> list[Finding]:
+    control_ports: list[int] | None = None,
+    audit=None,
+    budget=None,
+    guard=None,
+) -> ScanOutcome:
     """Scope-gated, non-destructive live infra / exposed-services scan.
 
-    Parameters
-    ----------
-    host, ports:
-        The authorized, in-scope host and the TCP ports to probe.
-    resolver, scope:
-        When BOTH are provided, ``host`` is resolved via ``resolver(host) -> [ip, ...]`` and the
-        first resolved IP must satisfy ``scope.ip_allowed(ip)`` before any socket is opened; if
-        not, the scan returns ``[]`` (fail-closed). When ``scope`` is ``None`` the host is probed
-        directly and **the caller is responsible for only passing an in-scope host/ports** (this
-        scanner's sockets bypass the HTTP policy pipeline — same contract as the gRPC/browser
-        engines). ``scope`` given without a ``resolver`` also fails closed.
-    service_map:
-        Optional override of :data:`SENSITIVE_SERVICES` (``{port: (service_name, severity)}``),
-        primarily so tests can mark an ephemeral port sensitive.
+    Scope is MANDATORY (fail-closed). Before a single socket is opened:
 
-    Returns one CONFIRMED ``EXPOSED_SERVICE`` finding per sensitive port proven reachable on two
-    independent connects (with a passing negative control), plus ``firm`` TLS certificate /
-    protocol findings for TLS ports. Never raises: any error yields ``[]`` / no finding.
+    * ``scope`` must be given (an :class:`~rampart.schemas.scope.EngagementScope`, or any object
+      with ``host_scope(host)`` and ``ip_allowed(ip)``) — without it the scan refuses;
+    * ``host`` must be in scope (``scope.host_scope(host)`` not ``None``);
+    * ``resolver(host)`` must return IPs and EVERY one must satisfy ``scope.ip_allowed`` (a
+      missing resolver also refuses);
+    * only ports in the host's scoped ``ports`` list are ever connected to — the probed set is
+      ``ports ∩ scope ports`` (``ports=None`` means "every catalogued sensitive/TLS port"), and
+      negative-control ports are chosen from the scoped ports too (``control_ports`` lets the
+      operator name them, still intersected with scope). With no in-scope control port available,
+      exposed-service findings are reported ``firm`` rather than ``confirmed``.
+
+    ``audit`` / ``budget`` (or a prebuilt ``guard``) record one audit event per TCP connect / TLS
+    handshake and consume one budget request each; a killed budget stops the scan.
+
+    Returns a :class:`ScanOutcome` (a ``list`` of findings; ``.skip_reason`` explains a refusal,
+    ``.notes`` lists ports skipped as out of scope). Never raises.
     """
-    findings: list[Finding] = []
-    if not host or not ports:
-        return findings
+    out = ScanOutcome()
+    if not host:
+        out.skip_reason = "infra: no host given"
+        return out
+    if ports is not None and not ports:
+        out.skip_reason = "infra: no ports requested"
+        return out
+    if scope is None:
+        out.skip_reason = _NO_SCOPE
+        return out
     smap = service_map if service_map is not None else SENSITIVE_SERVICES
+    g = guard_from(
+        guard,
+        audit=audit,
+        budget=budget,
+        engagement_id=engagement_id,
+        tool="infra-scan",
+        actor_role="infra-worker",
+    )
     try:
-        ip: str | None = None
-        if scope is not None:
-            if resolver is None:
-                return []  # fail-closed: cannot verify scope without a resolver
+        # ---- scope gate (no socket before this passes) ---------------------------------------
+        try:
+            hs = scope.host_scope(host)
+        except Exception:  # noqa: BLE001 - a broken / duck-typed scope without host_scope fails closed
+            hs = None
+        if hs is None:
+            out.skip_reason = f"infra: refused — host {host!r} is not in scope"
+            return out
+        if resolver is None:
+            out.skip_reason = "infra: refused — no resolver to verify the resolved IP against scope"
+            return out
+        try:
+            ips = [str(i) for i in (resolver(host) or [])]
+        except Exception:  # noqa: BLE001 - resolver failure is fail-closed
+            ips = []
+        if not ips:
+            out.skip_reason = f"infra: refused — could not resolve {host!r} (fail-closed)"
+            return out
+        for cand in ips:
             try:
-                ips = list(resolver(host) or [])
-            except Exception:  # noqa: BLE001 - resolver failure is fail-closed
-                return []
-            if not ips:
-                return []
-            ip = ips[0]
-            try:
-                if not scope.ip_allowed(ip):
-                    return []  # fail-closed: resolved IP is out of scope
-            except Exception:  # noqa: BLE001 - a broken scope is fail-closed
-                return []
+                ok_ip = bool(scope.ip_allowed(cand))
+            except Exception:  # noqa: BLE001
+                ok_ip = False
+            if not ok_ip:
+                out.skip_reason = (
+                    f"infra: refused — resolved IP {cand} for {host!r} is not in resolved_ip_allowlist"
+                )
+                return out
+        ip = ips[0]
+        try:
+            scoped_ports = {int(p) for p in (getattr(hs, "ports", None) or [])}
+        except (TypeError, ValueError):
+            scoped_ports = set()
 
-        control_closed, control_port = _negative_control(host, ip, connect_timeout)
+        # ---- candidate ports = requested ∩ scope -------------------------------------------
+        if ports is None:
+            requested_list = sorted(set(smap) | set(_TLS_PORTS))
+        else:
+            requested_list = []
+            for raw in ports:
+                try:
+                    p = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if p not in requested_list:
+                    requested_list.append(p)
+        probe_ports = [p for p in requested_list if p in scoped_ports]
+        skipped = [p for p in requested_list if p not in scoped_ports]
+        if skipped:
+            out.notes.append(
+                f"infra: {len(skipped)} candidate port(s) not authorized by the scope for {host!r} — not probed"
+            )
+        if not probe_ports:
+            out.notes.append(
+                f"infra: no candidate port is authorized by the scope for {host!r} "
+                f"(scoped ports: {sorted(scoped_ports)}); nothing probed"
+            )
+            return out
 
-        for raw_port in ports:
-            try:
-                port = int(raw_port)
-            except (TypeError, ValueError):
-                continue
+        def _connect(port: int, purpose: str):
+            ok, _why = g.admit(
+                host,
+                {
+                    "kind": "tcp-connect",
+                    "method": "TCP",
+                    "port": port,
+                    "resolved_ip": ip or "",
+                    "purpose": purpose,
+                },
+            )
+            if not ok:
+                return None
+            return _tcp_probe(host, ip, port, timeout=connect_timeout)
 
+        controls = _control_candidates(scoped_ports, set(requested_list), smap, control_ports)
+        control_state: dict = {"done": False, "closed": False, "port": None}
+
+        def _run_control() -> None:
+            # Lazily, once, and only when a sensitive port actually looked open twice.
+            if control_state["done"]:
+                return
+            control_state["done"] = True
+            for cport in controls:
+                if g.killed:
+                    return
+                probe = _connect(cport, "negative-control")
+                if probe is not None and probe.get("open") is False:
+                    control_state["closed"], control_state["port"] = True, cport
+                    return
+
+        for port in probe_ports:
+            if g.killed:
+                out.notes.append("infra: stopped — engagement kill-switch engaged")
+                break
             if port in smap:
                 svc, severity = smap[port]
-                first = _tcp_probe(host, ip, port, timeout=connect_timeout)
+                first = _connect(port, "probe")
                 if first is not None and first.get("open"):
-                    second = _tcp_probe(host, ip, port, timeout=connect_timeout)
+                    second = _connect(port, "reproduction")
                     connects_ok = 1 + (1 if (second is not None and second.get("open")) else 0)
-                    if connects_ok >= 2 and control_closed:
-                        banner = first.get("banner") or (second.get("banner") if second else "") or ""
-                        findings.append(
-                            _exposed_service_finding(
-                                engagement_id,
-                                host,
-                                ip,
-                                port,
-                                svc,
-                                severity,
-                                banner,
-                                application,
-                                control_port,
-                                connects_ok,
+                    if connects_ok >= 2:
+                        _run_control()
+                        # every in-scope control ALSO answered => accept-all host => no finding.
+                        if control_state["closed"] or not controls:
+                            banner = first.get("banner") or (second.get("banner") if second else "") or ""
+                            out.append(
+                                _exposed_service_finding(
+                                    engagement_id,
+                                    host,
+                                    ip,
+                                    port,
+                                    svc,
+                                    severity,
+                                    banner,
+                                    application,
+                                    control_state["port"] if control_state["closed"] else None,
+                                    connects_ok,
+                                )
                             )
-                        )
 
-            if tls and port in _TLS_PORTS:
-                info = _tls_probe(host, ip, port, timeout=max(connect_timeout, 2.0))
-                if info is not None and info.get("tls"):
-                    findings.extend(_tls_findings(engagement_id, host, ip, port, info, application))
+            if tls and port in _TLS_PORTS and not g.killed:
+                ok, _why = g.admit(
+                    host,
+                    {"kind": "tls-handshake", "method": "TLS", "port": port, "resolved_ip": ip or ""},
+                )
+                if ok:
+                    info = _tls_probe(host, ip, port, timeout=max(connect_timeout, 2.0))
+                    if info is not None and info.get("tls"):
+                        out.extend(_tls_findings(engagement_id, host, ip, port, info, application))
     except Exception:  # noqa: BLE001 - absolute guarantee: scan_infra never raises
-        return findings
-    return findings
+        return out
+    return out

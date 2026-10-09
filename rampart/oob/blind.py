@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from ..infra.sidechannel import ScanOutcome
 from ..schemas.finding import CVSS, Finding, Remediation, Reproduction, State, Verification
 from ..util import now_iso
+from .collaborator import oob_skip_reason
 
 _SSRF_PARAMS = (
     "url",
@@ -46,8 +48,15 @@ _XXE_PATH_HINTS = ("import", "xml", "upload", "parse", "soap", "feed", "ingest",
 def blind_xxe_scan(
     runner, collaborator, appmodel, target_url, application="target", timeout: float = 3.0
 ) -> list[Finding]:
-    """POST an XML external-entity payload pointing at the collaborator; a callback confirms XXE."""
-    findings = []
+    """POST an XML external-entity payload pointing at the collaborator; a callback confirms XXE.
+
+    Returns a :class:`ScanOutcome`; ``skip_reason`` is set (and nothing is injected) when the
+    collaborator is loopback but the target is remote (see :func:`oob_skip_reason`)."""
+    findings = ScanOutcome()
+    reason = oob_skip_reason(target_url, collaborator)
+    if reason:
+        findings.skip_reason = reason
+        return findings
     eps = [
         e
         for e in appmodel.endpoints
@@ -148,8 +157,15 @@ def blind_xxe_scan(
 def blind_ssrf_scan(
     runner, collaborator, appmodel, target_url, application="target", timeout: float = 3.0
 ) -> list[Finding]:
-    """For each SSRF-shaped parameter, inject a unique collaborator URL and confirm a callback."""
-    findings = []
+    """For each SSRF-shaped parameter, inject a unique collaborator URL and confirm a callback.
+
+    Returns a :class:`ScanOutcome`; ``skip_reason`` is set (and nothing is injected) when the
+    collaborator is loopback but the target is remote (see :func:`oob_skip_reason`)."""
+    findings = ScanOutcome()
+    reason = oob_skip_reason(target_url, collaborator)
+    if reason:
+        findings.skip_reason = reason
+        return findings
     for path, param in _candidates(appmodel):
         token, oob_url = collaborator.new_token()
         probe = runner.get(

@@ -21,6 +21,7 @@ import json
 import secrets as _secrets
 import time
 
+from ..apiscan.scanner import _concrete
 from ..schemas.finding import CVSS, Finding, Remediation, Reproduction, State, Verification
 from ..util import now_iso
 
@@ -68,13 +69,16 @@ def _auth_required(ep) -> bool:
 
 
 def _candidate_paths(appmodel, probe_paths=None) -> list[str]:
+    """Concrete paths to probe. OpenAPI templates (``/api/orders/{id}``) are substituted with a
+    sample value (the same :func:`rampart.apiscan.scanner._concrete` the API scanner uses) so the
+    probe hits a real resource instead of a literal ``{id}`` path that can only 404."""
     if probe_paths:
-        return list(probe_paths)
+        return [_concrete(p) for p in probe_paths]
     paths = []
     for ep in getattr(appmodel, "endpoints", []) or []:
         method = (getattr(ep, "method", "GET") or "GET").upper()
         if method == "GET" and _auth_required(ep):
-            p = getattr(ep, "path", "")
+            p = _concrete(getattr(ep, "path", "") or "") if getattr(ep, "path", "") else ""
             if p and p not in paths:
                 paths.append(p)
     return paths

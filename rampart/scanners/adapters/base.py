@@ -30,7 +30,9 @@ def docker_available() -> bool:
     if not exe:
         return False
     try:
-        r = subprocess.run([exe, "info"], capture_output=True, text=True, timeout=8)
+        r = subprocess.run(
+            [exe, "info"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8
+        )
         return r.returncode == 0
     except Exception:  # noqa: BLE001
         return False
@@ -44,10 +46,28 @@ class ScannerAdapter:
     install_hint = ""
     help_uri = ""
 
-    def __init__(self, repo: str = "", timeout: float = 300.0, extra_args=None):
+    def __init__(
+        self, repo: str = "", timeout: float = 300.0, extra_args=None, scope=None, active: bool = False
+    ):
+        """``scope`` (an EngagementScope) and ``active`` let network adapters derive safe
+        flags — rate limits, excluded paths, intrusive-template gating. Both default to the most
+        conservative behaviour (no scope = default limits; ``active=False`` = non-intrusive)."""
         self.repo = repo
         self.timeout = timeout
         self.extra_args = list(extra_args or [])
+        self.scope = scope
+        self.active = bool(active)
+
+    def skip_reason(self) -> str:
+        """Non-empty when the adapter is installed but must NOT run (e.g. missing explicit config).
+
+        The supervisor should check this after :meth:`is_available` and log the reason instead of
+        running. Default: "" (run)."""
+        return ""
+
+    def uses_network(self) -> bool:
+        """True if this run will make network requests (to the target OR to a rule registry)."""
+        return bool(self.network)
 
     # -- availability --------------------------------------------------------
     def resolved_binary(self) -> str | None:
@@ -62,7 +82,14 @@ class ScannerAdapter:
             return ""
         for flag in ("-version", "--version", "version", "-V"):
             try:
-                r = subprocess.run([exe, flag], capture_output=True, text=True, timeout=15)
+                r = subprocess.run(
+                    [exe, flag],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                )
                 out = (r.stdout or r.stderr or "").strip().splitlines()
                 if out:
                     return out[0][:80]
@@ -72,7 +99,9 @@ class ScannerAdapter:
 
     # -- execution helpers ---------------------------------------------------
     def _exec(self, cmd: list[str]) -> subprocess.CompletedProcess:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=self.timeout
+        )
 
     def _external_finding(
         self,
