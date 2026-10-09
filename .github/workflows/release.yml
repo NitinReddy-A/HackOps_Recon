@@ -34,9 +34,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -64,7 +64,7 @@ jobs:
           /tmp/smoke/bin/python -c "from rampart import Rampart, ScanResult; print('SDK import ok')"
           /tmp/smoke/bin/python -m rampart init --scope-file examples/demo_target/rampart.scope.yaml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist
           path: dist/
@@ -79,15 +79,15 @@ jobs:
       id-token: write        # sign build-provenance attestations
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: dist
           path: dist/
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
 
@@ -146,19 +146,19 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/rampart
           tags: |
@@ -171,7 +171,7 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
 
       - id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -181,7 +181,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/rampart
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -203,7 +203,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: dist
           path: dist/
