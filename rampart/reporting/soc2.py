@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 
 from ..schemas.finding import State
+from .mdsafe import md, md_code, md_join
+from .status import is_confirmed, is_fixed, norm_severity, sev_rank, unique_by_id
 
 # Relevant SOC 2 2017 TSC (common criteria) for application security testing.
 TSC = {
@@ -55,25 +57,26 @@ def _controls_for(f) -> set:
     return out
 
 
+def _sev(f) -> str:
+    return norm_severity(f.severity).upper()
+
+
 def soc2_report(findings, scan, scope) -> str:
-    reported = [f for f in findings if f.state != State.DROPPED]
+    # A finding re-persisted after retest must be counted (and listed) once.
+    reported = unique_by_id(f for f in findings if f.state != State.DROPPED)
     by_control: dict[str, list] = {c: [] for c in TSC}
     for f in reported:
         for c in _controls_for(f):
             by_control.setdefault(c, []).append(f)
 
-    fixed = [f for f in reported if f.state in (State.FIXED,)]
-    agent = [f for f in reported if "agent-assessed" in f.tags]
-    open_exc = [
-        f
-        for f in reported
-        if f.verification.validated and f.state not in (State.FIXED,) and "agent-assessed" not in f.tags
-    ]
+    fixed = [f for f in reported if is_fixed(f)]
+    agent = [f for f in reported if "agent-assessed" in f.tags and not is_fixed(f)]
+    open_exc = [f for f in reported if is_confirmed(f) and "agent-assessed" not in f.tags]
 
     L = ["# SOC 2 control-effectiveness evidence", ""]
     L.append(
-        f"*Engagement* **{scope.authorization.ticket or 'engagement'}** · "
-        f"authorized by **{scope.authorization.authorized_by}**"
+        f"*Engagement* **{md(scope.authorization.ticket or 'engagement')}** · "
+        f"authorized by **{md(scope.authorization.authorized_by)}**"
     )
     L.append("")
     L.append(
@@ -94,8 +97,8 @@ def soc2_report(findings, scan, scope) -> str:
         fs = by_control[c]
         if not fs:
             continue
-        exc = len([f for f in fs if f.verification.validated and f.state != State.FIXED])
-        rem = len([f for f in fs if f.state == State.FIXED])
+        exc = len([f for f in fs if is_confirmed(f) and "agent-assessed" not in f.tags])
+        rem = len([f for f in fs if is_fixed(f)])
         L.append(f"| {c} | {TSC[c]} | {len(fs)} | {exc} | {rem} |")
     L.append("")
 
@@ -105,14 +108,13 @@ def soc2_report(findings, scan, scope) -> str:
     if not open_exc:
         L.append("*No open control exceptions — no confirmed findings are currently outstanding.*")
     else:
-        for f in sorted(open_exc, key=lambda f: f.severity):
+        for f in sorted(open_exc, key=lambda f: sev_rank(f.severity)):
             ctrls = ", ".join(sorted(_controls_for(f)))
             L.append(
-                f"- **[{f.severity.upper()}] {f.title}** — TSC {ctrls} · {', '.join(f.cwe)} · "
-                f"finding `{f.id}`"
+                f"- **[{_sev(f)}] {md(f.title)}** — TSC {ctrls} · {md_join(f.cwe)} · finding {md_code(f.id)}"
             )
             if f.remediation.summary:
-                L.append(f"    - *Remediation:* {f.remediation.summary}")
+                L.append(f"    - *Remediation:* {md(f.remediation.summary)}")
     L.append("")
 
     # ---- agent-assessed observations (reasoning-based; pending human confirmation) ----
@@ -123,10 +125,10 @@ def soc2_report(findings, scan, scope) -> str:
             "> Reasoning-based findings (e.g. business-logic abuse) the agent flagged but no "
             "deterministic oracle can prove. Treat as auditor review items, not confirmed exceptions."
         )
-        for f in agent:
+        for f in sorted(agent, key=lambda f: sev_rank(f.severity)):
             ctrls = ", ".join(sorted(_controls_for(f)))
             L.append(
-                f"- **[{f.severity.upper()}] {f.title}** — TSC {ctrls} · finding `{f.id}` (agent-assessed)"
+                f"- **[{_sev(f)}] {md(f.title)}** — TSC {ctrls} · finding {md_code(f.id)} (agent-assessed)"
             )
         L.append("")
 
@@ -143,8 +145,9 @@ def soc2_report(findings, scan, scope) -> str:
             ctrls = ", ".join(sorted(_controls_for(f)))
             lr = f.verification.last_retest or {}
             L.append(
-                f"- **{f.title}** — TSC {ctrls}: was CONFIRMED vulnerable, now **{lr.get('result', 'fixed')}** "
-                f"on retest at {lr.get('at', '')}. Evidence that the control is operating effectively."
+                f"- **{md(f.title)}** — TSC {ctrls}: was CONFIRMED vulnerable, now "
+                f"**{md(lr.get('result', 'fixed'))}** on retest at {md(lr.get('at', ''))}. "
+                "Evidence that the control is operating effectively."
             )
     L.append("")
     L.append("---")

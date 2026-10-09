@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from ..schemas.finding import State
 from ..version import __version__
 from .report import owasp_tags
+from .status import is_fixed, norm_severity
 
 _CSS = """
 :root{
@@ -103,6 +104,7 @@ def render_html(rb) -> str:
         (f"{m['risk_score']}/100", f"Risk · {m['risk_band']}"),
         (m["confirmed"], "Confirmed findings"),
         (m["attack_chains"], "Attack chains"),
+        (m["fixed"], "Fixed (retest)"),
         (m["dropped_candidates"], "Dropped (FP gate)"),
         (f"{m['finding_validation_rate'] * 100:.0f}%", "Validation rate"),
         (f"{m['endpoints_tested']}/{m['endpoints_discovered']}", "Endpoints tested"),
@@ -152,6 +154,8 @@ def render_html(rb) -> str:
         ),
         ("Intelligence backend", scan.get("intel_provider", "deterministic")),
     ]
+    if m.get("static_unvalidated"):
+        coverage.append(("Static-analysis exposure", rb._static_risk_text(m)))
     coverage_html = "".join(
         f'<div class="row"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>' for k, v in coverage
     )
@@ -162,8 +166,9 @@ def render_html(rb) -> str:
     if chains:
         parts = []
         for c in chains:
-            color = sev_color.get(c["severity"], "#5b6570")
-            steps = "".join(f"<li>{_esc(s)}</li>" for s in c["steps"])
+            csev = norm_severity(c.get("severity"))
+            color = sev_color[csev]
+            steps = "".join(f"<li>{_esc(s)}</li>" for s in c.get("steps") or [])
             built = (
                 f'<div class="sub">Built from: {_esc(", ".join(c.get("contributing", [])))}</div>'
                 if c.get("contributing")
@@ -172,8 +177,8 @@ def render_html(rb) -> str:
             parts.append(
                 f'<div class="finding" style="border-left-color:{color}"><div class="fbody">'
                 f'<h3 style="margin-top:12px"><span class="sev" style="background:{color}">'
-                f"{_esc(c['severity'])}</span> &nbsp;{_esc(c['title'])}</h3>"
-                f'<div class="sub">{_esc(c["rationale"])}</div><ol class="checks">{steps}</ol>{built}'
+                f"{_esc(csev)}</span> &nbsp;{_esc(c.get('title', ''))}</h3>"
+                f'<div class="sub">{_esc(c.get("rationale", ""))}</div><ol class="checks">{steps}</ol>{built}'
                 f"</div></div>"
             )
         chains_html = '<div class="panel"><h2>Attack chains (kill-chain)</h2>' + "".join(parts) + "</div>"
@@ -203,22 +208,27 @@ def render_html(rb) -> str:
     if roadmap:
         rows = []
         for i, r in enumerate(roadmap, 1):
-            color = sev_color.get(r["severity"], "#5b6570")
+            rsev = norm_severity(r.get("severity"))
+            color = sev_color[rsev]
             classes = ", ".join(r.get("classes", []))
             rows.append(
-                f'<div class="row"><span><span class="sev" style="background:{color}">{_esc(r["severity"])}'
-                f'</span> &nbsp;{i}. {_esc(r["summary"])} <span class="badge">{_esc(r.get("effort", "?"))} effort</span>'
+                f'<div class="row"><span><span class="sev" style="background:{color}">{_esc(rsev)}'
+                f'</span> &nbsp;{i}. {_esc(r.get("summary", ""))}<span class="badge">{_esc(r.get("effort", "?"))} effort</span>'
                 f"</span><b>{_esc(classes)}</b></div>"
             )
         roadmap_html = (
             '<div class="panel"><h2>Remediation roadmap (prioritized)</h2>' + "".join(rows) + "</div>"
         )
 
-    findings_html = []
+    findings_html, fixed_html = [], []
     for f in rb.findings:
         dropped = f.state == State.DROPPED
-        color = sev_color.get(f.severity, "#5b6570")
-        if "agent-assessed" in f.tags:
+        fixed = is_fixed(f)
+        sev = norm_severity(f.severity)
+        color = sev_color[sev]
+        if fixed:
+            badge = '<span class="badge cf">✔ FIXED (verified by retest)</span>'
+        elif "agent-assessed" in f.tags:
             badge = '<span class="badge">🤖 agent-assessed (human review)</span>'
         elif "external-scanner" in f.tags:
             badge = f'<span class="badge">🔎 {_esc(f.verification.validator)} lead (unvalidated)</span>'
@@ -234,7 +244,7 @@ def render_html(rb) -> str:
         ]
         parts.append(
             "<summary>"
-            f'<span class="sev" style="background:{color}">{_esc(f.severity)}</span>'
+            f'<span class="sev" style="background:{color}">{_esc(sev)}</span>'
             f'<span class="ftitle">{_esc(f.title)}</span>{badge}</summary>'
         )
         parts.append('<div class="fbody">')
@@ -305,8 +315,18 @@ def render_html(rb) -> str:
                 + "<br>".join(_esc(e.type + " · " + e.storage_uri) for e in f.evidence[:12])
                 + "</div>"
             )
+        if fixed:
+            lr = f.verification.last_retest or {}
+            parts.append(
+                f"<h3>Retest</h3><div>{_esc(lr.get('result', 'fixed'))} at {_esc(lr.get('at', ''))}</div>"
+            )
         parts.append("</div></details>")
-        findings_html.append("".join(parts))
+        (fixed_html if fixed else findings_html).append("".join(parts))
+    fixed_panel = (
+        '<div class="panel"><h2>Fixed (verified by retest)</h2>' + "".join(fixed_html) + "</div>"
+        if fixed_html
+        else ""
+    )
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -335,6 +355,7 @@ discipline visible.</div>
 <div class="panel"><h2>Findings</h2>
 {"".join(findings_html) if findings_html else '<div class="sub">No findings.</div>'}
 </div>
+{fixed_panel}
 <div class="foot">Rampart augments — it does not replace — expert human pentesters. This report is
 <b>evidence of control effectiveness</b>, not a compliance attestation. Every action above passed a
 deterministic allowlist → scope → risk → policy → sandbox → audit pipeline and is recorded in an

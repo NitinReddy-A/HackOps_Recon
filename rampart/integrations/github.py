@@ -64,7 +64,37 @@ def _request(method: str, url: str, token: str, body: dict | None = None, timeou
     return json.loads(raw) if raw else {}
 
 
-def _find_sticky(api_url: str, repo: str, pr: int, token: str) -> int | None:
+_ACTIONS_BOT = "github-actions[bot]"
+
+
+def _token_login(api_url: str, token: str) -> str:
+    """The login the token acts as, or "" when ``GET /user`` is not permitted (e.g. GITHUB_TOKEN)."""
+    try:
+        me = _request("GET", f"{api_url}/user", token)
+    except (urllib.error.URLError, OSError, ValueError):
+        return ""
+    login = me.get("login") if isinstance(me, dict) else None
+    return login if isinstance(login, str) else ""
+
+
+def _is_ours(comment: dict, login: str) -> bool:
+    """Only a comment *we* authored may be edited: never trust the marker alone, since anyone can
+    paste it into their own comment to get it overwritten (or to make the post fail)."""
+    if not isinstance(comment, dict):
+        return False
+    body = comment.get("body") or ""
+    if not isinstance(body, str) or not body.startswith(MARKER):
+        return False
+    user = comment.get("user") or {}
+    if not isinstance(user, dict):
+        return False
+    if login:
+        return user.get("login") == login
+    # GITHUB_TOKEN cannot call /user; it always posts as the Actions bot.
+    return user.get("login") == _ACTIONS_BOT and user.get("type") == "Bot"
+
+
+def _find_sticky(api_url: str, repo: str, pr: int, token: str, login: str = "") -> int | None:
     page = 1
     while page <= 10:
         url = f"{api_url}/repos/{repo}/issues/{pr}/comments?per_page=100&page={page}"
@@ -72,7 +102,7 @@ def _find_sticky(api_url: str, repo: str, pr: int, token: str) -> int | None:
         if not isinstance(batch, list) or not batch:
             return None
         for c in batch:
-            if MARKER in (c.get("body") or ""):
+            if _is_ours(c, login):
                 return c.get("id")
         if len(batch) < 100:
             return None
@@ -99,12 +129,17 @@ def post_or_update_comment(
     if not pr:
         return {"posted": False, "reason": "no pull-request number (not a PR event? pass pr=)"}
     try:
-        existing = _find_sticky(api_url, repo, pr, token)
+        existing = _find_sticky(api_url, repo, pr, token, _token_login(api_url, token))
         if existing:
-            res = _request(
-                "PATCH", f"{api_url}/repos/{repo}/issues/comments/{existing}", token, {"body": body}
-            )
-            return {"posted": True, "action": "updated", "url": res.get("html_url", ""), "id": existing}
+            try:
+                res = _request(
+                    "PATCH", f"{api_url}/repos/{repo}/issues/comments/{existing}", token, {"body": body}
+                )
+                return {"posted": True, "action": "updated", "url": res.get("html_url", ""), "id": existing}
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (403, 404):
+                    raise
+                # the old comment is gone or not editable by us: fall through and post a new one
         res = _request("POST", f"{api_url}/repos/{repo}/issues/{pr}/comments", token, {"body": body})
         return {"posted": True, "action": "created", "url": res.get("html_url", ""), "id": res.get("id")}
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
