@@ -20,8 +20,8 @@ jobs:
         env:
           vulnerable: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -e .
@@ -37,7 +37,7 @@ jobs:
             --crawl --active --min-recall 0.5
       - name: Upload corpus report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: vampi-corpus
           path: .rampart-corpus/
