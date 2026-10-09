@@ -8,13 +8,14 @@ can't make Rampart do anything your scope contract doesn't allow.
 ## Register it with Claude Code
 
 ```bash
-claude mcp add rampart -- python -m rampart.mcp
+claude mcp add rampart -- rampart mcp
 ```
 
 That's it. In a Claude Code session you can now say things like *"check my scope file is valid"* or
 *"scan http://127.0.0.1:8080 and summarize the confirmed findings"* and Claude will call the tools
-below. (Rampart must be installed in the Python that `python` resolves to — `pip install -e .` in
-your clone, or `pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"`.)
+below. `rampart mcp` works with any install method, including pipx. (If you'd rather use
+`python -m rampart.mcp`, Rampart must be installed in the Python that `python` resolves to.)
+Relative `scope_file` and `work_dir` paths resolve against the directory the server was started in.
 
 For any other MCP client, run the server over stdio:
 
@@ -29,9 +30,10 @@ python -m rampart.mcp
 | `rampart_scope_check` | Validate a `rampart.scope.yaml` authorization contract **without touching any target**. Use this first. |
 | `rampart_scan` | Run an assessment against an in-scope target. Returns the findings (confirmed vs dropped). |
 | `rampart_llm_test` | Assess an authorized LLM endpoint against the OWASP LLM Top 10. |
-| `rampart_report` | Render reports (html / md / json / sarif / compliance) from a stored run. |
+| `rampart_report` | Render reports (html / md / json / sarif / compliance) from a stored run. Errors if the `work_dir` holds no run. |
 
-Each tool takes a `scope_file` and enforces it fail-closed: an out-of-scope target is refused before
+Each tool takes a `scope_file` and enforces it fail-closed: a target whose host, port, or scheme
+the contract doesn't authorize is refused (`isError`) before
 any request is made. `rampart_scan` accepts the same grey/white-box inputs as the CLI — `openapi`,
 `appmodel_seed`, `repo`, `crawl`, `application`, `work_dir`.
 

@@ -10,6 +10,8 @@ The open-source, self-hosted security agent for web apps, APIs, and LLM endpoint
 It reports only the vulnerabilities it can **prove**, with a reproducible exploit for each one.
 
 [![CI](https://github.com/NitinReddy-A/Rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/NitinReddy-A/Rampart/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/NitinReddy-A/Rampart/actions/workflows/codeql.yml/badge.svg)](https://github.com/NitinReddy-A/Rampart/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/NitinReddy-A/Rampart/badge)](https://scorecard.dev/viewer/?uri=github.com/NitinReddy-A/Rampart)
 [![Release](https://img.shields.io/github/v/release/NitinReddy-A/Rampart?color=1D4E89&label=release)](https://github.com/NitinReddy-A/Rampart/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-2ea44f)](pyproject.toml)
@@ -105,16 +107,18 @@ Pick whichever fits your workflow. All of them run the same engine.
 
 | Method | Command |
 | --- | --- |
-| **pipx** (recommended for the CLI) | `pipx install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"` |
-| **pip** (CLI + Python SDK) | `pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"` |
-| **Wheel from a release** | download it from [Releases](https://github.com/NitinReddy-A/Rampart/releases/latest), then `pip install rampart_appsec-*.whl` |
-| **Docker** | `docker pull ghcr.io/nitinreddy-a/rampart:latest` |
-| **From source** | `git clone … && pip install -e ".[dev]"` |
+| **pipx** (recommended for the CLI) | `pipx install https://github.com/NitinReddy-A/Rampart/releases/download/v1.2.0/rampart_appsec-1.2.0-py3-none-any.whl` |
+| **pip** (CLI + Python SDK) | `pip install https://github.com/NitinReddy-A/Rampart/releases/download/v1.2.0/rampart_appsec-1.2.0-py3-none-any.whl` |
+| **Docker** | `docker pull ghcr.io/nitinreddy-a/rampart:1.2.0` |
+| **From source** | `git clone https://github.com/NitinReddy-A/Rampart.git && pip install -e ".[dev]"` |
+
+The release wheel URL needs no git and works in slim CI images. Every release is listed on the
+[Releases](https://github.com/NitinReddy-A/Rampart/releases/latest) page.
 
 Requires **Python 3.10+**. Optional extras add features but never change the core:
 
 ```bash
-pip install "rampart-appsec[browser] @ git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"
+pip install "rampart-appsec[browser] @ https://github.com/NitinReddy-A/Rampart/releases/download/v1.2.0/rampart_appsec-1.2.0-py3-none-any.whl"
 python -m playwright install chromium    # DOM / stored XSS in a real headless browser
 ```
 
@@ -125,8 +129,20 @@ python -m playwright install chromium    # DOM / stored XSS in a real headless b
 | `grpc` | gRPC reflection and per-RPC checks |
 | `all` | everything above |
 
-Every release attaches the wheel, sdist, `SHA256SUMS`, and signed build-provenance attestations.
-Verify a download with `gh attestation verify <file> --repo NitinReddy-A/Rampart`.
+### Verifying a release
+
+Every release is built by this repository's [release workflow](.github/workflows/release.yml), not
+on anyone's laptop, and published as an [immutable release](https://docs.github.com/repositories/releasing-projects-on-github/about-releases)
+(its files and tag can never be changed afterwards). Each one ships the wheel, the sdist,
+`SHA256SUMS`, an SPDX SBOM, and [Sigstore](https://www.sigstore.dev/)-signed build-provenance
+attestations for both the Python packages and the Docker image:
+
+```bash
+gh release download v1.2.0 --repo NitinReddy-A/Rampart
+sha256sum -c SHA256SUMS
+gh attestation verify rampart_appsec-1.2.0-py3-none-any.whl --repo NitinReddy-A/Rampart
+gh attestation verify oci://ghcr.io/nitinreddy-a/rampart:1.2.0 --repo NitinReddy-A/Rampart
+```
 
 ## Scan your own app
 
@@ -140,9 +156,12 @@ curl -fsSLo rampart.scope.yaml \
 ```
 
 ```yaml
+apiVersion: security-agent/v1
+kind: EngagementScope
 authorization:
   owner: "team-payments@acme.example"       # who is accountable
   authorized_by: "ciso@acme.example"         # who granted permission
+  attestation: "Acme owns staging.acme.internal and authorizes this test."
   expires: "2026-12-31T23:59:59Z"            # the contract expires, and Rampart stops
 scope:
   in_scope:
@@ -215,15 +234,28 @@ rampart pipeline --target … --repo .         # everything, correlated across r
 rampart recon    --target …                  # map the attack surface only
 rampart dast     --target …                  # black-box web/API checks
 rampart api      --target … --openapi …      # API-focused, grey-box
-rampart sast     --target … --repo .         # source, secrets, IaC
-rampart sca      --target … --repo . --sca-online   # dependencies vs OSV.dev, EPSS, CISA KEV
+rampart sast     --repo .                    # source + secrets (offline; never contacts a target)
+rampart sca      --repo . --sca-online       # dependencies vs OSV.dev, EPSS, CISA KEV
+rampart iac      --repo .                    # Terraform, CloudFormation, Kubernetes, Dockerfile
 rampart llm-test --target … --chat-path /chat       # OWASP LLM Top 10
 rampart retest   --work-dir .rampart         # replay confirmed findings against a patched build
 rampart features                             # list every capability and how to run it
 ```
 
-Gate a build with `--ci --fail-on high`. The exit code is nonzero when a confirmed finding at or
-above that severity exists.
+`sast`, `sca`, and `iac` still require a valid scope contract, but never send a request.
+
+**In CI**, gate the build with `--ci --fail-on high` (confirmed runtime findings) and, optionally,
+`--fail-on-static high` (source, dependency, and IaC findings, which are evidence-backed but not
+exploit-proven). Exit codes are stable:
+
+| Exit | Meaning |
+| :---: | --- |
+| `0` | completed; nothing at or above the gate |
+| `1` | completed; a finding breached the gate (or `retest` found something still vulnerable) |
+| `2` | refused or incomplete: invalid/expired scope, target out of scope, target unreachable, every request blocked, or invalid input |
+
+A scan that couldn't actually test anything always exits `2`, so it can never pass a gate by
+accident.
 
 ### Python SDK
 
@@ -264,18 +296,18 @@ jobs:
   rampart:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # …deploy or start the app you're testing…
 
       - uses: NitinReddy-A/Rampart@v1
         with:
           target: https://staging.acme.internal
           scope-file: rampart.scope.yaml
+          openapi: openapi.json      # optional; without it the site is crawled
           fail-on: high              # fail the check on a confirmed high or critical
-          report: html,sarif
           comment-pr: true           # sticky findings summary on the PR
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: rampart-report
@@ -286,13 +318,21 @@ jobs:
 | --- | --- | --- |
 | `target` | (required) | Authorized base URL to test |
 | `scope-file` | `rampart.scope.yaml` | The authorization contract |
+| `openapi` | | OpenAPI spec for grey-box testing |
+| `crawl` | `true` | Discover endpoints by crawling |
+| `secrets` | | `secrets.json` for the scope's test accounts |
 | `fail-on` | `high` | `low` · `medium` · `high` · `critical` |
-| `report` | `sarif` | Any of `html,md,json,sarif,compliance` |
+| `report` | `sarif,html` | Any of `html,md,json,sarif,compliance,soc2` (`json` is always added) |
 | `scanners` | | Optional external tools: `nuclei,semgrep,…` or `all` |
+| `args` | | Extra `rampart test` flags, e.g. `--authz --api-scan` |
 | `comment-pr` | `false` | Post or update one summary comment on the PR |
 | `work-dir` | `.rampart` | Where the audit log, evidence, and reports go |
 
-`@v1` tracks the latest 1.x release. Pin to an exact tag such as `@v1.1.0` for fully reproducible builds.
+`@v1` tracks the latest 1.x release. Pin to an exact tag such as `@v1.2.0`, or a full commit SHA, for fully reproducible builds.
+Inputs reach the shell only through environment variables, so a value can't inject commands.
+
+The job fails (exit 2) if the target is unreachable or every request was blocked by your scope,
+so a broken deploy can never pass the security check by accident.
 
 ### GitLab CI
 
@@ -300,9 +340,9 @@ jobs:
 rampart:
   image: python:3.12-slim
   script:
-    - pip install "git+https://github.com/NitinReddy-A/Rampart.git@v1.1.0"
+    - pip install https://github.com/NitinReddy-A/Rampart/releases/download/v1.2.0/rampart_appsec-1.2.0-py3-none-any.whl
     - rampart test --scope-file rampart.scope.yaml --target "$STAGING_URL"
-        --report sarif,html,json --ci --fail-on high
+        --crawl --report sarif,html,json --ci --fail-on high
   artifacts:
     when: always
     paths: [.rampart/reports/]
@@ -321,7 +361,7 @@ docker run --rm \
 ```
 
 The image is multi-arch (`amd64`, `arm64`), runs as a non-root user, and is tagged `latest`,
-`1.1`, and `1.1.0`. To scan something on your host, add `--network host` on Linux or target
+`1.2`, and `1.2.0`. To scan something on your host, add `--network host` on Linux or target
 `host.docker.internal` on macOS and Windows. See [`docker-compose.yml`](docker-compose.yml) for a
 ready-made setup.
 
@@ -331,7 +371,7 @@ Rampart ships an [MCP](https://modelcontextprotocol.io) server, so an AI agent c
 run scans, and read reports, always inside your scope contract.
 
 ```bash
-claude mcp add rampart -- python -m rampart.mcp
+claude mcp add rampart -- rampart mcp
 ```
 
 For Cursor, Claude Desktop, or any other MCP client, add this to its MCP config:
@@ -339,7 +379,7 @@ For Cursor, Claude Desktop, or any other MCP client, add this to its MCP config:
 ```json
 {
   "mcpServers": {
-    "rampart": { "command": "python", "args": ["-m", "rampart.mcp"] }
+    "rampart": { "command": "rampart", "args": ["mcp"] }
   }
 }
 ```
@@ -461,13 +501,20 @@ negative.
 A separate weekly job scores Rampart against the external
 [OWASP VAmPI](https://github.com/erev0s/VAmPI) corpus ([`corpus.yml`](.github/workflows/corpus.yml)).
 
+> [!NOTE]
+> The benchmark target ships with Rampart, so a perfect score there is a regression guarantee, not
+> a claim about every application. Known gaps on other targets are listed under
+> [Limitations](#limitations), and we track them openly.
+
 ## Safety model
 
 - **Authorization gate.** No valid, unexpired, in-scope `rampart.scope.yaml` with an accountable owner means no run.
-- **One choke-point** for every outbound request, checked against the *resolved* IP to stop DNS rebinding.
+- **One choke-point** for every outbound request (crawler, oracles, test-account logins, the headless browser, and infrastructure probes alike), checked against the scope's host, port, and canonicalised path, and the *resolved* IP to stop DNS rebinding.
+- **Fail-closed scope parsing.** The built-in YAML parser rejects anything it doesn't fully understand instead of guessing, so a typo can't silently widen your scope.
+- **LLM containment is tested.** A regression test drives the agent layer with a model that tries to reach other hosts, ports, excluded paths, cloud metadata, and `file://` URLs, and asserts that nothing out of scope is ever contacted.
 - **Non-destructive by default.** Write probes need `--active`; state changes beyond that need human approval; destructive actions and denial of service are always denied.
 - **Independent validation** before anything is marked confirmed.
-- **Tamper-evident audit log.** Append-only and hash-chained; `rampart verify-audit` detects edits.
+- **Tamper-evident audit log.** Append-only, hash-chained, and anchored; `rampart verify-audit` detects edits, deletions, reordering, and truncation.
 - **Target output is data, never instructions.** Prevents indirect prompt injection.
 - **Budgets and a kill switch** cap request rate, total requests, and LLM spend.
 - **Advisory fixes only.** Patch suggestions are written as files; Rampart never applies or merges them.
@@ -540,6 +587,16 @@ for a human pentest.
 - No mobile app testing, and gRPC coverage stops at reachable unauthenticated checks (no deep fuzzing).
 - No hosted service. You run it yourself.
 - Compliance output is evidence of control effectiveness, not an attestation.
+
+**Known issues in v1.2.0** (found by our own end-to-end review and being worked on):
+
+- The OS command injection oracle can confirm an endpoint that merely echoes its input back. Treat
+  a `CMDI` finding on an endpoint that reflects parameters with extra care until this is fixed.
+- The sensitive-file check (`/.env`, `/backup.sql`, …) can be fooled by "soft 404" pages that
+  return 200 for every path.
+- The path traversal, SSRF, and BFLA oracles currently recognise response signatures that the
+  bundled demo produces, so they can miss these flaws on other applications (false negatives,
+  not false positives).
 
 ## Documentation
 

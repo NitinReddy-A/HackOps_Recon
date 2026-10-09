@@ -9,7 +9,11 @@ Rampart is a security tool, so we take vulnerabilities in Rampart itself serious
 
 Please **do not open a public issue** for a security vulnerability.
 
-Email **nitin.code2@gmail.com** with:
+The preferred channel is GitHub's private vulnerability reporting:
+**[Report a vulnerability](https://github.com/NitinReddy-A/Rampart/security/advisories/new)**
+(Security tab → *Report a vulnerability*). It keeps the report private until a fix ships.
+
+You can also email **nitin.code2@gmail.com** with:
 
 - a description of the issue and why it matters,
 - the version or commit you found it on,
@@ -37,8 +41,14 @@ rather stay anonymous.
 
 ## Supported versions
 
-Rampart is pre-1.x in spirit even at 1.0 — security fixes land on `main` and in the next
-release. We don't backport to older tags; please track the latest release.
+Security fixes land on `main` and in the next release. We don't backport to older tags;
+please track the latest release.
+
+## Verifying what you run
+
+Releases are built only by the repository's release workflow and published as immutable
+GitHub releases with Sigstore-signed build-provenance attestations and an SPDX SBOM. See
+"Verifying a release" in the README for the exact `gh attestation verify` commands.
 
 | Version | Supported |
 | ------- | --------- |

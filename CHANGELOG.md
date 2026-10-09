@@ -6,6 +6,89 @@ All notable changes to Rampart are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-09
+
+This release comes out of a full end-to-end review: seven parallel reviewers tested every
+surface against live targets and reproduced each issue before it was fixed. Every fix has a
+regression test (the suite grew from 197 to 661 tests).
+
+### Security
+- **Scope enforcement now covers every path out.** The target's port and scheme are checked at
+  startup (previously only the host was). Test-account logins, the headless browser, the
+  infrastructure scan, and gRPC now go through the same scope checks and audit log as every other
+  request, instead of touching ports and origins the contract didn't authorize.
+- `--infra` only probes ports the scope authorizes for the host (it used to connect to ~22
+  well-known ports regardless of scope).
+- The headless browser blocks sub-resources, redirects, and navigations outside the authorized
+  origin and excluded paths, and every browser request is audited.
+- `paths_exclude` can no longer be bypassed with encoded or non-canonical paths (`%61dmin`, `//`,
+  `/./`, `..`, `;params`, case changes, trailing slashes).
+- The built-in YAML parser fails closed on anything it doesn't fully understand (tabs, anchors,
+  block scalars, trailing junk). Previously several of these silently dropped scope exclusions.
+  Scope fields are strictly typed.
+- `tier2_requires_approval` is always honoured, even when `default_tier_ceiling` is 2.
+- The destructive-action classifier now inspects query keys, headers, and decoded bodies, and
+  normalises SQL comments, so `DROP/**/TABLE`-style evasions are caught.
+- Budgets are enforced: `budget_usd` and `max_tokens` cap LLM spend, a `KILL` file in the work
+  dir (or Ctrl-C) stops a run, and a low rate limit now throttles instead of silently skipping.
+- Audit logs are anchored, so truncation and deleted events are detected; corrupt logs no longer
+  crash `verify-audit`.
+- The local dashboard rejects cross-site requests (CSRF token) and foreign `Host` headers
+  (DNS rebinding), and sends strict security headers.
+- Reports (Markdown, compliance, SOC 2), PR comments, and console output escape
+  target-controlled text, so a hostile target can't inject HTML, mentions, or terminal escapes.
+- The PR-comment poster only edits its own comment.
+- The GitHub Action and workflows pass inputs through environment variables (no shell
+  injection), and every action is pinned to a commit SHA.
+- Hard IP blocking covers IPv4-mapped/NAT64 forms of cloud metadata addresses and more providers.
+
+### Fixed
+- **Results you can trust:** a target that is down, or a scan where every request was blocked,
+  now ends `incomplete` with exit code 2, even with `--ci`. It used to pass the gate.
+- Boolean SQL injection no longer confirms on responses that merely change over time.
+- HTTPS targets with a hostname work (TLS used the IP for SNI and certificate checks).
+- Requests have a wall-clock deadline and a response size cap; stored evidence is capped.
+- DOM-based XSS through `innerHTML` is detected, and reflected XSS is no longer double-counted.
+- GraphQL batching, gRPC read-method detection, and authz template paths no longer produce
+  false findings.
+- SAST: precise sink matching (82 → 18 findings on Rampart's own code, all explained), import
+  aliases, UTF-8 BOM / latin-1 files, and no crash on deeply nested expressions.
+- Secrets: catches `SECRET_KEY`, `DB_PASSWORD`, `client_secret`, unquoted `.env` values; skips
+  binaries.
+- SCA: never recommends a downgrade; KEV/EPSS look at every advisory; PyPI names are normalised;
+  route handlers count as reachable; more manifest formats; OSV batch queries (no 400-package cap).
+- IaC: fewer false positives (egress rules, comments, non-CloudFormation YAML) and new checks
+  (multi-line CIDRs, CronJobs, final-stage `USER root`, untagged base images).
+- `llm-test`: an endpoint that echoes its input, returns errors, or can't be parsed is no longer
+  reported as a pass or a vulnerability; outcomes are `confirmed`, `not-vulnerable`, `blocked`,
+  `error`, `inconclusive`, or `skipped`. OWASP 2025 labels corrected (system-prompt leak is LLM07).
+- MCP server: JSON-RPC notifications never trigger tools, `ping` is supported, arguments are
+  validated against each tool's schema, UTF-8 and LF framing on Windows.
+- `retest` replays every class with an oracle (not just IDOR), never marks a finding fixed when
+  the target is unhealthy, and no longer needs `--target`.
+- Findings marked Fixed by retest no longer count as confirmed anywhere.
+- `--config` precedence (CLI flags now win), unknown report formats, severities, and malformed
+  inputs give clear errors instead of tracebacks.
+- SARIF: repo-relative file locations (`%SRCROOT%`), valid regions, and rule descriptions.
+- The weekly VAmPI corpus workflow, the GitLab template, and docker-compose (dashboard on
+  loopback only) work as documented.
+
+### Changed
+- `rampart pipeline` and the SDK's full mode **no longer enable write probes** by default; pass
+  `--active` explicitly.
+- `rampart test --repo X` runs SAST, secrets, and SCA (and IaC with `--iac`), as documented.
+- `sast`, `sca`, and `iac` never contact a target and no longer require `--target`.
+- New flags: `--fail-on-static`, `--oob-collaborator-url`; `llm-test` gains `--ci`/`--fail-on`.
+- A scope without `test_accounts` no longer needs a `secrets.json`.
+- Release artifacts include an SPDX SBOM and signed attestations; releases are immutable.
+- Added CodeQL and OpenSSF Scorecard; CODEOWNERS and branch protection on `main`.
+
+### Known issues
+- The OS command injection oracle can confirm an endpoint that echoes its input back.
+- The sensitive-file check can be fooled by "soft 404" pages that return 200 for every path.
+- The path traversal, SSRF, and BFLA oracles recognise response signatures produced by the
+  bundled demo, so they can miss these flaws on other applications.
+
 ## [1.1.0] — 2026-10-09
 
 ### Added
@@ -104,5 +187,6 @@ All notable changes to Rampart are documented here. The format follows
 - First release: the BOLA/IDOR vertical slice carried end-to-end — scope gate → app model →
   hypothesis → controlled probe → independent validation → finding → advisory patch → retest.
 
-[Unreleased]: https://github.com/NitinReddy-A/rampart/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/NitinReddy-A/rampart/releases/tag/v1.0.0
+[Unreleased]: https://github.com/NitinReddy-A/Rampart/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/NitinReddy-A/Rampart/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/NitinReddy-A/Rampart/releases/tag/v1.1.0
