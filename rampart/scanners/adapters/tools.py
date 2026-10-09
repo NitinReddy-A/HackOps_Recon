@@ -226,12 +226,14 @@ class SemgrepAdapter(_SarifRepoAdapter):
 
     def uses_network(self) -> bool:
         # A local file/dir config is offline; a registry pack (p/…, r/…, auto) fetches rules.
+        # Decide on what the value *is*, not on path separators: "p/ci" contains "/" on every OS.
         cfg = self._config() or ""
         import os
+        import re
 
-        if cfg and (os.path.sep in cfg or os.path.exists(cfg)):
+        if not cfg or os.path.exists(cfg):
             return False
-        return bool(cfg)
+        return bool(re.match(r"(?i)^(?:[prs]/|auto$|https?://)", cfg))
 
     def _cmd(self, repo):
         config = self._config()

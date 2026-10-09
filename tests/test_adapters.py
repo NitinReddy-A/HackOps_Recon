@@ -175,8 +175,13 @@ def test_semgrep_runs_with_local_config(monkeypatch, tmp_path):
 def test_semgrep_registry_config_is_flagged_network(monkeypatch):
     from rampart.scanners.adapters.tools import SemgrepAdapter
 
-    monkeypatch.setenv("RAMPART_SEMGREP_CONFIG", "p/ci")
-    assert SemgrepAdapter(repo="x").uses_network() is True
+    # Registry references are network-using on every OS ("p/ci" contains a path separator on POSIX).
+    for cfg in ("p/ci", "r/python.lang.security", "auto", "https://example.invalid/rules.yml"):
+        monkeypatch.setenv("RAMPART_SEMGREP_CONFIG", cfg)
+        assert SemgrepAdapter(repo="x").uses_network() is True, cfg
+    # A local-looking path that doesn't exist yet is still a local config, not a registry pack.
+    monkeypatch.setenv("RAMPART_SEMGREP_CONFIG", "rules/semgrep.yml")
+    assert SemgrepAdapter(repo="x").uses_network() is False
 
 
 # --------------------------------------------------------------------- C-17 gitleaks tempfile
