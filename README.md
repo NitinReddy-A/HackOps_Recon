@@ -212,14 +212,37 @@ HIPAA, GDPR, OWASP ASVS, and CIS Controls v8**. It's *evidence* for your auditor
 certification — only a licensed firm issues those. Hand them this plus the hash-chained audit log
 and the evidence bundle.
 
-There's also a local dashboard and an MCP server:
+There's also a local dashboard:
 
 ```bash
 rampart serve --work-dir .rampart     # zero-dependency web dashboard on :8787
-rampart mcp                           # MCP server — scope-guarded tools for Claude Code and agents
 ```
 
-Register the MCP server with Claude Code: `claude mcp add rampart -- python -m rampart.mcp`.
+## Ways to run it
+
+The CLI is one surface. There are three more, and they all route through the same engine — so a
+scan from your code, your CI, or Claude produces identical findings and the same safety guarantees.
+
+**As a Python library** ([docs/SDK.md](docs/SDK.md)) — a security gate is one assertion:
+
+```python
+from rampart import Rampart
+
+result = Rampart(scope="rampart.scope.yaml", target="https://staging.internal").scan()
+assert not result.failed(on="high"), result.summary()
+```
+
+**In CI** — the [GitHub Action](action.yml) runs on a PR, gates the build on severity, uploads SARIF,
+and (with `comment-pr: true`) posts a sticky findings summary on the pull request. There's a GitLab
+template too, and `--since <ref>` scopes SAST to the files a PR changed. You can also post the
+comment yourself from any report: `rampart pr-comment --fail-on high`.
+
+**With Claude Code** ([docs/MCP.md](docs/MCP.md)) — register the MCP server and Claude can run
+scoped scans directly:
+
+```bash
+claude mcp add rampart -- python -m rampart.mcp
+```
 
 ## The benchmark
 

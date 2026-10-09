@@ -781,13 +781,14 @@ class Engagement:
         return results
 
     # ------------------------------------------------------------- report
-    def report(self, formats):
+    def report_builder(self) -> ReportBuilder:
+        """Build a ReportBuilder from the persisted run — the single source every surface (CLI,
+        SDK, MCP, PR comment) renders from, so they all produce identical output."""
         findings = self.store.load_findings()
         scan = self.store.load_scan()
         appmodel = self.store.load_appmodel() or self.appmodel
-        ok, _msg = self.audit.verify_chain()
         audit_count = len(self.audit.read_all())
-        rb = ReportBuilder(
+        return ReportBuilder(
             findings,
             self.scope,
             appmodel,
@@ -795,6 +796,10 @@ class Engagement:
             scan.get("budget", self.budget.snapshot()),
             audit_events=audit_count,
         )
+
+    def report(self, formats):
+        ok, _msg = self.audit.verify_chain()
+        rb = self.report_builder()
         written = {}
         renderers = {
             "json": ("report.json", rb.to_json),

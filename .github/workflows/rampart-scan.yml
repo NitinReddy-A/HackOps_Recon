@@ -109,3 +109,12 @@ jobs:
       #   with:
       #     sarif_file: .rampart/reports/report.sarif
       #     category: rampart
+      #
+      # To post findings as a sticky PR comment, run this on `pull_request` events and
+      # grant `permissions: pull-requests: write` on the job (needs `--report ...,json`):
+      #
+      # - name: Comment on PR
+      #   if: always() && github.event_name == 'pull_request'
+      #   env:
+      #     GITHUB_TOKEN: ${{ github.token }}
+      #   run: python -m rampart pr-comment --fail-on high

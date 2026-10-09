@@ -95,10 +95,12 @@ only at an already in-scope host.)
 
 | Package | What it does |
 | --- | --- |
+| `rampart/engagement.py` | The façade that wires everything together for one run. **Every surface below routes through this**, so they all produce identical results. |
 | `rampart/cli.py` | The `rampart` command and all its modes. |
+| `rampart/sdk.py` | The public Python API — `Rampart(...).scan()` and `ScanResult` ([docs/SDK.md](SDK.md)). |
+| `rampart/mcp/` | An MCP server exposing scope-guarded tools to Claude Code and other agents ([docs/MCP.md](MCP.md)). |
 | `rampart/server/` | A zero-dependency local web dashboard (`rampart serve`). |
-| `rampart/mcp/` | An MCP server exposing scope-guarded tools to Claude Code and other agents. |
-| `rampart/engagement.py` | The façade that wires all of the above together for one run. |
+| `rampart/integrations/` | Outbound integrations — e.g. posting a findings summary as a GitHub PR comment. |
 
 ## Confidence tiers
 

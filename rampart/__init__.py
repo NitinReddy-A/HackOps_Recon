@@ -19,4 +19,18 @@ it does not replace — expert human pentesters.
 
 from .version import __version__
 
-__all__ = ["__version__"]
+__all__ = ["__version__", "Rampart", "ScanResult", "EngagementConfig"]
+
+
+def __getattr__(name):
+    # Lazy public API (PEP 562): `from rampart import Rampart` works without making a bare
+    # `import rampart` (e.g. `rampart --version`) pull in the whole engine.
+    if name in ("Rampart", "ScanResult"):
+        from . import sdk
+
+        return getattr(sdk, name)
+    if name == "EngagementConfig":
+        from .engagement import EngagementConfig
+
+        return EngagementConfig
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

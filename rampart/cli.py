@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -596,6 +597,56 @@ def cmd_verify_audit(args):
     return 0 if ok else 1
 
 
+def cmd_pr_comment(args):
+    """Render a run's findings as a GitHub PR comment, and post it (or print it with --dry-run)."""
+    report_path = args.report or os.path.join(args.work_dir, "reports", "report.json")
+    if not os.path.exists(report_path):
+        print(red(f"no report at {report_path} — run a scan with `--report json` first"))
+        return 2
+    with open(report_path, encoding="utf-8") as fh:
+        report = json.load(fh)
+    from .reporting.pr_comment import render_from_report
+
+    fail_on = getattr(args, "fail_on", "") or None
+    body = render_from_report(
+        report,
+        fail_on=fail_on,
+        report_url=getattr(args, "report_url", "") or "",
+        application=getattr(args, "application", "") or "",
+    )
+
+    gate_breached = False
+    if fail_on:
+        order = ["info", "low", "medium", "high", "critical"]
+        thr = order.index(fail_on) if fail_on in order else order.index("high")
+        gate_breached = any(
+            f.get("verification", {}).get("validated")
+            and f.get("state") != "Dropped"
+            and order.index(f.get("severity", "info")) >= thr
+            for f in report.get("findings", [])
+        )
+
+    if getattr(args, "dry_run", False):
+        print(body)
+        return 1 if gate_breached else 0
+
+    from .integrations.github import post_or_update_comment
+
+    res = post_or_update_comment(
+        body,
+        repo=getattr(args, "repo", "") or None,
+        pr=(getattr(args, "pr", 0) or None),
+        token=getattr(args, "token", "") or None,
+    )
+    if res.get("posted"):
+        print(green(f"✓ PR comment {res.get('action')}: {res.get('url', '')}"))
+    else:
+        print(red(f"✗ not posted: {res.get('reason')}"))
+        print(dim("  (showing the comment below; re-run with --dry-run to only print it)"))
+        print(body)
+    return 1 if gate_breached else 0
+
+
 # -------------------------------------------------------------------------- parser
 def build_parser():
     p = argparse.ArgumentParser(
@@ -882,6 +933,19 @@ def build_parser():
     sp = sub.add_parser("verify-audit", help="verify the append-only audit hash chain")
     sp.add_argument("--work-dir", default=".rampart")
 
+    sp = sub.add_parser("pr-comment", help="post a run's findings as a GitHub pull-request comment")
+    sp.add_argument("--work-dir", default=".rampart")
+    sp.add_argument(
+        "--report", default="", help="path to report.json (default: <work-dir>/reports/report.json)"
+    )
+    sp.add_argument("--repo", default="", help="owner/name (default: $GITHUB_REPOSITORY)")
+    sp.add_argument("--pr", type=int, default=0, help="PR number (default: inferred from the GitHub event)")
+    sp.add_argument("--token", default="", help="GitHub token (default: $GITHUB_TOKEN)")
+    sp.add_argument("--fail-on", default="", help="exit nonzero if a confirmed finding is >= this severity")
+    sp.add_argument("--report-url", default="", help="link to the full report, shown in the comment")
+    sp.add_argument("--application", default="", help="application name shown in the comment header")
+    sp.add_argument("--dry-run", action="store_true", help="print the comment instead of posting it")
+
     sub.add_parser("tools", help="show which external OSS scanners are installed (doctor)")
 
     sub.add_parser("mcp", help="run the MCP stdio server (scope-guarded tools for Claude Code / agents)")
@@ -928,6 +992,8 @@ def main(argv=None):
         return cmd_report(args)
     if args.cmd == "verify-audit":
         return cmd_verify_audit(args)
+    if args.cmd == "pr-comment":
+        return cmd_pr_comment(args)
     if args.cmd == "tools":
         return cmd_tools(args)
     if args.cmd == "mcp":

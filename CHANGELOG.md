@@ -6,6 +6,14 @@ All notable changes to Rampart are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Python SDK** (`from rampart import Rampart`): `Rampart(...).scan()` returns a `ScanResult` with
+  `.confirmed`, `.failed(on=...)`, `by_severity()`, and in-memory report renderers. A thin wrapper
+  over the `Engagement` facade, so it produces identical results to the CLI. See `docs/SDK.md`.
+- **PR-comment reporter** (`rampart pr-comment`) and a GitHub poster that keeps one sticky comment
+  per pull request. Wired into the composite Action via a `comment-pr` input.
+- `docs/SDK.md` and `docs/MCP.md`.
+
 ### Changed
 - Renamed the authorization/scope contract from `SECURITY.md` to `rampart.scope.yaml`, freeing
   `SECURITY.md` for the standard GitHub vulnerability-disclosure policy.

@@ -44,6 +44,10 @@ inputs:
     description: "Run directory for the audit log, evidence, and reports."
     required: false
     default: ".rampart"
+  comment-pr:
+    description: "On a pull_request event, post a sticky findings summary as a PR comment. Requires the workflow to grant `pull-requests: write`."
+    required: false
+    default: "false"
 
 outputs:
   sarif-path:
@@ -75,7 +79,7 @@ runs:
           --scope-file "${{ inputs.scope-file }}" \
           --target "${{ inputs.target }}" \
           --work-dir "${{ inputs.work-dir }}" \
-          --report "${{ inputs.report }}" \
+          --report "${{ inputs.report }},json" \
           ${{ inputs.scanners != '' && format('--scanners {0}', inputs.scanners) || '' }} \
           --ci \
           --fail-on "${{ inputs.fail-on }}"
@@ -87,3 +91,13 @@ runs:
       if: always()
       shell: bash
       run: echo "sarif-path=${{ inputs.work-dir }}/reports/report.sarif" >> "$GITHUB_OUTPUT"
+
+    - name: Comment on the pull request
+      if: always() && inputs.comment-pr == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        python -m rampart pr-comment \
+          --work-dir "${{ inputs.work-dir }}" \
+          --fail-on "${{ inputs.fail-on }}" || true
