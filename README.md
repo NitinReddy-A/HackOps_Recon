@@ -380,7 +380,7 @@ Run `rampart tools` to see which external scanners are installed.
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
     S[rampart.scope.yaml] --> G{Authorization gate}
     G -- invalid or expired --> X[Refuse to run]
     G -- valid --> M[Build app model<br/>endpoints · roles · accounts]
