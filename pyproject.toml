@@ -49,7 +49,7 @@ grpc = ["grpcio>=1.60", "grpcio-reflection>=1.60"]
 # Full SCA matches dependencies against OSV.dev over the network using only stdlib urllib —
 # no extra install required; enable it with `--sca-online`.
 # Test/dev tooling (lint + format via ruff, tests via pytest).
-dev = ["pytest>=7.0", "ruff>=0.6", "pre-commit>=3.5"]
+dev = ["pytest>=7.0", "ruff==0.16.10", "pre-commit>=3.5"]
 # Everything, for a one-shot contributor install: `pip install -e ".[all]"`.
 all = ["PyYAML>=6.0", "playwright>=1.40", "grpcio>=1.60", "grpcio-reflection>=1.60"]
 

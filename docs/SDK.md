@@ -11,11 +11,11 @@ terminal.
 from rampart import Rampart
 
 r = Rampart(
-    scope="rampart.scope.yaml",            # the authorization contract (required)
-    target="http://127.0.0.1:8080",        # an in-scope target (required)
-    openapi="openapi.json",                # optional: grey-box
-    seed="appmodel_seed.json",             # optional: seeded accounts / ownership
-    repo=".",                              # optional: turns on source scanning + correlation
+    scope="rampart.scope.yaml",  # the authorization contract (required)
+    target="http://127.0.0.1:8080",  # an in-scope target (required)
+    openapi="openapi.json",  # optional: grey-box
+    seed="appmodel_seed.json",  # optional: seeded accounts / ownership
+    repo=".",  # optional: turns on source scanning + correlation
 )
 
 result = r.scan()
@@ -48,8 +48,8 @@ surface. The engagement is built lazily on the first `.scan()`.
 Render reports in memory, or write them to the engagement's work dir:
 
 ```python
-sarif = result.to_sarif()          # also: to_json, to_markdown, to_html, to_compliance, to_soc2
-result.save(["html", "json", "sarif"])   # -> {"html": ".rampart/reports/report.html", ...}
+sarif = result.to_sarif()  # also: to_json, to_markdown, to_html, to_compliance, to_soc2
+result.save(["html", "json", "sarif"])  # -> {"html": ".rampart/reports/report.html", ...}
 ```
 
 ## As a test / CI gate
@@ -80,8 +80,9 @@ which sends dependency names to OSV.dev — pass `sca_online=True` yourself if y
 
 ```python
 r = Rampart(scope="rampart.scope.yaml", target="http://127.0.0.1:9090", application="my-llm")
-result = r.llm_test(chat_path="/chat", input_field="message", output_field="reply",
-                    canary="a-secret-in-your-system-prompt")
+result = r.llm_test(
+    chat_path="/chat", input_field="message", output_field="reply", canary="a-secret-in-your-system-prompt"
+)
 ```
 
 ## Escape hatch
