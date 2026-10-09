@@ -140,8 +140,10 @@ class Supervisor:
 
         # Phase: hypotheses — access-control (LLM/deterministic) + input-fuzzing (deterministic enum)
         appmodel_d = self.appmodel.to_dict()
-        hyps = list(self.intel.propose_hypotheses(appmodel_d))
-        hyps += list(self.intel.propose_web_hypotheses(appmodel_d))
+        hyps = list(self.intel.propose_hypotheses(appmodel_d) or [])
+        hyps += list(self.intel.propose_web_hypotheses(appmodel_d) or [])
+        # Provider output is untrusted: keep only well-formed hypotheses with a string class.
+        hyps = [h for h in hyps if isinstance(h, dict) and isinstance(h.get("vuln_class"), str)]
         if not self.active:
             hyps = [h for h in hyps if h.get("vuln_class") not in self.ACTIVE_CLASSES]
         for h in hyps:
@@ -159,6 +161,9 @@ class Supervisor:
 
         # Phase: plan — the planner agent prioritises classes (reasoning backend; deterministic fallback)
         plan = run_planner(self.intel, appmodel_d, result.scanner_runs, classes)
+        if not isinstance(plan, dict):
+            plan = {"order": classes, "notes": "", "steps": []}
+        plan["order"] = [c for c in (plan.get("order") or classes) if isinstance(c, str)] or classes
         result.plan = plan
         order = {c: i for i, c in enumerate(plan.get("order", classes))}
         hyps.sort(key=lambda h: order.get(h["vuln_class"], 99))

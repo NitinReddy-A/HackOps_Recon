@@ -23,15 +23,32 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
-from .llm_base import LLMProvider
+from .llm_base import LLMProvider, content_text
 
 _SYSTEM = (
     "You are a careful application-security analyst assisting an AUTHORIZED, "
     "non-destructive assessment. Reply with exactly one JSON object and nothing else."
 )
+
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024  # never buffer an unbounded provider response
+_VERSION_SEGMENT = re.compile(r"/v\d+[a-z0-9]*(/|$)", re.IGNORECASE)
+
+
+def _as_int(v) -> int:
+    if isinstance(v, bool):
+        return 0
+    if isinstance(v, (int, float)):
+        return max(0, int(v))
+    if isinstance(v, str):
+        try:
+            return max(0, int(float(v)))
+        except ValueError:
+            return 0
+    return 0
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -48,32 +65,70 @@ class OpenAICompatProvider(LLMProvider):
             if not api_key:
                 key_env = os.environ.get("RAMPART_LLM_API_KEY_ENV", "OPENAI_API_KEY")
                 api_key = os.environ.get(key_env, "")
-        self.api_key = api_key or ""
+        self.api_key = (api_key or "").strip()
         self.timeout = timeout
+        if not self.api_key:
+            # Local gateways (Ollama, LiteLLM) often need no key; never send an empty "Bearer ".
+            self.note("no API key configured — sending requests without an Authorization header")
 
     def _complete(self, prompt: str) -> str | None:
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "temperature": 0,
-                "messages": [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": prompt}],
-            }
-        ).encode()
-        req = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=payload,
-            method="POST",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
-        )
+        try:
+            payload = json.dumps(
+                {
+                    "model": self.model,
+                    "temperature": 0,
+                    "messages": [
+                        {"role": "system", "content": _SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                }
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            self.degrade(f"could not encode request: {exc}")
+            return None
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        req = urllib.request.Request(url, data=payload, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8", errors="replace"))
-        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+                raw = resp.read(MAX_RESPONSE_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            hint = ""
+            if exc.code == 404 and not _VERSION_SEGMENT.search(self.base_url.split("://", 1)[-1]):
+                hint = " — does the base URL need /v1?"
+            elif exc.code in (401, 403):
+                hint = " — check the API key" + ("" if self.api_key else " (none configured)")
+            self.degrade(f"HTTP {exc.code} from {url}{hint}")
+            return None
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            self.degrade(f"request to {url} failed: {exc}")
+            return None
+        if len(raw) > MAX_RESPONSE_BYTES:
+            self.degrade(f"response from {url} exceeded {MAX_RESPONSE_BYTES} bytes — ignored")
+            return None
+        try:
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, ValueError):
+            self.degrade(f"non-JSON response from {url}")
+            return None
+        if not isinstance(data, dict):
+            self.degrade(f"unexpected response shape from {url} (not a JSON object)")
             return None
         if self.budget is not None:
-            usage = data.get("usage") or {}
-            self.budget.record_tokens(int(usage.get("total_tokens", 0)))
+            usage = data.get("usage")
+            tokens = _as_int(usage.get("total_tokens")) if isinstance(usage, dict) else 0
+            try:
+                self.budget.record_tokens(tokens)
+            except Exception:  # noqa: BLE001 - accounting must never crash the provider
+                pass
         try:
-            return data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message.get("content") if isinstance(message, dict) else None
         except (KeyError, IndexError, TypeError):
-            return None
+            content = None
+        text = content_text(content)
+        if text is None:
+            self.degrade(f"no message content in response from {url}")
+        return text

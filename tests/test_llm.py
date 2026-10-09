@@ -119,7 +119,7 @@ def test_llm_vulnerable_confirms_injection_and_leak(tmp_path, llm_vuln):
     confirmed = [f for f in res.findings if f.verification.validated]
     classes = {f.tags[-1] for f in confirmed}
     assert "llm01-direct-injection" in classes, "prompt injection must be confirmed"
-    assert "llm06-system-prompt-leak" in classes, "system-prompt/secret leak must be confirmed"
+    assert "llm07-system-prompt-leak" in classes, "system-prompt/secret leak must be confirmed"
     for f in confirmed:
         assert f.owasp.get("llm_2025"), "LLM findings carry an OWASP LLM mapping"
         assert f.verification.reproductions >= 2

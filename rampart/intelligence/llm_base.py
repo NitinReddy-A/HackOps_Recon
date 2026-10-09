@@ -19,7 +19,60 @@ from .deterministic import DeterministicProvider
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 
-def extract_json(text: str):
+# Hypothesis classes an access-control (grounded) hypothesis may carry. These are the only
+# classes the BOLA/IDOR worker executes; anything else an LLM returns is dropped.
+_ACCESS_CONTROL_CLASSES = {"IDOR/BOLA"}
+_CLASS_ALIASES = {
+    "idor/bola": "IDOR/BOLA",
+    "bola/idor": "IDOR/BOLA",
+    "idor": "IDOR/BOLA",
+    "bola": "IDOR/BOLA",
+}
+_CWE = re.compile(r"^CWE-\d{1,5}$")
+
+
+def content_text(content):
+    """Normalise a chat message ``content`` to text.
+
+    Accepts a plain string or a list of content parts (``[{"type":"text","text":...}, ...]``,
+    as some OpenAI-compatible gateways return). Returns None if no text can be found."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+        return "".join(parts) if parts else None
+    return None
+
+
+def normalize_vuln_class(value, default="IDOR/BOLA"):
+    """Map an LLM-supplied vuln_class onto a supported access-control class, else None."""
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if v in _ACCESS_CONTROL_CLASSES:
+        return v
+    return _CLASS_ALIASES.get(v.lower())
+
+
+def _clean_cwes(value, default):
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return list(default)
+    out = [c.strip().upper() for c in value if isinstance(c, str) and _CWE.match(c.strip().upper())]
+    return out or list(default)
+
+
+def extract_json(text):
+    if not isinstance(text, str):
+        text = content_text(text)
     text = (text or "").strip()
     try:
         return json.loads(text)
@@ -56,26 +109,68 @@ class LLMProvider(IntelligenceProvider):
         self.budget = budget
         self._fallback = DeterministicProvider()
         self.degraded = False
+        self.degraded_reasons: list[str] = []  # why calls fell back (for the caller to surface)
+        self.notes: list[str] = []  # non-fatal configuration notes
         self.calls = 0
+
+    def note(self, msg: str) -> None:
+        if msg and msg not in self.notes:
+            self.notes.append(msg)
+
+    def degrade(self, reason: str) -> None:
+        self.degraded = True
+        if reason and reason not in self.degraded_reasons:
+            self.degraded_reasons.append(reason)
 
     # subclasses implement this
     def _complete(self, prompt: str) -> str | None:
         raise NotImplementedError
 
     def _json(self, prompt: str):
-        out = self._complete(prompt)
+        try:
+            out = self._complete(prompt)
+        except Exception as exc:  # noqa: BLE001 - a provider must never crash the scan
+            self.degrade(f"{type(exc).__name__}: {exc}")
+            out = None
         if out is None:
             self.degraded = True
             return None
         self.calls += 1
-        return extract_json(out)
+        try:
+            return extract_json(out)
+        except Exception:  # noqa: BLE001
+            return None
 
     # ---------------------------------------------------------------- methods
     def label_endpoint(self, ctx: dict) -> dict:
-        out = self._json(prompts.label_endpoint_prompt(ctx))
-        if isinstance(out, dict) and "is_ownable" in out:
-            return out
+        clean = self._valid_label(self._json(prompts.label_endpoint_prompt(ctx)))
+        if clean is not None:
+            return clean
         return self._fallback.label_endpoint(ctx)
+
+    @staticmethod
+    def _valid_label(out):
+        """Return a shape-checked copy of a label_endpoint reply, or None if it is malformed."""
+        if not isinstance(out, dict) or not isinstance(out.get("is_ownable"), bool):
+            return None
+        otype = out.get("returns_object_type")
+        if otype is not None and not isinstance(otype, str):
+            return None
+        sel = out.get("object_selector")
+        if sel is not None and not isinstance(sel, dict):
+            return None
+        if sel:
+            param, where = sel.get("param"), sel.get("in", "path")
+            if not isinstance(param, str) or not param or where not in ("path", "query"):
+                return None
+            sel = {"param": param, "in": where}
+        rationale = out.get("rationale")
+        return {
+            "returns_object_type": otype or None,
+            "object_selector": sel or {},
+            "is_ownable": out["is_ownable"],
+            "rationale": rationale if isinstance(rationale, str) else "",
+        }
 
     def propose_hypotheses(self, appmodel: dict) -> list[dict]:
         out = self._json(prompts.hypotheses_prompt(appmodel))
@@ -91,10 +186,10 @@ class LLMProvider(IntelligenceProvider):
 
     def plan_assessment(self, ctx: dict) -> dict:
         # Planner agent (its own reasoning call); falls back to deterministic prioritisation.
-        candidates = set(ctx.get("candidate_classes") or [])
+        candidates = {c for c in (ctx.get("candidate_classes") or []) if isinstance(c, str)}
         out = self._json(prompts.plan_prompt(ctx))
         if isinstance(out, dict) and isinstance(out.get("order"), list):
-            order = [c for c in out["order"] if c in candidates]
+            order = [c for c in out["order"] if isinstance(c, str) and c in candidates]
             if order:
                 out["order"] = order
                 return out
@@ -107,14 +202,14 @@ class LLMProvider(IntelligenceProvider):
 
     def draft_finding_narrative(self, ctx: dict) -> dict:
         out = self._json(prompts.narrative_prompt(ctx))
-        if isinstance(out, dict) and "description" in out:
-            return out
+        if isinstance(out, dict) and isinstance(out.get("description"), str):
+            return {k: v for k, v in out.items() if isinstance(v, str)}
         return self._fallback.draft_finding_narrative(ctx)
 
     def propose_patch(self, ctx: dict) -> dict:
         out = self._json(prompts.patch_prompt(ctx))
-        if isinstance(out, dict) and "diff" in out:
-            return out
+        if isinstance(out, dict) and isinstance(out.get("diff"), str):
+            return {"diff": out["diff"], "explanation": str(out.get("explanation") or "")}
         return self._fallback.propose_patch(ctx)
 
     # ------------------------------------------------------------- grounding
@@ -127,8 +222,14 @@ class LLMProvider(IntelligenceProvider):
         for h in raw:
             if not isinstance(h, dict):
                 continue
-            ep = ep_by_id.get(h.get("endpoint_id"))
+            vclass = normalize_vuln_class(h.get("vuln_class"))
+            if vclass is None:
+                continue  # non-string / unsupported class from the model: drop, never crash
+            eid = h.get("endpoint_id")
+            ep = ep_by_id.get(eid) if isinstance(eid, str) else None
             atk, vic = h.get("attacker_principal"), h.get("victim_principal")
+            if not isinstance(atk, str) or not isinstance(vic, str):
+                continue
             if not ep or atk not in principals or vic not in principals or atk == vic:
                 continue
             otype = ep.get("returns_object_type")
@@ -142,8 +243,8 @@ class LLMProvider(IntelligenceProvider):
                 continue
             grounded.append(
                 {
-                    "vuln_class": h.get("vuln_class", "IDOR/BOLA"),
-                    "cwe": h.get("cwe") or ["CWE-639"],
+                    "vuln_class": vclass,
+                    "cwe": _clean_cwes(h.get("cwe"), ["CWE-639"]),
                     "endpoint_id": ep["id"],
                     "endpoint_method": ep["method"],
                     "endpoint_path": ep["path"],
@@ -153,7 +254,8 @@ class LLMProvider(IntelligenceProvider):
                     "victim_principal": vic,
                     "attacker_object": atk_obj,
                     "victim_object": vic_obj,
-                    "rationale": h.get("rationale", "") + " [LLM-proposed; grounded against the app model]",
+                    "rationale": (h.get("rationale") if isinstance(h.get("rationale"), str) else "")[:2000]
+                    + " [LLM-proposed; grounded against the app model]",
                 }
             )
         return grounded

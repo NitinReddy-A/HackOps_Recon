@@ -23,6 +23,13 @@ _SEV_COLOR = {
 }
 
 
+def normalize_severity(value) -> str:
+    """Clamp any stored severity to the known scale (unknown / non-string -> 'medium')."""
+    if isinstance(value, str) and value.strip().lower() in _SEV_ORDER:
+        return value.strip().lower()
+    return "medium"
+
+
 def owasp_tags(f) -> list:
     """All OWASP categories on a finding, across web/API/LLM taxonomies."""
     tags = []
@@ -33,6 +40,10 @@ def owasp_tags(f) -> list:
 
 class ReportBuilder:
     def __init__(self, findings, scope, appmodel, scan, budget_snapshot, audit_events=0):
+        findings = list(findings)
+        for f in findings:  # a malformed stored/LLM-derived severity must never crash a report
+            if not (isinstance(f.severity, str) and f.severity in _SEV_ORDER):
+                f.severity = normalize_severity(f.severity)
         self.findings = sorted(
             findings, key=lambda f: (_SEV_ORDER.get(f.severity, 9), 0 if f.verification.validated else 1)
         )
