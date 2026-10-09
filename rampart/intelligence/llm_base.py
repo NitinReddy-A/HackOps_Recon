@@ -122,11 +122,35 @@ class LLMProvider(IntelligenceProvider):
         if reason and reason not in self.degraded_reasons:
             self.degraded_reasons.append(reason)
 
+    def _charge(self, tokens: int = 0, usd: float = 0.0) -> None:
+        """Charge one model call's usage to the engagement budget (``charge_llm``; legacy
+        ``record_tokens``/``record_cost`` duck-typed budgets are still accepted)."""
+        b = self.budget
+        if b is None:
+            return
+        if hasattr(b, "charge_llm"):
+            b.charge_llm(tokens=tokens, usd=usd)
+            return
+        if tokens and hasattr(b, "record_tokens"):
+            b.record_tokens(tokens)
+        if usd and hasattr(b, "record_cost"):
+            b.record_cost(usd)
+
     # subclasses implement this
     def _complete(self, prompt: str) -> str | None:
         raise NotImplementedError
 
     def _json(self, prompt: str):
+        # The engagement budget (budget_usd / max_tokens / kill switch) is enforced BEFORE every
+        # model call: once it is exhausted the provider degrades to the deterministic fallback.
+        if self.budget is not None and hasattr(self.budget, "can_spend_llm"):
+            try:
+                ok, why = self.budget.can_spend_llm()
+            except Exception as exc:  # noqa: BLE001 - a broken budget is fail-closed
+                ok, why = False, f"budget error: {exc}"
+            if not ok:
+                self.degrade(f"LLM budget: {why}")
+                return None
         try:
             out = self._complete(prompt)
         except Exception as exc:  # noqa: BLE001 - a provider must never crash the scan

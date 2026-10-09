@@ -31,6 +31,15 @@ class ScanResult:
     plan: dict = field(default_factory=dict)
     correlation: object = None
     exploit_proofs: list = field(default_factory=list)
+    # False when the run could not actually assess the target (unreachable, or every request
+    # blocked by policy) — a "0 findings" result must never be mistaken for a clean bill of health.
+    complete: bool = True
+    incomplete_reason: str = ""
+
+    def mark_incomplete(self, reason: str) -> None:
+        if self.complete:
+            self.complete = False
+            self.incomplete_reason = reason
 
 
 class Supervisor:
@@ -115,7 +124,17 @@ class Supervisor:
         live = recon.get(
             "/", session=None, payload_class="benign-read", rationale="liveness probe", summary="liveness"
         )
-        self._log(result, "recon", f"liveness GET / -> {live.status if live.executed else 'blocked'}")
+        if live.executed:
+            self._log(result, "recon", f"liveness GET / -> {live.status}")
+        else:
+            why = live.blocked_reason or "blocked"
+            self._log(result, "recon", f"liveness GET / -> not executed ({why})")
+            if why.startswith("executor error"):
+                # The target did not answer at all: every further probe would fail the same way,
+                # so stop here and report the run as incomplete instead of "0 findings".
+                result.mark_incomplete(f"target unreachable: {why[len('executor error: ') :] or why}")
+                self._log(result, "recon", "target unreachable — DAST aborted (scan incomplete)")
+                return result
 
         # Phase: map (already built) — record surface
         ownable = self.appmodel.ownable_endpoints()
@@ -213,28 +232,55 @@ class Supervisor:
                 result.findings.append(finding)
 
         # Phase: external OSS scanner adapters (graceful — skipped if the tool is not installed)
+        self.run_adapters(result)
+
+        return result
+
+    def run_adapters(self, result, allow_target_network: bool = True) -> None:
+        """Run the configured external OSS adapters and fold their findings into ``result``.
+
+        Called by :meth:`run` (DAST on) and directly by the engagement when DAST is off, so
+        white-box adapters (semgrep, bandit, gitleaks, trivy, ...) still run in sast/sca/iac
+        modes. With ``allow_target_network=False`` adapters that send traffic to the target
+        (nuclei, nmap, testssl) are skipped. Each run records whether it used the network."""
         for adapter in self.scanners:
-            run_info = {"scanner": adapter.name, "available": False, "findings": 0, "note": ""}
+            run_info = {
+                "scanner": adapter.name,
+                "available": False,
+                "findings": 0,
+                "note": "",
+                "uses_network": False,
+            }
             try:
                 if not adapter.is_available():
                     run_info["note"] = adapter.install_hint
                     self._log(
                         result, "scan", f"{adapter.name}: not installed — skipped ({adapter.install_hint})"
                     )
+                elif getattr(adapter, "network", False) and not allow_target_network:
+                    run_info["available"] = True
+                    run_info["note"] = "skipped: sends traffic to the target and DAST is off"
+                    self._log(result, "scan", f"{adapter.name}: skipped (target-network tool; DAST is off)")
                 else:
                     run_info["available"] = True
-                    sfindings = adapter.run(self.appmodel, self.target_url, self.application)
-                    for f in sfindings:
-                        f.engagement_id = self.pipeline.engagement_id
-                    result.findings.extend(sfindings)
-                    run_info["findings"] = len(sfindings)
-                    self._log(result, "scan", f"{adapter.name}: {len(sfindings)} finding(s) ingested")
+                    skip = adapter.skip_reason() if hasattr(adapter, "skip_reason") else ""
+                    if skip:
+                        run_info["note"] = f"skipped: {skip}"
+                        self._log(result, "scan", f"{adapter.name}: skipped ({skip})")
+                    else:
+                        run_info["uses_network"] = bool(
+                            adapter.uses_network() if hasattr(adapter, "uses_network") else adapter.network
+                        )
+                        sfindings = adapter.run(self.appmodel, self.target_url, self.application)
+                        for f in sfindings:
+                            f.engagement_id = self.pipeline.engagement_id
+                        result.findings.extend(sfindings)
+                        run_info["findings"] = len(sfindings)
+                        self._log(result, "scan", f"{adapter.name}: {len(sfindings)} finding(s) ingested")
             except Exception as exc:  # noqa: BLE001 - a flaky external tool must never break the run
                 run_info["note"] = f"error: {exc}"
                 self._log(result, "scan", f"{adapter.name}: error ({exc}) — skipped")
             result.scanner_runs.append(run_info)
-
-        return result
 
     def _investigate(self, h) -> dict:
         """Test + independently validate ONE hypothesis. Runs on a worker thread.

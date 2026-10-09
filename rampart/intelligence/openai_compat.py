@@ -120,7 +120,7 @@ class OpenAICompatProvider(LLMProvider):
             usage = data.get("usage")
             tokens = _as_int(usage.get("total_tokens")) if isinstance(usage, dict) else 0
             try:
-                self.budget.record_tokens(tokens)
+                self._charge(tokens=tokens)
             except Exception:  # noqa: BLE001 - accounting must never crash the provider
                 pass
         try:

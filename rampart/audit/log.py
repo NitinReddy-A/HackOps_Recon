@@ -176,9 +176,14 @@ class AuditLog:
 
     def verify_chain(self) -> tuple[bool, str]:
         """Return (ok, message). Recomputes the whole chain from genesis and checks the head
-        anchor. Never raises on malformed content."""
+        anchor. An empty or missing log is reported as NOT intact ("no events"). Never raises
+        on malformed content."""
         with self._lock:
-            ok, msg, _n, _h, _legacy = self._scan()
+            ok, msg, n, _h, _legacy = self._scan()
+        if ok and n == 0:
+            # An empty (or missing) log proves nothing about the run — never report it as an
+            # intact chain. (It is still appendable; this only affects verification.)
+            return False, "no events (empty or missing audit log)"
         return ok, msg
 
     def ensure_appendable(self) -> None:

@@ -29,8 +29,26 @@ from __future__ import annotations
 import json
 import os
 
+from ..audit.log import AuditLogError
+from ..reporting.status import is_confirmed
 from ..schemas.scope import EngagementScope, ScopeError
 from ..version import __version__
+
+_ECHO_MAX = 200
+
+
+def _clip(text, limit: int = _ECHO_MAX) -> str:
+    text = str(text)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _clip_echo(message: str, echoed: str) -> str:
+    """Shorten a caller-supplied value (e.g. a huge scope_file path) echoed inside an error."""
+    message = str(message)
+    if echoed and len(echoed) > _ECHO_MAX:
+        message = message.replace(echoed, _clip(echoed)).replace(repr(echoed), repr(_clip(echoed)))
+    return _clip(message, 4 * _ECHO_MAX)
+
 
 # Newest first. We echo the client's requested version if we support it, else offer our latest.
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -178,7 +196,10 @@ TOOLS = [
                 },
                 "target": {
                     "type": "string",
-                    "description": "The target the stored run was executed against (must be in scope).",
+                    "description": (
+                        "The target the stored run was executed against (must be in scope). "
+                        "Optional: defaults to the target recorded in the stored run."
+                    ),
                 },
                 "work_dir": {
                     "type": "string",
@@ -190,7 +211,7 @@ TOOLS = [
                 },
                 "application": {"type": "string", "description": "Application name (default: target)."},
             },
-            "required": ["scope_file", "target", "work_dir"],
+            "required": ["scope_file", "work_dir"],
         },
     },
 ]
@@ -250,9 +271,10 @@ def _tool_scope_check(args):
         return _tool_text({"error": "scope_file is required"}, is_error=True)
     try:
         scope = EngagementScope.from_file(scope_file)
-    except ScopeError as exc:
-        # unreadable / unparseable contract — a definitive "invalid" answer
-        return _tool_text({"valid": False, "errors": [str(exc)]}, is_error=True)
+    except (ScopeError, OSError) as exc:
+        # unreadable / unparseable contract — a definitive "invalid" answer (the echoed path is
+        # clipped so a hostile/huge scope_file argument cannot flood the reply)
+        return _tool_text({"valid": False, "errors": [_clip_echo(str(exc), scope_file)]}, is_error=True)
     errs = scope.validate()
     if errs:
         return _tool_text({"valid": False, "errors": errs})
@@ -297,14 +319,20 @@ def _tool_scan(args):
         crawl=bool(args.get("crawl", False)),
         intel="deterministic",
     )
-    eng = Engagement(cfg)  # ScopeError / FileNotFoundError -> caught by dispatch
+    eng = Engagement(cfg)  # ScopeError (incl. out-of-scope port) / FileNotFoundError -> isError
     result = eng.run_scan()
 
     corr = result.correlation
-    confirmed = [f for f in result.findings if getattr(f.verification, "validated", False)]
+    confirmed = [f for f in result.findings if is_confirmed(f)]
+    intel = eng.intel_status()
     summary = {
         "target": eng.target_url,
-        "intel_provider": eng.intel.name,
+        "status": "complete" if result.complete else "incomplete",
+        "complete": result.complete,
+        "incomplete_reason": result.incomplete_reason,
+        "intel_provider": intel["effective"],
+        "intel": intel,
+        "budget": eng.budget_status(),
         "work_dir": os.path.abspath(eng.cfg.work_dir),
         "counts": {
             "confirmed": len(confirmed),
@@ -334,7 +362,8 @@ def _tool_scan(args):
             for f in confirmed
         ],
     }
-    return _tool_text(summary)
+    # an incomplete run (target unreachable / all requests blocked) is a failed tool call
+    return _tool_text(summary, is_error=not result.complete)
 
 
 def _tool_llm_test(args):
@@ -361,9 +390,13 @@ def _tool_llm_test(args):
     eng = Engagement(cfg)  # ScopeError / FileNotFoundError -> caught by dispatch
     res = eng.run_llm()
 
-    confirmed = [f for f in res.findings if getattr(f.verification, "validated", False)]
+    confirmed = [f for f in res.findings if is_confirmed(f)]
+    complete = getattr(res, "complete", True)
     summary = {
         "target": eng.target_url,
+        "status": "complete" if complete else "incomplete",
+        "complete": complete,
+        "incomplete_reason": getattr(res, "incomplete_reason", ""),
         "chat_path": eng.cfg.llm_chat_path,
         "confirmed_count": len(confirmed),
         "confirmed_findings": [
@@ -380,38 +413,44 @@ def _tool_llm_test(args):
         "probe_log": res.probe_log,
         "probe_counts": getattr(res, "counts", {}),
     }
-    return _tool_text(summary)
+    return _tool_text(summary, is_error=not complete)
 
 
 def _tool_report(args):
-    miss = _missing(args, ["scope_file", "target", "work_dir"])
+    miss = _missing(args, ["scope_file", "work_dir"])
     if miss:
         return _tool_text({"error": f"missing required argument(s): {', '.join(miss)}"}, is_error=True)
 
-    from ..engagement import Engagement, EngagementConfig
+    from ..engagement import Engagement, EngagementConfig, normalize_formats, stored_run_target
 
     work_dir = args["work_dir"]
     if not any(os.path.isfile(os.path.join(work_dir, n)) for n in ("findings.json", "scan.json")):
         # never fabricate a clean report (or create directories) for a run that does not exist
         return _tool_text({"error": f"no stored run in {os.path.abspath(work_dir)}"}, is_error=True)
 
-    formats = [f.strip() for f in (args.get("format") or "html,json").split(",") if f.strip()]
+    try:
+        formats = normalize_formats(args.get("format") or "html,json")
+    except ValueError as exc:
+        return _tool_text({"error": str(exc)}, is_error=True)
+    target = args.get("target") or stored_run_target(work_dir)
     cfg = EngagementConfig(
         scope_file=args["scope_file"],
-        target=args["target"],
+        target=target,
         work_dir=args["work_dir"],
         application=args.get("application") or "target",
         intel="deterministic",
+        offline=not target,
     )
     eng = Engagement(cfg)  # ScopeError / FileNotFoundError -> caught by dispatch
     written, rb, chain_ok = eng.report(formats)
     m = rb.metrics()
-    n_events = len(eng.audit.read_all())
+    _ok, chain_msg, n_events = eng.audit_status()
     summary = {
         "written": {k: os.path.abspath(v) for k, v in written.items()},
         "formats": list(written.keys()),
-        # an empty audit log proves nothing — never report it as an intact chain
-        "audit_chain_intact": bool(chain_ok) and n_events > 0,
+        # same rule as `rampart verify-audit`: an empty audit log is NOT intact
+        "audit_chain_intact": bool(chain_ok),
+        "audit_chain": chain_msg,
         "audit_events": n_events,
         "risk_score": m.get("risk_score"),
         "risk_band": m.get("risk_band"),
@@ -438,9 +477,11 @@ def _dispatch_tool(name, arguments):
         return _tool_text({"error": "invalid arguments: " + "; ".join(errs)}, is_error=True)
     try:
         return handler(arguments)
-    except (ScopeError, FileNotFoundError) as exc:
-        # refused by the scope gate or a missing input file — clean result, never a stack trace
-        return _tool_text({"error": str(exc), "refused": True}, is_error=True)
+    except (ScopeError, FileNotFoundError, AuditLogError, ValueError) as exc:
+        # refused by the scope gate (host, port, scheme), a missing/malformed input file or a
+        # corrupt audit log — clean result, never a stack trace
+        echoed = arguments.get("scope_file") if isinstance(arguments.get("scope_file"), str) else ""
+        return _tool_text({"error": _clip_echo(str(exc), echoed), "refused": True}, is_error=True)
     except Exception as exc:  # noqa: BLE001 - a tool error must not kill the server
         return _tool_text({"error": f"{type(exc).__name__}: {exc}"}, is_error=True)
 

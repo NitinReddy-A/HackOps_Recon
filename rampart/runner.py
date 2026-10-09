@@ -8,9 +8,50 @@ Tier-0/1 reads and returns the outcome.
 from __future__ import annotations
 
 import json as _json
+import threading
 from dataclasses import dataclass, field
 
 from .schemas.toolcall import ToolAction, ToolCallRequest
+
+
+class ProbeStats:
+    """Thread-safe tally of every probe issued through :class:`ProbeRunner` for one engagement.
+
+    Lets the engagement tell "ran and found nothing" from "never reached the target": a DAST run
+    in which no request was executed (target down, or every request blocked by policy) is
+    reported as *incomplete* rather than clean. Attach one to the pipeline as ``probe_stats``.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.executed = 0
+        self.blocked = 0  # denied by the policy pipeline (scope / tier / budget)
+        self.errors = 0  # allowed, but the executor failed (connection refused, timeout, ...)
+        self.last_error = ""
+        self.last_blocked = ""
+
+    def record(self, result) -> None:
+        with self._lock:
+            if getattr(result, "executed", False):
+                self.executed += 1
+                return
+            reason = str(getattr(result, "blocked_reason", "") or "")
+            if reason.startswith("executor error"):
+                self.errors += 1
+                self.last_error = reason
+            else:
+                self.blocked += 1
+                self.last_blocked = reason
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "executed": self.executed,
+                "blocked": self.blocked,
+                "errors": self.errors,
+                "last_error": self.last_error,
+                "last_blocked": self.last_blocked,
+            }
 
 
 @dataclass
@@ -20,6 +61,7 @@ class ProbeOutcome:
     decision: object = None
     evidence: list = field(default_factory=list)
     audit_ids: list = field(default_factory=list)
+    blocked_reason: str = ""
 
     @property
     def status(self):
@@ -134,6 +176,9 @@ class ProbeRunner:
 
     def _execute(self, req, action, capture, summary) -> ProbeOutcome:
         result = self.pipeline.execute(req)
+        stats = getattr(self.pipeline, "probe_stats", None)
+        if isinstance(stats, ProbeStats):
+            stats.record(result)
         evs = []
         if capture and result.executed and self.evidence is not None:
             evs.append(self.evidence.put_request(action, result.resolved_ip, summary=summary))
@@ -144,4 +189,5 @@ class ProbeRunner:
             decision=result.decision,
             evidence=evs,
             audit_ids=result.audit_event_ids,
+            blocked_reason=str(getattr(result, "blocked_reason", "") or ""),
         )

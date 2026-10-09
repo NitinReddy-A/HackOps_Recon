@@ -237,7 +237,7 @@ class ReportBuilder:
             if rid not in rule_ids:
                 rule_ids.add(rid)
                 rules.append(_sarif_rule(rid, f))
-            results.append(f.to_sarif_result())
+            results.append(f.to_sarif_result(repo_root=(self.scan or {}).get("repo", "")))
         doc = {
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
             "version": "2.1.0",
