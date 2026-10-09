@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..reporting.status import is_confirmed, norm_severity
+
 _SEV_WEIGHT = {"critical": 40, "high": 25, "medium": 10, "low": 3, "info": 1}
 _SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
@@ -128,11 +130,10 @@ _CHAIN_RULES = [
 
 
 def _confirmed(findings):
-    return [
-        f
-        for f in findings
-        if getattr(f.verification, "validated", False) and "external-scanner" not in f.tags
-    ]
+    """Oracle-confirmed, still-open findings (``status.is_confirmed``: validated and not Dropped
+    or Fixed) — a retest-Fixed finding no longer drives risk or chains. External-scanner leads
+    are excluded."""
+    return [f for f in findings if is_confirmed(f) and "external-scanner" not in (f.tags or [])]
 
 
 def correlate(findings, appmodel=None, tech=None) -> CorrelationResult:
@@ -189,8 +190,8 @@ def correlate(findings, appmodel=None, tech=None) -> CorrelationResult:
         )
 
     # ---- risk score: weighted findings + chain amplification, capped at 100 ----
-    base = sum(_SEV_WEIGHT.get(f.severity, 1) for f in confirmed)
-    agent_weight = sum(_SEV_WEIGHT.get(f.severity, 1) for f in agent) // 2  # discounted: not proven
+    base = sum(_SEV_WEIGHT[norm_severity(f.severity)] for f in confirmed)
+    agent_weight = sum(_SEV_WEIGHT[norm_severity(f.severity)] for f in agent) // 2  # discounted: not proven
     chain_bonus = sum(
         15 if c.get("severity") == "critical" else 8 for c in chains if not c.get("agent_assessed")
     )
@@ -218,15 +219,15 @@ def correlate(findings, appmodel=None, tech=None) -> CorrelationResult:
                 "summary": key,
                 "guidance": f.remediation.guidance,
                 "effort": f.remediation.effort or "medium",
-                "severity": f.severity,
+                "severity": norm_severity(f.severity),
                 "count": 0,
                 "classes": set(),
             },
         )
         b["count"] += 1
         b["classes"].add(f.vuln_class)
-        if _SEV_RANK.get(f.severity, 9) < _SEV_RANK.get(b["severity"], 9):
-            b["severity"] = f.severity
+        if _SEV_RANK[norm_severity(f.severity)] < _SEV_RANK[b["severity"]]:
+            b["severity"] = norm_severity(f.severity)
     roadmap = sorted(
         buckets.values(), key=lambda b: (_SEV_RANK.get(b["severity"], 9), effort_rank.get(b["effort"], 1))
     )

@@ -18,7 +18,9 @@ results to one from the terminal.
     for f in result.confirmed:
         print(f.severity, f.title)
 
-    # Use it as a gate in a test or a CI script:
+    # Use it as a gate in a test or a CI script (an incomplete run — target unreachable or
+    # every request blocked — also fails the gate):
+    assert result.complete, result.incomplete_reason
     assert not result.failed(on="high")
 
     # Render reports in memory, or write them to disk:
@@ -29,16 +31,18 @@ results to one from the terminal.
 from __future__ import annotations
 
 from .engagement import Engagement, EngagementConfig
+from .reporting.status import SEV_RANK, is_confirmed, norm_severity, sev_rank
 from .schemas.finding import State
 
 _SEV_ORDER = ["info", "low", "medium", "high", "critical"]
 
 
-def _sev_rank(sev: str) -> int:
-    try:
-        return _SEV_ORDER.index(sev)
-    except ValueError:
-        return 0
+def _threshold(severity: str) -> int:
+    """The rank of a user-supplied severity (case-insensitive). Unknown -> ValueError."""
+    s = severity.strip().lower() if isinstance(severity, str) else ""
+    if s not in SEV_RANK:
+        raise ValueError(f"unknown severity {severity!r} (use one of: {', '.join(reversed(_SEV_ORDER))})")
+    return SEV_RANK[s]
 
 
 class Rampart:
@@ -48,7 +52,8 @@ class Rampart:
     arguments. Call :meth:`scan` for an application assessment or :meth:`llm_test` for the
     OWASP LLM Top 10. For the full, everything-on run use ``full=True`` (the SDK equivalent of
     ``rampart pipeline``); note that ``sca_online`` stays off unless you ask for it, because it
-    sends dependency names to an external service.
+    sends dependency names to an external service, and ``active`` (gated write/state-changing
+    probes) also stays off unless you pass ``active=True`` explicitly.
     """
 
     def __init__(
@@ -79,6 +84,7 @@ class Rampart:
         iac: bool = False,
         sca_online: bool = False,
         active: bool = False,
+        oob_collaborator_url: str = "",
         parallel: int = 0,
         scanners: str = "",
         store_url: str = "",
@@ -89,9 +95,9 @@ class Rampart:
         resolver=None,
     ):
         if full:
-            # Mirror `rampart pipeline`: turn on the safe, aggressive stages. External network
-            # SCA (sca_online) stays an explicit opt-in.
-            crawl = exploit = agents = oob = active = True
+            # Mirror `rampart pipeline`: turn on every read-only stage. Gated write probes
+            # (active) and external network SCA (sca_online) stay explicit opt-ins.
+            crawl = exploit = agents = oob = True
             sast = sca = iac = grpc = infra = authz = bizlogic = api_scan = True
         self.config = EngagementConfig(
             scope_file=scope,
@@ -118,6 +124,7 @@ class Rampart:
             do_iac=iac,
             sca_online=sca_online,
             active=active,
+            oob_collaborator_url=oob_collaborator_url,
             parallel=parallel,
             scanners=scanners,
             store_url=store_url,
@@ -148,7 +155,12 @@ class Rampart:
         """Run the application assessment and return a :class:`ScanResult`."""
         eng = self.engagement
         raw = eng.run_scan()
-        return ScanResult(raw.findings, eng)
+        return ScanResult(
+            raw.findings,
+            eng,
+            complete=getattr(raw, "complete", True),
+            incomplete_reason=getattr(raw, "incomplete_reason", ""),
+        )
 
     def llm_test(
         self,
@@ -165,15 +177,24 @@ class Rampart:
         self.config.llm_canary = canary
         eng = self.engagement
         res = eng.run_llm()
-        return ScanResult(res.findings, eng)
+        return ScanResult(
+            res.findings,
+            eng,
+            complete=getattr(res, "complete", True),
+            incomplete_reason=getattr(res, "incomplete_reason", ""),
+        )
 
     def retest(self) -> list:
-        """Replay stored findings against the (possibly patched) target. Returns (finding, outcome)."""
+        """Replay stored validated findings against the (possibly patched) target.
+
+        Returns ``[(finding, outcome)]``; outcome is ``"Fixed"``, ``"still-vulnerable"``,
+        ``"Regression"``, ``"inconclusive"`` or ``"not retestable (re-run a scan)"``."""
         return self.engagement.retest()
 
     def save(self, formats) -> dict:
-        """Write report files for the last run; returns {format: path}."""
-        written, _rb, _ok = self.engagement.report(list(formats))
+        """Write report files for the last run (``"html,json"`` or ``["html", "json"]``,
+        case-insensitive); returns {format: path}. Unknown formats raise ValueError."""
+        written, _rb, _ok = self.engagement.report(formats)
         return written
 
 
@@ -182,18 +203,28 @@ class ScanResult:
 
     Iterating or ``len()``-ing a result gives every finding. The useful slices are
     :attr:`confirmed` (oracle-proven), :attr:`agent_assessed`, and :attr:`dropped`.
+
+    :attr:`complete` is False (with :attr:`incomplete_reason`) when the run could not actually
+    assess the target — it was unreachable, every request was blocked by policy, or the kill
+    switch fired. An incomplete result **fails** :meth:`failed` regardless of severity, so a
+    broken deploy can never pass a gate as "0 findings".
     """
 
-    def __init__(self, findings: list, engagement: Engagement):
+    def __init__(
+        self, findings: list, engagement: Engagement, complete: bool = True, incomplete_reason: str = ""
+    ):
         self.findings = list(findings)
         self._engagement = engagement
         self._rb = None
+        self.complete = bool(complete)
+        self.incomplete_reason = incomplete_reason or ""
 
     # --- views ---
     @property
     def confirmed(self) -> list:
-        """Findings an independent oracle proved (``validated`` and not dropped)."""
-        return [f for f in self.findings if f.verification.validated and f.state != State.DROPPED]
+        """Findings an independent oracle proved and that are still open (validated, and not
+        Dropped or Fixed by a retest) — the same rule every report and gate uses."""
+        return [f for f in self.findings if is_confirmed(f)]
 
     @property
     def agent_assessed(self) -> list:
@@ -209,24 +240,29 @@ class ScanResult:
         """{severity: [confirmed findings]} for the five severity levels."""
         out: dict[str, list] = {s: [] for s in _SEV_ORDER}
         for f in self.confirmed:
-            out.setdefault(f.severity, []).append(f)
+            out[norm_severity(f.severity)].append(f)
         return out
 
     def at_or_above(self, severity: str) -> list:
-        """Confirmed findings at or above a severity (e.g. ``"high"``)."""
-        threshold = _sev_rank(severity)
-        return [f for f in self.confirmed if _sev_rank(f.severity) >= threshold]
+        """Confirmed findings at or above a severity (``"high"``, case-insensitive).
+
+        Raises ``ValueError`` for an unknown severity."""
+        threshold = _threshold(severity)
+        return [f for f in self.confirmed if sev_rank(f.severity) <= threshold]
 
     def failed(self, on: str = "high") -> bool:
-        """True if any confirmed finding is at or above ``on`` — the CI/test gate."""
-        return bool(self.at_or_above(on))
+        """The CI/test gate: True if any confirmed finding is at or above ``on``
+        (case-insensitive; unknown severity -> ``ValueError``) **or the run was incomplete**
+        (target unreachable / all requests blocked / kill switch — see :attr:`complete`)."""
+        hits = self.at_or_above(on)  # validates ``on`` even for an incomplete run
+        return (not self.complete) or bool(hits)
 
     def summary(self) -> str:
         """A one-line human summary."""
         c = self.confirmed
         counts = dict.fromkeys(_SEV_ORDER, 0)
         for f in c:
-            counts[f.severity] = counts.get(f.severity, 0) + 1
+            counts[norm_severity(f.severity)] += 1
         parts = [f"{counts[s]} {s}" for s in reversed(_SEV_ORDER) if counts.get(s)]
         head = f"{len(c)} confirmed"
         if parts:
@@ -235,6 +271,8 @@ class ScanResult:
         if agent:
             head += f", {agent} agent-assessed"
         head += f", {len(self.dropped)} dropped by the false-positive gate"
+        if not self.complete:
+            head += f" — INCOMPLETE: {self.incomplete_reason}"
         return head
 
     # --- reports (rendered from the same ReportBuilder the CLI uses) ---
@@ -263,8 +301,9 @@ class ScanResult:
         return self._builder.to_soc2()
 
     def save(self, formats) -> dict:
-        """Write report files to the engagement's work dir; returns {format: path}."""
-        written, _rb, _ok = self._engagement.report(list(formats))
+        """Write report files to the engagement's work dir; ``formats`` is a comma string or a
+        list (case-insensitive). Returns {format: path}; unknown formats raise ValueError."""
+        written, _rb, _ok = self._engagement.report(formats)
         return written
 
     def __len__(self) -> int:

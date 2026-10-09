@@ -97,12 +97,13 @@ class ClaudeCodeProvider(LLMProvider):
             return None
         if self.budget is not None:
             try:
-                self.budget.record_cost(_num(envelope.get("total_cost_usd"), float))
                 usage = envelope.get("usage")
-                if isinstance(usage, dict):
-                    self.budget.record_tokens(
-                        _num(usage.get("input_tokens"), int) + _num(usage.get("output_tokens"), int)
-                    )
+                tokens = (
+                    _num(usage.get("input_tokens"), int) + _num(usage.get("output_tokens"), int)
+                    if isinstance(usage, dict)
+                    else 0
+                )
+                self._charge(tokens=tokens, usd=_num(envelope.get("total_cost_usd"), float))
             except Exception:  # noqa: BLE001 - accounting must never crash the provider
                 pass
         if envelope.get("is_error"):

@@ -166,23 +166,47 @@ class Finding:
         return cls(**known)
 
     # --------------------------------------------------------------- SARIF
-    def to_sarif_result(self) -> dict:
+    def to_sarif_result(self, repo_root: str = "") -> dict:
+        """One SARIF 2.1.0 ``result``.
+
+        A finding with ``affected_code.file`` gets exactly ONE physical location: the source file
+        as a repo-relative, forward-slash URI under ``uriBaseId: %SRCROOT%`` (relativised against
+        ``repo_root`` when given; never an absolute local path), with a 1-based region when the
+        line is known. A runtime finding keeps its endpoint URL as the location."""
+        from ..reporting.status import norm_severity
+
         level = {
             "critical": "error",
             "high": "error",
             "medium": "warning",
             "low": "note",
             "info": "note",
-        }.get(self.severity, "warning")
+        }[norm_severity(self.severity)]
         rule_id = (self.cwe[0] if self.cwe else self.vuln_class) or "finding"
-        # artifactLocation.uri must be a real URI / relative file path. A runtime endpoint URL is
-        # one; an asset coordinate such as "PyPI:flask" or a local repo path is not — those go to
-        # logicalLocations / properties instead.
-        loc_uri = self.endpoint.get("url") or ""
         target = self.asset.get("target", "") or ""
-        if not loc_uri and "://" in target:
-            loc_uri = target
-        locations = [{"physicalLocation": {"artifactLocation": {"uri": loc_uri}}}] if loc_uri else []
+        code_file = self.affected_code.file if self.affected_code and self.affected_code.file else ""
+        if code_file:
+            phys = {
+                "artifactLocation": {
+                    "uri": sarif_relative_uri(code_file, repo_root),
+                    "uriBaseId": "%SRCROOT%",
+                }
+            }
+            start = self.affected_code.start_line or 0
+            if isinstance(start, int) and start >= 1:  # SARIF regions are 1-based; omit when unknown
+                end_line = self.affected_code.end_line or 0
+                phys["region"] = {
+                    "startLine": start,
+                    "endLine": max(start, end_line if isinstance(end_line, int) else 0),
+                }
+            locations = [{"physicalLocation": phys}]
+        else:
+            # artifactLocation.uri must be a real URI. A runtime endpoint URL is one; an asset
+            # coordinate such as "PyPI:flask" is not — that goes to logicalLocations instead.
+            loc_uri = self.endpoint.get("url") or ""
+            if not loc_uri and "://" in target:
+                loc_uri = target
+            locations = [{"physicalLocation": {"artifactLocation": {"uri": loc_uri}}}] if loc_uri else []
         result = {
             "ruleId": rule_id,
             "level": level,
@@ -201,12 +225,6 @@ class Finding:
                 "compliance_control_refs": self.compliance_control_refs,
             },
         }
-        if self.affected_code and self.affected_code.file:
-            phys = {"artifactLocation": {"uri": self.affected_code.file}}
-            start = self.affected_code.start_line or 0
-            if start >= 1:  # SARIF regions are 1-based; omit the region when the line is unknown
-                phys["region"] = {"startLine": start, "endLine": max(start, self.affected_code.end_line or 0)}
-            result["locations"].append({"physicalLocation": phys})
         if self.asset.get("type") == "dependency" and target:
             eco, _, pkg = target.partition(":")
             result["properties"]["package"] = {"ecosystem": eco, "name": pkg or target}
@@ -216,3 +234,31 @@ class Finding:
             else:
                 result["locations"].append({"logicalLocations": [logical]})
         return result
+
+
+def sarif_relative_uri(path: str, repo_root: str = "") -> str:
+    """A repo-relative, forward-slash URI for a SARIF ``artifactLocation`` (``%SRCROOT%`` based).
+
+    Relativised against ``repo_root`` when the file lies inside it; otherwise any drive letter /
+    UNC prefix / leading slash is dropped so an absolute local path is never emitted."""
+    import ntpath
+    import posixpath
+    from urllib.parse import quote
+
+    p = str(path or "").replace("\\", "/")
+    root = str(repo_root or "").replace("\\", "/").rstrip("/")
+    if root:
+        ci = bool(ntpath.splitdrive(root)[0])  # Windows paths compare case-insensitively
+        pl, rl = (p.lower(), root.lower()) if ci else (p, root)
+        if pl == rl:
+            p = posixpath.basename(p)
+        elif pl.startswith(rl + "/"):
+            p = p[len(root) + 1 :]
+    drive, rest = ntpath.splitdrive(p)
+    if drive:
+        p = rest.replace("\\", "/")
+    p = p.lstrip("/")
+    parts = [seg for seg in p.split("/") if seg not in ("", ".")]
+    while parts and parts[0] == "..":
+        parts.pop(0)
+    return quote("/".join(parts), safe="/-._~")
