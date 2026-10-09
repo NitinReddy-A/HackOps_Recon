@@ -342,7 +342,9 @@ def test_report_survives_odd_severities():
     weird = orch._finding({"title": "c"}, "r", [])
     weird.severity = ["high"]
     rb = ReportBuilder([good, odd, weird], scope=None, appmodel=None, scan={}, budget_snapshot={})
-    assert {f.severity for f in rb.findings} == {"medium"}
+    # A clamped agent finding keeps its "medium" default; garbage stored later is shown as info.
+    sev = {f.title: f.severity for f in rb.findings}
+    assert sev == {"a": "medium", "b": "info", "c": "info"}
     rb.metrics()
 
 
