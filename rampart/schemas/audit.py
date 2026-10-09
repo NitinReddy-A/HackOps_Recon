@@ -51,7 +51,27 @@ class AuditEvent:
 
     @classmethod
     def from_dict(cls, d: dict) -> AuditEvent:
-        known = {k: v for k, v in d.items() if k in cls.__annotations__}
-        ev = cls(**{k: v for k, v in known.items() if k not in ("event_hash",)})
-        ev.event_hash = d.get("event_hash", "")
+        """Strict: unknown keys, missing required keys and wrongly-typed fields raise
+        ``ValueError`` — an injected extra field must not be silently dropped (it is not covered
+        by the hash, so accepting it would let a forger annotate a verified log)."""
+        if not isinstance(d, dict):
+            raise ValueError(f"audit event must be a JSON object, got {type(d).__name__}")
+        fields = cls.__annotations__
+        unknown = sorted(k for k in d if k not in fields)
+        if unknown:
+            raise ValueError(f"unknown audit event field(s): {', '.join(unknown)}")
+        missing = sorted(k for k in ("engagement_id", "phase", "actor", "action", "event_hash") if k not in d)
+        if missing:
+            raise ValueError(f"missing audit event field(s): {', '.join(missing)}")
+        for k, v in d.items():
+            if k in _DICT_FIELDS and not isinstance(v, dict):
+                raise ValueError(f"audit event field {k!r} must be an object")
+            if k in _STR_FIELDS and not isinstance(v, str):
+                raise ValueError(f"audit event field {k!r} must be a string")
+        ev = cls(**{k: v for k, v in d.items() if k != "event_hash"})
+        ev.event_hash = d["event_hash"]
         return ev
+
+
+_DICT_FIELDS = frozenset({"actor", "action", "policy_decision", "intent", "approval", "execution", "budget"})
+_STR_FIELDS = frozenset({"engagement_id", "phase", "tenant_id", "ts", "event_id", "prev_hash", "event_hash"})

@@ -73,6 +73,23 @@ def redact_headers(headers: dict[str, str]) -> dict[str, str]:
     return out
 
 
+def _redact_value(v: Any) -> str:
+    return f"<redacted:sha256:{sha256_hex(str(v))[:12]}>"
+
+
+def redact_params(params: dict) -> dict:
+    """Keep parameter NAMES, replace every value (or each item of a list value) with a short
+    hash marker, so audit logs show which parameters were sent without leaking tokens,
+    credentials or payloads that may be personal data."""
+    out: dict[str, Any] = {}
+    for k, v in (params or {}).items():
+        if isinstance(v, (list, tuple)):
+            out[str(k)] = [_redact_value(x) for x in v]
+        else:
+            out[str(k)] = _redact_value(v)
+    return out
+
+
 def scrub_secrets(text: str) -> str:
     """Best-effort redaction of secret-looking substrings before persisting text."""
     if not text:

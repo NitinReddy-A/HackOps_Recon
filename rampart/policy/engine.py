@@ -31,6 +31,14 @@ def decide(tier: int, policy: ActionPolicy, phase: str = "test") -> EngineResult
             Decision.DENY, "Tier 3 (prohibited): DoS/destructive/exfil are denied by default", rules
         )
 
+    # tier2_requires_approval ALWAYS gates Tier 2 — it is checked before the ceiling, so a
+    # ``default_tier_ceiling: 2`` cannot silently turn approval-required writes into auto-allow.
+    if tier == RiskTier.HIGH_RISK and policy.tier2_requires_approval is not False:
+        rules.append("policy.tier2_requires_approval=true")
+        return EngineResult(
+            Decision.ALLOW_WITH_INTERRUPT, "Tier 2 (high-risk): requires human approval (HITL)", rules
+        )
+
     if tier <= policy.default_tier_ceiling:
         rules.append(f"policy.tier_ceiling>={tier}")
         return EngineResult(
@@ -38,11 +46,6 @@ def decide(tier: int, policy: ActionPolicy, phase: str = "test") -> EngineResult
         )
 
     if tier == RiskTier.HIGH_RISK:
-        if policy.tier2_requires_approval:
-            rules.append("policy.tier2_requires_approval=true")
-            return EngineResult(
-                Decision.ALLOW_WITH_INTERRUPT, "Tier 2 (high-risk): requires human approval (HITL)", rules
-            )
         rules.append("policy.tier2_requires_approval=false;tier>ceiling")
         return EngineResult(Decision.DENY, "Tier 2 above ceiling and approval disabled", rules)
 
