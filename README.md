@@ -199,6 +199,7 @@ Rampart works black-box with just a URL. Give it more context and it finds more:
 | Add | Flag | What you get |
 | --- | --- | --- |
 | An OpenAPI spec | `--openapi openapi.json` | every endpoint and parameter, without crawling |
+| A single-page app | `--browser` | JS/SPA routes and API calls discovered from the rendered DOM + fetch/XHR, fed to the oracles (static crawling cannot see these) |
 | Test accounts | `test_accounts` in the scope file + `--secrets secrets.json` | authenticated testing, IDOR/BOLA across users |
 | Object ownership | `--appmodel-seed seed.json` | precise cross-tenant access checks |
 | Your source code | `--repo .` | SAST, secrets, SCA, IaC, and runtime↔source correlation |
@@ -422,7 +423,7 @@ is spelled out in [docs/COVERAGE.md](docs/COVERAGE.md). The built-in checks need
 | **API depth** | HTTP verb tampering, GraphQL depth abuse | `--api-scan` |
 | **Business logic** | price, quantity, and parameter tampering | `--bizlogic` |
 | **Blind bugs** | blind SSRF and XXE via a self-hosted out-of-band collaborator | `--oob` |
-| **Browser** | DOM and stored XSS in real headless Chromium | `--browser` |
+| **Browser** | JS/SPA route discovery (DOM + fetch/XHR), DOM and stored XSS in real headless Chromium | `--browser` |
 | **gRPC** | reflection exposure, plaintext transport, unauthenticated RPCs | `--grpc` |
 | **Infrastructure** | exposed services on in-scope hosts | `--infra` |
 | **Source code** | Python AST source scanner, hard-coded secrets | `--repo` |
