@@ -118,6 +118,56 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Discover endpoints/params by crawling, no OpenAPI needed (default: false).",
                 },
+                "deep": {
+                    "type": "boolean",
+                    "description": (
+                        "Finding-driven escalation: a validated finding spawns bounded, oracle-proven "
+                        "deep-scan follow-ups (read-only, capped; default: false)."
+                    ),
+                },
+                "authz": {
+                    "type": "boolean",
+                    "description": (
+                        "Deeper read-only auth checks (weak JWT HMAC secret, expiry-not-enforced) on "
+                        "protected GETs (default: false)."
+                    ),
+                },
+                "bizlogic": {
+                    "type": "boolean",
+                    "description": (
+                        "Deterministic business-logic checks (economic/parameter tampering, "
+                        "workflow-step-skip); read-only (default: false)."
+                    ),
+                },
+                "api_scan": {
+                    "type": "boolean",
+                    "description": (
+                        "Deeper API checks (HTTP verb/method tampering, GraphQL depth); "
+                        "read-only (default: false)."
+                    ),
+                },
+                "exploit": {
+                    "type": "boolean",
+                    "description": (
+                        "Demonstrate bounded, non-destructive proof-of-impact for confirmed "
+                        "findings (default: false)."
+                    ),
+                },
+                "oob": {
+                    "type": "boolean",
+                    "description": (
+                        "Out-of-band blind SSRF/XXE detection via a collaborator. Needs a reachable "
+                        "collaborator; default: false."
+                    ),
+                },
+                "active": {
+                    "type": "boolean",
+                    "description": (
+                        "Request gated write/active probes (mass assignment, stored-XSS write, GraphQL "
+                        "mutations). Writes still require policy approval — every Tier-2 action still "
+                        "passes the scope/approve-or-deny pipeline and is audited; default: false."
+                    ),
+                },
                 "repo": {
                     "type": "string",
                     "description": "Optional source repo path for white-box correlation.",
@@ -317,6 +367,15 @@ def _tool_scan(args):
         application=args.get("application") or "target",
         repo=args.get("repo") or "",
         crawl=bool(args.get("crawl", False)),
+        deep=bool(args.get("deep", False)),
+        authz=bool(args.get("authz", False)),
+        bizlogic=bool(args.get("bizlogic", False)),
+        api_scan=bool(args.get("api_scan", False)),
+        exploit=bool(args.get("exploit", False)),
+        oob=bool(args.get("oob", False)),
+        # --active only *requests* Tier-2 write/active probes; the policy pipeline (scope tier
+        # ceiling, approve-or-deny, budget, audit) still gates every one — identical to CLI --active.
+        active=bool(args.get("active", False)),
         intel="deterministic",
     )
     eng = Engagement(cfg)  # ScopeError (incl. out-of-scope port) / FileNotFoundError -> isError

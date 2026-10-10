@@ -128,6 +128,10 @@ def test_wrong_argument_types_are_tool_errors():
         ("rampart_scope_check", {"scope_file": ["a", "b"]}),
         ("rampart_scan", {"scope_file": "s.yaml", "target": "http://127.0.0.2:1", "crawl": "false"}),
         ("rampart_scan", {"scope_file": "s.yaml", "target": "http://127.0.0.2:1", "wrok_dir": "typo"}),
+        # the new deep-stage booleans are schema-validated too (a string / int is rejected)
+        ("rampart_scan", {"scope_file": "s.yaml", "target": "http://127.0.0.2:1", "deep": "yes"}),
+        ("rampart_scan", {"scope_file": "s.yaml", "target": "http://127.0.0.2:1", "authz": 1}),
+        ("rampart_scan", {"scope_file": "s.yaml", "target": "http://127.0.0.2:1", "active": "true"}),
     ]
     for name, args in cases:
         r = _run([_call(name, args)])[0]
