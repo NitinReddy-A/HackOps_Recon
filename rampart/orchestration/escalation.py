@@ -40,12 +40,19 @@ _INJECTION_SET = frozenset(INJECTION_CLASSES)
 # Classes that are SAFE TO ESCALATE INTO. Escalation multiplies whatever the oracles do, so a
 # follow-up class is only admitted when its oracle proves the class from a clean state with a
 # negative control — otherwise escalation would amplify that oracle's false-positive mode into
-# a swarm of false findings (precisely the "agent gone haywire" failure). CMDI is deliberately
-# EXCLUDED until its oracle stops confirming on plain input reflection (a documented known issue):
-# on reflection endpoints it would otherwise manufacture a command-injection finding per hot
-# parameter. A confirmed CMDI still *triggers* escalation into the sound classes below; it is
-# only excluded as a *target*. Re-add it here once the CMDI oracle requires computed proof.
-ESCALATION_INJECTION_CLASSES = ("SQLI", "XSS", "SSTI", "SSRF", "PATH_TRAVERSAL", "OPEN_REDIRECT")
+# a swarm of false findings (precisely the "agent gone haywire" failure). CMDI is now included:
+# its oracle requires a COMPUTED proof (a fresh random product the injected input can never contain
+# literally, absent from a benign control), so a merely-reflecting endpoint can no longer satisfy
+# it — escalating into CMDI on a hot parameter cannot manufacture a false command-injection finding.
+ESCALATION_INJECTION_CLASSES = (
+    "SQLI",
+    "XSS",
+    "SSTI",
+    "SSRF",
+    "CMDI",
+    "PATH_TRAVERSAL",
+    "OPEN_REDIRECT",
+)
 
 
 def escalation_identity(hyp: dict) -> str:

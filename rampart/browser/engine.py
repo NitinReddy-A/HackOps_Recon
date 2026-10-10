@@ -99,6 +99,13 @@ class RenderResult:
     # The RAW top-level HTTP response body (before JS ran) — lets a caller tell a server-reflected
     # payload (present here) from a pure DOM-sink one (absent here, injected client-side).
     response_body: str = ""
+    # --- SPA/JS route-discovery harvest (populated by PlaywrightDriver.discover) ---
+    # Anchor hrefs present in the FINAL (post-JS) rendered DOM, as absolute URLs.
+    discovered_links: list = field(default_factory=list)
+    # In-scope network requests the page issued (fetch/XHR/document), as {"method","url"} dicts.
+    discovered_requests: list = field(default_factory=list)
+    # Forms in the final DOM, as {"action","method","inputs":[name,...]} dicts (action absolute).
+    discovered_forms: list = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -129,6 +136,107 @@ def _safe_text(msg) -> str:
             return ""
 
 
+# The JS harvested from the final (post-JS) DOM: anchor hrefs (absolute) + form action/method/inputs.
+_HARVEST_JS = """
+() => {
+  const links = Array.from(document.querySelectorAll('a[href]')).map(a => a.href);
+  const forms = Array.from(document.querySelectorAll('form')).map(f => ({
+    action: f.action || '',
+    method: (f.method || 'GET').toUpperCase(),
+    inputs: Array.from(f.querySelectorAll('input[name], textarea[name], select[name]')).map(i => i.name)
+  }));
+  return {links: links, forms: forms};
+}
+"""
+
+# Network requests worth treating as application endpoints (the API surface a static crawl misses).
+# Static sub-resources (images/css/fonts/scripts) are deliberately excluded to keep the model clean.
+_API_RESOURCE_TYPES = {"fetch", "xhr", "document"}
+
+
+def _make_scope_route(allow, on_request, requests, blocked, result=None, capture_body=False):
+    """Build a ``context.route`` handler enforcing ``allow(url, method)`` on EVERY sub-request.
+
+    Shared by :meth:`PlaywrightDriver.render` and :meth:`PlaywrightDriver.discover` so the scope
+    route-guard (C-3) is identical for both: an out-of-scope sub-request (image/script/iframe/
+    fetch/XHR, or a redirect target) is ABORTED, recorded in ``blocked`` and audited via
+    ``on_request``; it is never sent. ``capture_body`` grabs the raw top-level document body into
+    ``result.response_body`` (render's reflected-vs-DOM triage); discovery does not need it.
+    """
+
+    def _route(route):
+        req = route.request
+        req_url = req.url
+        method = req.method
+        try:
+            permitted = bool(allow(req_url, method))
+        except Exception:  # noqa: BLE001 - a broken predicate denies (fail-closed)
+            permitted = False
+        requests.append((req_url, method, permitted))
+        if on_request is not None:
+            try:
+                on_request(req_url, method, permitted)
+            except Exception:  # noqa: BLE001 - auditing must never break the render
+                pass
+        if permitted:
+            try:
+                # Fetch WITHOUT auto-following redirects. Chromium follows a FULFILLED redirect
+                # internally WITHOUT raising a new route event, so an off-origin 3xx would
+                # silently leave scope — we therefore inspect the Location ourselves and abort
+                # a redirect whose target is not permitted.
+                resp = route.fetch(max_redirects=0)
+                status = getattr(resp, "status", 0)
+                if 300 <= status < 400:
+                    location = ""
+                    try:
+                        location = (resp.headers or {}).get("location", "")
+                    except Exception:  # noqa: BLE001
+                        location = ""
+                    abs_loc = urljoin(req_url, location) if location else ""
+                    permitted_redirect = True
+                    if abs_loc:
+                        try:
+                            permitted_redirect = bool(allow(abs_loc, "GET"))
+                        except Exception:  # noqa: BLE001
+                            permitted_redirect = False
+                    if not permitted_redirect:
+                        requests.append((abs_loc, "GET", False))
+                        if on_request is not None:
+                            try:
+                                on_request(abs_loc, "GET", False)
+                            except Exception:  # noqa: BLE001
+                                pass
+                        blocked.append((abs_loc, "GET"))
+                        route.abort("blockedbyclient")
+                        return
+                # Capture the RAW top-level document body (pre-JS) for reflected-vs-DOM triage.
+                if capture_body and result is not None and not result.response_body:
+                    is_doc = method == "GET"
+                    try:
+                        is_doc = req.is_navigation_request()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if is_doc:
+                        try:
+                            result.response_body = resp.text()
+                        except Exception:  # noqa: BLE001
+                            pass
+                route.fulfill(response=resp)
+            except Exception:  # noqa: BLE001 - fall back to a normal continue
+                try:
+                    route.continue_()
+                except Exception:  # noqa: BLE001
+                    pass
+        else:
+            blocked.append((req_url, method))
+            try:
+                route.abort("blockedbyclient")
+            except Exception:  # noqa: BLE001
+                pass
+
+    return _route
+
+
 # --------------------------------------------------------------------------- drivers
 class BrowserDriver:
     """Abstract headless-browser driver. Subclasses never raise out of :meth:`render`."""
@@ -139,6 +247,16 @@ class BrowserDriver:
         return False
 
     def render(
+        self,
+        url: str,
+        headers: dict | None = None,
+        timeout: float = 10.0,
+        allow=None,
+        on_request=None,
+    ) -> RenderResult:
+        raise NotImplementedError
+
+    def discover(
         self,
         url: str,
         headers: dict | None = None,
@@ -212,75 +330,7 @@ class PlaywrightDriver(BrowserDriver):
                 pass
             return True
 
-        def _route(route):
-            req = route.request
-            req_url = req.url
-            method = req.method
-            try:
-                permitted = bool(allow(req_url, method))
-            except Exception:  # noqa: BLE001 - a broken predicate denies (fail-closed)
-                permitted = False
-            requests.append((req_url, method, permitted))
-            if on_request is not None:
-                try:
-                    on_request(req_url, method, permitted)
-                except Exception:  # noqa: BLE001 - auditing must never break the render
-                    pass
-            if permitted:
-                try:
-                    # Fetch WITHOUT auto-following redirects. Chromium follows a FULFILLED redirect
-                    # internally WITHOUT raising a new route event, so an off-origin 3xx would
-                    # silently leave scope — we therefore inspect the Location ourselves and abort
-                    # a redirect whose target is not permitted.
-                    resp = route.fetch(max_redirects=0)
-                    status = getattr(resp, "status", 0)
-                    if 300 <= status < 400:
-                        location = ""
-                        try:
-                            location = (resp.headers or {}).get("location", "")
-                        except Exception:  # noqa: BLE001
-                            location = ""
-                        abs_loc = urljoin(req_url, location) if location else ""
-                        permitted_redirect = True
-                        if abs_loc:
-                            try:
-                                permitted_redirect = bool(allow(abs_loc, "GET"))
-                            except Exception:  # noqa: BLE001
-                                permitted_redirect = False
-                        if not permitted_redirect:
-                            requests.append((abs_loc, "GET", False))
-                            if on_request is not None:
-                                try:
-                                    on_request(abs_loc, "GET", False)
-                                except Exception:  # noqa: BLE001
-                                    pass
-                            blocked.append((abs_loc, "GET"))
-                            route.abort("blockedbyclient")
-                            return
-                    # Capture the RAW top-level document body (pre-JS) for reflected-vs-DOM triage.
-                    if not result.response_body:
-                        is_doc = method == "GET"
-                        try:
-                            is_doc = req.is_navigation_request()
-                        except Exception:  # noqa: BLE001
-                            pass
-                        if is_doc:
-                            try:
-                                result.response_body = resp.text()
-                            except Exception:  # noqa: BLE001
-                                pass
-                    route.fulfill(response=resp)
-                except Exception:  # noqa: BLE001 - fall back to a normal continue
-                    try:
-                        route.continue_()
-                    except Exception:  # noqa: BLE001
-                        pass
-            else:
-                blocked.append((req_url, method))
-                try:
-                    route.abort("blockedbyclient")
-                except Exception:  # noqa: BLE001
-                    pass
+        _route = _make_scope_route(allow, on_request, requests, blocked, result=result, capture_body=True)
 
         try:
             with sync_api.sync_playwright() as p:
@@ -320,6 +370,103 @@ class PlaywrightDriver(BrowserDriver):
         result.requests = requests
         return result
 
+    def discover(
+        self,
+        url: str,
+        headers: dict | None = None,
+        timeout: float = 10.0,
+        allow=None,
+        on_request=None,
+    ) -> RenderResult:
+        """Render ``url`` and harvest its SPA/JS attack surface — the routes/endpoints a GET-only
+        static crawl cannot see because they appear only after JavaScript runs.
+
+        Collects, on :class:`RenderResult`:
+
+        * ``discovered_links`` — anchor ``href``s in the FINAL (post-JS) DOM (absolute URLs);
+        * ``discovered_forms`` — ``{action, method, inputs}`` for every form in that DOM;
+        * ``discovered_requests`` — the in-scope ``{method, url}`` of each fetch/XHR/document
+          request the page issued (the real API surface; static sub-resources are dropped).
+
+        Scope is enforced by the SAME route-guard as :meth:`render` (shared
+        :func:`_make_scope_route`): an out-of-scope sub-request is aborted and recorded in
+        ``blocked_requests`` — never sent — and a request that does not pass ``allow`` is never
+        returned as discovered. ``allow`` defaults to :func:`same_origin_allow` of ``url``.
+
+        Robust by contract: any failure returns a :class:`RenderResult` with ``error`` set and
+        empty harvest lists — it never raises.
+        """
+        result = RenderResult(url=url)
+        try:
+            sync_api = _load_playwright()
+        except Exception as exc:  # noqa: BLE001
+            result.error = f"playwright unavailable: {exc}"
+            return result
+
+        allow = allow or same_origin_allow(url)
+        blocked: list = []
+        requests: list = []
+        net: list = []  # (method, url, resource_type) for every request the page issued
+
+        def _on_req(req):
+            try:
+                net.append((req.method, req.url, (req.resource_type or "").lower()))
+            except Exception:  # noqa: BLE001 - harvesting must never break the render
+                pass
+
+        _route = _make_scope_route(allow, on_request, requests, blocked)
+        links: list = []
+        forms: list = []
+        try:
+            with sync_api.sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                try:
+                    context = browser.new_context(extra_http_headers=dict(headers or {}))
+                    context.route("**/*", _route)
+                    page = context.new_page()
+                    # Capture the method/URL/type of every request the page fires (fetch/XHR/doc).
+                    page.on("request", _on_req)
+                    page.goto(url, wait_until="networkidle", timeout=int(timeout * 1000))
+                    try:
+                        page.wait_for_timeout(min(500, int(timeout * 1000)))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    result.html = page.content()
+                    try:
+                        harvest = page.evaluate(_HARVEST_JS) or {}
+                        links = list(harvest.get("links") or [])
+                        forms = [dict(f) for f in (harvest.get("forms") or [])]
+                    except Exception:  # noqa: BLE001 - a hostile DOM must not break discovery
+                        pass
+                finally:
+                    browser.close()
+        except Exception as exc:  # noqa: BLE001 — never raise out of discover
+            result.error = f"discover failed: {exc}"
+
+        result.requests = requests
+        result.blocked_requests = blocked
+        result.discovered_links = links
+        result.discovered_forms = forms
+        # Keep only in-scope, API-ish network requests; out-of-scope ones were already aborted and
+        # are recorded in blocked_requests — they are never returned as discovered.
+        seen: set = set()
+        disc: list = []
+        for method, req_url, rtype in net:
+            if rtype and rtype not in _API_RESOURCE_TYPES:
+                continue
+            try:
+                if not allow(req_url, method):
+                    continue
+            except Exception:  # noqa: BLE001 - fail closed
+                continue
+            key = ((method or "GET").upper(), req_url)
+            if key in seen:
+                continue
+            seen.add(key)
+            disc.append({"method": key[0], "url": req_url})
+        result.discovered_requests = disc
+        return result
+
 
 class StubDriver(BrowserDriver):
     """A scriptable driver for tests — no real browser required.
@@ -356,6 +503,10 @@ class StubDriver(BrowserDriver):
             out = self._default(url) if callable(self._default) else self._default
             return out if out is not None else RenderResult(url=url)
         return RenderResult(url=url)
+
+    # Discovery uses the same scripted-response lookup; a test seeds a RenderResult carrying
+    # discovered_links / discovered_requests / discovered_forms.
+    discover = render
 
 
 # --------------------------------------------------------------------------- helpers

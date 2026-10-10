@@ -7,16 +7,39 @@ marker in the query string — nothing is actually fetched, executed, or read on
 
 from __future__ import annotations
 
+import json as _json
+import random as _random
 import re as _re
 
 from .oracle import OracleVerdict
 from .web_oracles import _collect
 
-_CMD_MARKER = "RAMPARTCMDMARK42"
 _SSRF_INTERNAL_URL = "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
-_SSRF_SIGNATURE = "RAMPART-SSRF"
+# Cloud-metadata / IMDS *content* signature: tokens a real metadata response leaks (AWS/GCP/Azure),
+# not a marker the demo happens to emit. A benign external fetch never contains these, and merely
+# echoing the probe URL back does not either -> a reflecting endpoint cannot confirm SSRF.
+_SSRF_SIGNATURE = _re.compile(
+    r"(?i)(ami-id|instance-id|AccessKeyId|SecretAccessKey|\"Code\"\s*:\s*\"Success\"|"
+    r"iam[-/ ]?role|computeMetadata|metadata\.google)"
+)
 _TRAVERSAL_PAYLOAD = "../../../../../../etc/passwd"
-_TRAVERSAL_SIGNATURE = "RAMPART-TRAVERSAL"
+# Real file-content signature: a unix /etc/passwd root entry (uid:gid 0:0) or a Windows
+# boot.ini / win.ini section banner. A reflected path (e.g. echoing "../../etc/passwd") contains
+# none of these, so a reflecting endpoint no longer confirms traversal.
+_TRAVERSAL_SIGNATURE = _re.compile(
+    r"(?im)\broot:[^:\r\n]*:0:0:"  # unix /etc/passwd root line (uid:gid both 0)
+    r"|\[boot loader\]"  # windows boot.ini
+    r"|\[fonts\]"  # windows win.ini
+    r"|;\s*for 16-bit app support"  # windows win.ini banner
+)
+
+
+def _sig_match(signature, body: str | None) -> bool:
+    """Match a signature that is either a plain substring or a compiled regex."""
+    text = body or ""
+    if hasattr(signature, "search"):
+        return bool(signature.search(text))
+    return signature in text
 
 
 def _marker_oracle(runner, hyp, *, vuln_class, probe_value, control_value, signature, reproductions):
@@ -45,8 +68,8 @@ def _marker_oracle(runner, hyp, *, vuln_class, probe_value, control_value, signa
             False, vuln_class, reasons=["probe blocked by policy"], evidence=_collect(probe, control)
         )
 
-    probe_hit = signature in (probe.body or "")
-    control_hit = signature in (control.body or "")
+    probe_hit = _sig_match(signature, probe.body)
+    control_hit = _sig_match(signature, control.body)
     reasons, fp = [], []
     reasons.append(
         ("PASS" if probe_hit else "FAIL")
@@ -68,7 +91,7 @@ def _marker_oracle(runner, hyp, *, vuln_class, probe_value, control_value, signa
                 hypothesis_id=hid,
                 summary=f"{vuln_class} repro {i + 1}",
             )
-            if r.executed and signature in (r.body or ""):
+            if r.executed and _sig_match(signature, r.body):
                 repro_ok += 1
         fp.append(f"reproduced {repro_ok}/{reproductions} times from clean requests")
 
@@ -96,14 +119,99 @@ def run_ssrf_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
 
 
 def run_cmdi_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
-    return _marker_oracle(
-        runner,
-        hyp,
+    """OS command injection via a COMPUTED proof the input cannot contain literally.
+
+    The probe injects ``; echo $((A*B))`` with fresh random A,B each round. A shell evaluates the
+    arithmetic expansion and emits the *product*; an endpoint that merely reflects input echoes the
+    literal ``$((A*B))`` and never the product. Confirmation requires, every round: the product
+    appears in the response, the product is NOT a substring of the probe value we sent (so
+    reflection cannot explain it), and a benign control (``127.0.0.1``) response does not contain
+    it. A,B are drawn in [100, 999], so the product is 5-6 digits while the longest contiguous digit
+    run in the probe is 3 — the product can never be a substring of the payload by construction.
+    """
+    path, param = hyp["endpoint_path"], hyp["selector_param"]
+    hid = hyp.get("id")
+
+    control = runner.get(
+        path,
+        session=None,
+        query={param: "127.0.0.1"},
+        payload_class="boundary-probe",
+        rationale="CMDI benign control (no injected command)",
+        hypothesis_id=hid,
+        summary="cmdi control",
+    )
+
+    def _probe(idx):
+        a, b = _random.randint(100, 999), _random.randint(100, 999)
+        expected = str(a * b)
+        value = f"127.0.0.1; echo $(({a}*{b}))"
+        resp = runner.get(
+            path,
+            session=None,
+            query={param: value},
+            payload_class="boundary-probe",
+            rationale="CMDI probe: shell arithmetic expansion of a fresh random product",
+            hypothesis_id=hid,
+            summary=f"cmdi probe {idx}",
+        )
+        return expected, value, resp
+
+    expected0, value0, probe = _probe(0)
+    if not probe.executed or not control.executed:
+        return OracleVerdict(
+            False, "CMDI", reasons=["probe blocked by policy"], evidence=_collect(probe, control)
+        )
+
+    control_body = control.body or ""
+    computed_present = expected0 in (probe.body or "")
+    not_in_payload = expected0 not in value0  # the product is never literally in what we sent
+    control_clean = expected0 not in control_body
+
+    reasons, fp = [], []
+    reasons.append(
+        ("PASS" if computed_present else "FAIL")
+        + f": the injected command computed the product ({expected0} present in the response)"
+    )
+    reasons.append(
+        ("PASS" if not_in_payload else "FAIL")
+        + ": the product is NOT a substring of the probe value sent (reflection cannot explain it)"
+    )
+    reasons.append(
+        ("PASS" if control_clean else "FAIL") + ": the benign control response does not contain the product"
+    )
+    fp.append(
+        f"product present={computed_present}; present-in-payload={not not_in_payload}; "
+        f"control-contains={not control_clean}"
+    )
+    decisive = computed_present and not_in_payload and control_clean
+
+    repro_ok = 0
+    if decisive:
+        for i in range(reproductions):
+            exp_i, val_i, r = _probe(i + 1)
+            if (
+                r.executed
+                and (exp_i in (r.body or ""))
+                and (exp_i not in val_i)
+                and (exp_i not in control_body)
+            ):
+                repro_ok += 1
+        fp.append(f"reproduced {repro_ok}/{reproductions} times with a fresh random product each run")
+
+    return OracleVerdict(
+        validated=decisive and repro_ok >= reproductions,
         vuln_class="CMDI",
-        probe_value=f"127.0.0.1; echo {_CMD_MARKER}",
-        control_value="127.0.0.1",
-        signature=_CMD_MARKER,
-        reproductions=reproductions,
+        reasons=reasons,
+        false_positive_checks=fp,
+        reproductions=repro_ok,
+        evidence=_collect(probe, control),
+        controls={
+            "product": expected0,
+            "computed_present": computed_present,
+            "not_in_payload": not_in_payload,
+            "control_clean": control_clean,
+        },
     )
 
 
@@ -119,7 +227,28 @@ def run_traversal_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
     )
 
 
-_BFLA_SIGNATURE = "RAMPART-BFLA"
+def _privileged_aggregate(body: str | None) -> bool:
+    """Structural signal that a response is a privileged *aggregate*, not a trivial 200.
+
+    True only when the body is JSON exposing a list of 2+ records (a top-level array, or a dict
+    whose value is such a list — the shape a cross-tenant "all orders" report returns). A bare 200,
+    a scalar body, an empty list, or a single-item payload does NOT qualify, so the oracle never
+    confirms on an ordinary authenticated response.
+    """
+    try:
+        doc = _json.loads(body or "")
+    except (ValueError, TypeError):
+        return False
+
+    def _is_aggregate(value) -> bool:
+        return isinstance(value, list) and len(value) >= 2
+
+    if _is_aggregate(doc):
+        return True
+    if isinstance(doc, dict):
+        return any(_is_aggregate(v) for v in doc.values())
+    return False
+
 
 _SENSITIVE_KEY = _re.compile(
     r'(?i)"(ssn|social_security|password|passwd|pwd|password_hash|secret|api[_-]?key|api[_-]?token|'
@@ -405,8 +534,15 @@ def run_jwt_oracle(runner, hyp, reproductions: int = 2) -> OracleVerdict:
 
 
 def run_bfla_oracle(runner, sessions, hyp, reproductions: int = 2) -> OracleVerdict:
-    """Broken function-level authorization: a low-privilege principal reaches a privileged
-    function (200 + privileged data) while the function still enforces authentication."""
+    """Broken function-level authorization, proven structurally (no response marker).
+
+    Confirm only when the low-privilege authenticated principal gets a 200 carrying a privileged
+    *aggregate* (JSON with a list of 2+ records — data a low-priv caller should never see in bulk)
+    WHILE an unauthenticated request to the same function is rejected (401/403). That pair proves
+    it is an auth-gated function AND that a low-priv principal reached privileged data. A public
+    endpoint (unauth also 200) or a properly-restricted one (low-priv 403) no longer confirms, and
+    a bare 200 is never enough.
+    """
     path = hyp["endpoint_path"]
     actor = hyp["actor_principal"]
     hid = hyp.get("id")
@@ -432,12 +568,12 @@ def run_bfla_oracle(runner, sessions, hyp, reproductions: int = 2) -> OracleVerd
         return OracleVerdict(
             False, "BFLA", reasons=["probe blocked by policy"], evidence=_collect(authed, unauth)
         )
-    priv = authed.status == 200 and _BFLA_SIGNATURE in (authed.body or "")
+    priv = authed.status == 200 and _privileged_aggregate(authed.body)
     auth_enforced = unauth.status in (401, 403)
     reasons, fp = [], []
     reasons.append(
         ("PASS" if priv else "FAIL")
-        + f": low-priv principal '{actor}' received privileged data (status {authed.status})"
+        + f": low-priv principal '{actor}' received a privileged aggregate (status {authed.status})"
     )
     reasons.append(
         ("PASS" if auth_enforced else "FAIL")
@@ -457,7 +593,7 @@ def run_bfla_oracle(runner, sessions, hyp, reproductions: int = 2) -> OracleVerd
                 hypothesis_id=hid,
                 summary=f"bfla repro {i + 1}",
             )
-            if r.executed and r.status == 200 and _BFLA_SIGNATURE in (r.body or ""):
+            if r.executed and r.status == 200 and _privileged_aggregate(r.body):
                 repro_ok += 1
         fp.append(f"reproduced {repro_ok}/{reproductions} times from clean sessions")
     return OracleVerdict(

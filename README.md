@@ -199,6 +199,7 @@ Rampart works black-box with just a URL. Give it more context and it finds more:
 | Add | Flag | What you get |
 | --- | --- | --- |
 | An OpenAPI spec | `--openapi openapi.json` | every endpoint and parameter, without crawling |
+| A single-page app | `--browser` | JS/SPA routes and API calls discovered from the rendered DOM + fetch/XHR, fed to the oracles (static crawling cannot see these) |
 | Test accounts | `test_accounts` in the scope file + `--secrets secrets.json` | authenticated testing, IDOR/BOLA across users |
 | Object ownership | `--appmodel-seed seed.json` | precise cross-tenant access checks |
 | Your source code | `--repo .` | SAST, secrets, SCA, IaC, and runtime↔source correlation |
@@ -422,7 +423,7 @@ is spelled out in [docs/COVERAGE.md](docs/COVERAGE.md). The built-in checks need
 | **API depth** | HTTP verb tampering, GraphQL depth abuse | `--api-scan` |
 | **Business logic** | price, quantity, and parameter tampering | `--bizlogic` |
 | **Blind bugs** | blind SSRF and XXE via a self-hosted out-of-band collaborator | `--oob` |
-| **Browser** | DOM and stored XSS in real headless Chromium | `--browser` |
+| **Browser** | JS/SPA route discovery (DOM + fetch/XHR), DOM and stored XSS in real headless Chromium | `--browser` |
 | **gRPC** | reflection exposure, plaintext transport, unauthenticated RPCs | `--grpc` |
 | **Infrastructure** | exposed services on in-scope hosts | `--infra` |
 | **Source code** | Python AST source scanner, hard-coded secrets | `--repo` |
@@ -610,14 +611,6 @@ for a human pentest.
 - No hosted service. You run it yourself.
 - Compliance output is evidence of control effectiveness, not an attestation.
 
-**Known issues in v1.2.0** (found by our own end-to-end review and being worked on):
-
-- The OS command injection oracle can confirm an endpoint that merely echoes its input back. Treat
-  a `CMDI` finding on an endpoint that reflects parameters with extra care until this is fixed.
-- The path traversal, SSRF, and BFLA oracles currently recognise response signatures that the
-  bundled demo produces, so they can miss these flaws on other applications (false negatives,
-  not false positives).
-
 ## Documentation
 
 | Guide | |
@@ -627,8 +620,10 @@ for a human pentest.
 | [LLMs and API keys](docs/LLM_AND_API_KEYS.md) | providers, models, free options |
 | [LLM security testing](docs/LLM_SECURITY_TESTING.md) | the 4 OWASP LLM Top 10 categories `llm-test` covers (LLM01/05/07/02) |
 | [Coverage manifest](docs/COVERAGE.md) | exactly what Rampart does, by evidence tier — the single source of truth |
+| [Notifications](docs/NOTIFICATIONS.md) | post confirmed findings to a signed webhook or Slack |
+| [External tools](docs/EXTERNAL_TOOLS.md) | optional Nuclei/Semgrep/Trivy/… adapters (unvalidated leads) |
 | [Architecture](docs/ARCHITECTURE.md) | how the code is organized |
-| [Benchmark fixtures](docs/BENCHMARK_FIXTURES.md) | how ground truth is defined |
+| [Benchmark fixtures](docs/BENCHMARK_FIXTURES.md) | the multi-app benchmark program and ground truth |
 | [Changelog](CHANGELOG.md) | what changed in each release |
 
 ## Contributing

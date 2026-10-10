@@ -71,6 +71,10 @@ class EngagementConfig:
     escalate_max_total: int = 24  # cap on follow-up tests across the whole run
     escalate_max_per_finding: int = 6  # cap on follow-ups from any single finding
     store_url: str = ""  # multi-tenant store, e.g. sqlite:///runs.db or postgresql://…
+    # Opt-in outbound notification sinks for CONFIRMED findings (empty = off). The webhook secret
+    # is read from the RAMPART_WEBHOOK_SECRET env var only, never from config (see integrations.notify).
+    notify_webhook_url: str = ""
+    notify_slack_url: str = ""
     sast_since: str = ""  # diff-aware SAST: scan only .py files changed vs this git ref
     llm_chat_path: str = "/chat"
     llm_input_field: str = "message"
@@ -672,6 +676,7 @@ class Engagement:
 
         self._stage_log = []
         self.recon_tech, self.recon_pages = [], 0
+        self.browser_discovered = 0
         cfg = self.cfg
         if self.offline:
             wanted = [n for n in _NETWORK_STAGES if getattr(cfg, n, False)]
@@ -683,6 +688,11 @@ class Engagement:
                 )
         else:
             self.recon()
+            # JS/SPA route discovery (needs --browser + Playwright): harvest endpoints from the
+            # rendered DOM + fetch/XHR activity and merge them BEFORE the DAST stage, so the normal
+            # oracles then test SPA/client-rendered routes like any crawled endpoint.
+            if cfg.browser:
+                self.browser_discovery()
         # Black-box DAST stage (the oracle classes + misconfig + external scanners).
         if cfg.do_dast and not self.offline:
             result = self.supervisor.run()
@@ -802,10 +812,58 @@ class Engagement:
             "plan": result.plan,
             "recon_tech": getattr(self, "recon_tech", []),
             "recon_pages": getattr(self, "recon_pages", 0),
+            "browser_discovered": getattr(self, "browser_discovered", 0),
         }
         summary.update(self.scan_summary(result))
         self.store.save_scan(summary)
         return result
+
+    # ------------------------------------------------- browser discovery
+    def browser_discovery(self):
+        """Optional JS/SPA route discovery (needs the [browser] extra + Chromium).
+
+        Renders the target in the headless browser, harvests endpoints from the POST-JS DOM
+        (anchors + form actions) and from the page's fetch/XHR/document network activity, then
+        merges them into the application model with the SAME ``merge_into_model`` the crawler uses
+        — so the normal oracles then test these SPA/client-rendered routes like any other endpoint.
+
+        Scope-gated: the browser's own sub-requests are route-guarded by the scope (``allow``) and
+        each is audited + budgeted (``on_request``), exactly like :meth:`run_browser`. A clean skip
+        (with skip_reason noted) when the extra/Chromium is absent — never raises."""
+        self.browser_discovered = 0
+        if not self.cfg.browser:
+            return None
+        from .browser import (
+            PlaywrightDriver,
+            audited_on_request,
+            browser_discover,
+            browser_skip_reason,
+        )
+        from .infra.sidechannel import SideChannelGuard
+        from .recon import merge_into_model
+
+        why = browser_skip_reason()
+        if why:
+            self._note("browser", why)
+            return None
+        allow = self._browser_allow()
+        guard = SideChannelGuard(
+            audit=self.audit,
+            budget=self.budget,
+            engagement_id=self.pipeline.engagement_id,
+            tool="browser",
+            actor_role="browser-discover",
+        )
+        on_request = audited_on_request(guard)
+        crawl = browser_discover(PlaywrightDriver(), self.target_url, allow=allow, on_request=on_request)
+        added = merge_into_model(self.appmodel, crawl)
+        self.browser_discovered = added
+        self._note(
+            "browser",
+            f"JS/SPA route discovery: rendered {crawl.pages_visited} page(s), "
+            f"added {added} endpoint(s) to the application model",
+        )
+        return {"pages": crawl.pages_visited, "added_endpoints": added}
 
     # ----------------------------------------------------------- browser
     def run_browser(self):
@@ -1372,3 +1430,33 @@ class Engagement:
                 fh.write(getattr(rb, attr)())
             written[fmt] = path
         return written, rb, ok
+
+    # ------------------------------------------------------------- notify
+    def notify(self, findings=None) -> dict:
+        """Post NEW confirmed findings to the configured webhook / Slack sinks (opt-in, failure-safe).
+
+        Sink URLs come from the config fields, falling back to ``RAMPART_WEBHOOK_URL`` /
+        ``RAMPART_SLACK_WEBHOOK_URL``; the webhook signing secret comes ONLY from
+        ``RAMPART_WEBHOOK_SECRET``. Idempotent across re-runs (``<work_dir>/notified.json``).
+        Returns the notifier result dict; never raises."""
+        from .integrations import notify as notify_mod
+
+        try:
+            webhook_url = self.cfg.notify_webhook_url or os.environ.get("RAMPART_WEBHOOK_URL", "")
+            slack_url = self.cfg.notify_slack_url or os.environ.get("RAMPART_SLACK_WEBHOOK_URL", "")
+            if not webhook_url and not slack_url:
+                return {"enabled": False, "sinks": [], "sent": 0}
+            if findings is None:
+                findings = self.store.load_findings()
+            return notify_mod.notify(
+                findings,
+                work_dir=self.cfg.work_dir,
+                webhook_url=webhook_url,
+                slack_url=slack_url,
+                webhook_secret=os.environ.get("RAMPART_WEBHOOK_SECRET", ""),
+                application=self.cfg.application,
+                target=self.target_url,
+                engagement_id=self.pipeline.engagement_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - notification must never break a scan
+            return {"enabled": True, "sinks": [], "sent": 0, "error": f"{type(exc).__name__}: {exc}"}

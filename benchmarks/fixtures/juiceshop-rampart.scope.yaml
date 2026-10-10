@@ -1,0 +1,36 @@
+---
+apiVersion: security-agent/v1
+kind: EngagementScope
+authorization:
+  owner: "ci@localhost"
+  authorized_by: "ci@localhost"
+  ticket: "JUICESHOP-CORPUS"
+  attestation: "Authorized testing of a locally-run OWASP Juice Shop container."
+  expires: "2099-12-31T23:59:59Z"
+scope:
+  in_scope:
+    - host: "127.0.0.1"
+      ports: [3000]
+      paths_include: ["/**"]
+      methods: ["GET", "POST", "PUT", "DELETE"]
+  out_of_scope:
+    paths_exclude: []
+    hosts_exclude: []
+  resolved_ip_allowlist: ["127.0.0.1/32"]
+limits:
+  max_requests_per_host_per_min: 1000
+  max_total_requests: 20000
+  max_concurrent_workers: 2
+  budget_usd: 5.0
+  max_tokens: 2000000
+action_policy:
+  default_tier_ceiling: 1
+  tier2_requires_approval: true
+  tier3: deny
+test_accounts: []
+notify: {}
+---
+
+# OWASP Juice Shop corpus scope. Authorizes only the locally-run Juice Shop container on
+# 127.0.0.1:3000. Juice Shop is an Angular SPA, so run with --crawl --browser (the browser
+# engine's JS/SPA discovery surfaces routes a static crawl misses).
