@@ -6,8 +6,9 @@ after the [two rules in CONTRIBUTING.md](../CONTRIBUTING.md#the-two-rules-please
 ## The idea in one sentence
 
 An LLM (or a deterministic rule engine) **proposes** what to test; deterministic code **disposes** —
-it gates every action through one safety choke-point, executes only vetted requests, and confirms a
-finding only when an independent oracle can re-prove it. Safety and trust are properties of the
+it gates every action through one fail-closed admission contract (the HTTP policy pipeline, plus a
+shared admission guard for the engines that open their own connections), executes only vetted
+requests, and confirms a finding only when an independent oracle can re-prove it. Safety and trust are properties of the
 *architecture*, not of a prompt.
 
 ## The flow of a scan
@@ -38,10 +39,15 @@ finding only when an independent oracle can re-prove it. Safety and trust are pr
                                               oracle-proven. Hard depth/total/per-finding caps + dedup.
 ```
 
-The one thing to internalize: **step 4's arrow to the target always goes through the policy
-pipeline.** No scanner, agent, or model output reaches the network any other way. (The browser,
-gRPC, and infra engines open their own connections — they're the documented exceptions, pointed
-only at an already in-scope host.)
+The one thing to internalize: **every HTTP probe reaches the target only through the policy
+pipeline** — no scanner, agent, or model output reaches the network any other way. The browser,
+gRPC, and infra engines open their own connections (Chromium's network stack, a gRPC channel, raw
+TCP/TLS sockets), so they do not pass through the pipeline — but they are not an unguarded exception.
+Each resolves and scope-checks its target against the same scope + `resolved_ip_allowlist` itself and
+routes every connection through the shared admission guard `SideChannelGuard`
+(`rampart/infra/sidechannel.py`), which applies the same budget, kill-switch, and hash-chained audit,
+fail-closed. One admission contract, enforced at every egress point. The full capability/evidence map
+is in [COVERAGE.md](COVERAGE.md).
 
 ## The layers (and which package is which)
 
@@ -50,7 +56,7 @@ only at an already in-scope host.)
 | Package | What it does |
 | --- | --- |
 | `rampart/schemas/` | The `rampart.scope.yaml` scope contract, the `Finding` shape, and the typed `ToolCallRequest`. The vocabulary everything else speaks. |
-| `rampart/policy/` | **The single choke-point.** `pipeline.py` runs allowlist → scope → resolved-IP → risk tier → policy engine → budget/rate-limit → execute → audit. Fail-closed. Start here. |
+| `rampart/policy/` | **The HTTP choke-point.** `pipeline.py` runs allowlist → scope → resolved-IP → risk tier → policy engine → budget/rate-limit → execute → audit. Fail-closed. Start here. The browser/gRPC/infra engines open their own connections and honour the same admission contract via `rampart/infra/sidechannel.py` (`SideChannelGuard`). |
 | `rampart/audit/` | Append-only, hash-chained, tamper-evident log of every decision and action. |
 | `rampart/executor/` | The only place a request actually goes out: the HTTP client, the seeded-session manager, and secrets resolution. |
 | `rampart/evidence/` | Content-addressed, secret-scrubbed evidence store. |
@@ -80,7 +86,7 @@ only at an already in-scope host.)
 | `rampart/grpc_scan/` | gRPC reflection exposure + per-RPC method checks. |
 | `rampart/oob/` | Out-of-band collaborator for blind SSRF/XXE. |
 | `rampart/browser/` | Headless-browser engine for DOM & stored XSS. |
-| `rampart/llm/` | OWASP LLM Top 10 assessment of an authorized LLM endpoint. |
+| `rampart/llm/` | OWASP LLM Top 10 probes for an authorized LLM endpoint — 4 of the risk categories (LLM01 prompt injection + jailbreak, LLM05 improper output handling, LLM07/LLM02 leakage). |
 
 ### Reason, exploit, report
 
