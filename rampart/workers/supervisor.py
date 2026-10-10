@@ -11,7 +11,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..agents import run_planner
-from ..orchestration import Task, TaskGraph, run_graph
+from ..orchestration import (
+    EscalationBudget,
+    Task,
+    TaskGraph,
+    escalation_identity,
+    follow_ups,
+    run_graph,
+)
 from ..runner import ProbeRunner
 from ..scanners import misconfig_checks, security_headers_check, sensitive_files_check
 from ..schemas.finding import State
@@ -62,6 +69,8 @@ class Supervisor:
         scanners=None,
         active=False,
         max_workers=None,
+        escalate=False,
+        escalation_caps=None,
     ):
         self.pipeline = pipeline
         self.evidence = evidence_store
@@ -84,6 +93,16 @@ class Supervisor:
             limits = getattr(getattr(pipeline, "scope", None), "limits", None)
             max_workers = getattr(limits, "max_concurrent_workers", 4) or 4
         self.max_workers = max(1, int(max_workers))
+        # Finding-driven escalation: a validated finding deterministically spawns bounded,
+        # deduped, oracle-proven follow-up tests. Off by default; every cap is enforced in
+        # EscalationBudget so this can be dialed up without any risk of runaway fan-out.
+        caps = escalation_caps or {}
+        self.escalation = EscalationBudget(
+            enabled=bool(escalate),
+            max_depth=caps.get("max_depth", 2),
+            max_total=caps.get("max_total", 24),
+            max_per_finding=caps.get("max_per_finding", 6),
+        )
 
     def _log(self, result, phase, msg):
         result.phase_log.append({"ts": now_iso(), "phase": phase, "msg": msg})
@@ -190,8 +209,75 @@ class Supervisor:
 
         # Phase: test + validate — fan every hypothesis out across the graph orchestrator so
         # independent hypotheses are tested and validated in PARALLEL (each on its own worker +
-        # independent oracle). Results are reassembled in planned order below, so a parallel run
-        # yields byte-identical findings to a sequential one; concurrency changes only wall-clock.
+        # independent oracle). Results are reassembled in planned order, so a parallel run yields
+        # byte-identical findings to a sequential one; concurrency changes only wall-clock.
+        #
+        # Then escalate LEVEL BY LEVEL: each validated finding deterministically proposes bounded
+        # follow-up hypotheses (admitted through EscalationBudget), which run as the next level —
+        # still gated, still oracle-proven, still deterministic (admission order is sorted by
+        # investigation identity, so it never depends on which worker finished first).
+        self.escalation.seed(hyps)
+        for h in hyps:
+            h["_depth"] = 0
+        frontier = hyps
+        depth = 0
+        peak = 0
+        total_dur = 0.0
+        level_sizes: list[int] = []
+        while frontier:
+            level_sizes.append(len(frontier))
+            validated, lvl_peak, lvl_dur = self._run_level(result, frontier, depth)
+            peak = max(peak, lvl_peak)
+            total_dur = round(total_dur + lvl_dur, 3)
+            next_frontier: list = []
+            if self.escalation.enabled and depth < self.escalation.max_depth:
+                for hyp, finding in sorted(validated, key=lambda vf: escalation_identity(vf[0])):
+                    admitted = self.escalation.admit_batch(follow_ups(finding, hyp, self.appmodel), depth)
+                    for a in admitted:
+                        a.setdefault("id", gen_id("hyp"))
+                        a["status"] = "planned"
+                    next_frontier.extend(admitted)
+            if next_frontier:
+                result.hypotheses.extend(next_frontier)
+                origins = sorted({a.get("_origin", "escalation") for a in next_frontier})
+                self._log(
+                    result,
+                    "escalate",
+                    f"depth {depth + 1}: {len(next_frontier)} finding-driven follow-up(s) "
+                    f"admitted [{', '.join(origins)}]",
+                )
+            frontier = next_frontier
+            depth += 1
+
+        result.plan["parallel"] = {
+            "max_workers": self.max_workers,
+            "peak_concurrency": peak,
+            "duration_s": total_dur,
+            "levels": level_sizes,
+        }
+        if self.escalation.enabled:
+            result.plan["escalation"] = self.escalation.summary()
+            s = self.escalation.summary()
+            dropped = sum(s["dropped"].values())
+            self._log(
+                result,
+                "escalate",
+                f"escalation: {s['admitted']} follow-up(s) admitted, {dropped} dropped by caps "
+                f"(depth≤{s['max_depth']}, total≤{s['max_total']}, per-finding≤{s['max_per_finding']})",
+            )
+
+        # Phase: external OSS scanner adapters (graceful — skipped if the tool is not installed)
+        self.run_adapters(result)
+
+        return result
+
+    def _run_level(self, result, hyps, depth):
+        """Run one level of hypotheses in parallel and fold each task's record into ``result``.
+
+        Returns ``(validated, peak_concurrency, duration_s)`` where ``validated`` is the list of
+        ``(hypothesis, finding)`` pairs an independent oracle confirmed at this level — the seeds
+        for the next escalation level.
+        """
         graph = TaskGraph()
         for h in hyps:
             h["_task_id"] = graph.add(
@@ -202,19 +288,21 @@ class Supervisor:
                 )
             )
         gres = run_graph(graph, max_workers=self.max_workers)
-        result.plan["parallel"] = {
-            "max_workers": self.max_workers,
-            "peak_concurrency": gres.max_concurrency,
-            "duration_s": gres.duration_s,
-        }
-        self._log(
-            result,
-            "test",
-            f"fanned {len(hyps)} hypothesis(es) across the orchestrator "
-            f"(max_workers={self.max_workers}, peak={gres.max_concurrency})",
-        )
+        if depth == 0:
+            self._log(
+                result,
+                "test",
+                f"fanned {len(hyps)} hypothesis(es) across the orchestrator "
+                f"(max_workers={self.max_workers}, peak={gres.max_concurrency})",
+            )
+        else:
+            self._log(
+                result,
+                "escalate",
+                f"ran {len(hyps)} escalated hypothesis(es) at depth {depth} (peak={gres.max_concurrency})",
+            )
 
-        # Deterministic reassembly: walk hypotheses in planned order and fold each task's record.
+        validated: list = []
         for h in hyps:
             result.endpoints_tested += 1
             task = graph.tasks.get(h.pop("_task_id", ""))
@@ -230,11 +318,9 @@ class Supervisor:
             finding = rec.get("finding")
             if finding is not None:
                 result.findings.append(finding)
-
-        # Phase: external OSS scanner adapters (graceful — skipped if the tool is not installed)
-        self.run_adapters(result)
-
-        return result
+            if rec.get("status") == "validated" and finding is not None:
+                validated.append((h, finding))
+        return validated, gres.max_concurrency, gres.duration_s
 
     def run_adapters(self, result, allow_target_network: bool = True) -> None:
         """Run the configured external OSS adapters and fold their findings into ``result``.

@@ -156,3 +156,71 @@ def test_engagement_wires_iac_and_grpc(tmp_path, vuln_server):
     assert all("iac" in f.tags for f in iac)
     # gRPC is a no-op without the [grpc] extra / a gRPC target — must never raise.
     assert eng.run_grpc() == [] or isinstance(eng.run_grpc(), list)
+
+
+# --------------------------------------------- integration: finding-driven escalation
+from rampart.orchestration import escalation_identity  # noqa: E402
+
+
+def _run_deep(tmp_path, port, parallel, deep):
+    scope_file = write_engagement(tmp_path, port)
+    cfg = EngagementConfig(
+        scope_file=scope_file,
+        target=f"http://127.0.0.1:{port}",
+        work_dir=str(tmp_path / ".rampart"),
+        openapi=str(tmp_path / "openapi.json"),
+        appmodel_seed=str(tmp_path / "seed.json"),
+        application="demo-shop-api",
+        parallel=parallel,
+        deep=deep,
+    )
+    eng = Engagement(cfg)
+    result = eng.run_scan()
+    confirmed = sorted(
+        f"{f.vuln_class}@{f.endpoint.get('url', '')}" for f in result.findings if f.verification.validated
+    )
+    ok, msg = eng.audit.verify_chain()
+    return result, confirmed, ok, msg
+
+
+def test_deep_escalation_is_bounded_deduped_and_lossless(tmp_path, vuln_server):
+    base_dir = tmp_path / "base"
+    deep_dir = tmp_path / "deep"
+    base_dir.mkdir()
+    deep_dir.mkdir()
+    _, base_conf, okb, mb = _run_deep(base_dir, vuln_server.port, parallel=4, deep=False)
+    deep_res, deep_conf, okd, md = _run_deep(deep_dir, vuln_server.port, parallel=4, deep=True)
+    assert okb, mb
+    assert okd, md  # audit hash-chain intact with escalation on
+
+    # escalation actually fired, is recorded, and stayed within its caps
+    esc = deep_res.plan.get("escalation")
+    assert esc and esc["enabled"] and esc["admitted"] >= 1
+    assert esc["admitted"] <= esc["max_total"]
+
+    # every admitted follow-up appears as a hypothesis tagged with an escalation origin
+    escalated = [h for h in deep_res.hypotheses if str(h.get("_origin", "")).startswith("escalation:")]
+    assert len(escalated) == esc["admitted"]
+    # the depth cap is honoured — nothing escalated beyond max_depth hops
+    assert all(h.get("_depth", 0) <= esc["max_depth"] for h in deep_res.hypotheses)
+
+    # dedup holds across all levels: no investigation identity is ever tested twice
+    idents = [escalation_identity(h) for h in deep_res.hypotheses]
+    assert len(idents) == len(set(idents)), "duplicate investigation identity escaped dedup"
+
+    # escalation NEVER loses a baseline confirmed finding (it only ever looks harder)
+    assert set(base_conf).issubset(set(deep_conf))
+
+
+def test_deep_escalation_parallel_equals_sequential(tmp_path, vuln_server):
+    seq_dir = tmp_path / "s"
+    par_dir = tmp_path / "p"
+    seq_dir.mkdir()
+    par_dir.mkdir()
+    _, seq, ok1, m1 = _run_deep(seq_dir, vuln_server.port, parallel=1, deep=True)
+    _, par, ok2, m2 = _run_deep(par_dir, vuln_server.port, parallel=16, deep=True)
+    assert ok1, m1
+    assert ok2, m2
+    # deterministic: escalation admits in sorted-by-identity order, so concurrency can't change
+    # which follow-ups ran — the confirmed set is identical.
+    assert seq == par, f"deep escalation diverged under concurrency:\n seq={seq}\n par={par}"

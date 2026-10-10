@@ -66,6 +66,10 @@ class EngagementConfig:
     sca_online: bool = False  # match pinned deps against OSV.dev (operator opt-in; sends names)
     parallel: int = 0  # orchestrator worker cap (0 = scope.limits.max_concurrent_workers)
     active: bool = False  # allow gated write/active probes (mass assignment, GraphQL, …)
+    deep: bool = False  # finding-driven escalation: a validated finding spawns bounded deep-scan follow-ups
+    escalate_max_depth: int = 2  # how many escalation hops (0 disables, same as deep=False)
+    escalate_max_total: int = 24  # cap on follow-up tests across the whole run
+    escalate_max_per_finding: int = 6  # cap on follow-ups from any single finding
     store_url: str = ""  # multi-tenant store, e.g. sqlite:///runs.db or postgresql://…
     sast_since: str = ""  # diff-aware SAST: scan only .py files changed vs this git ref
     llm_chat_path: str = "/chat"
@@ -299,6 +303,12 @@ class Engagement:
             scanners=self.scanner_adapters,
             active=config.active,
             max_workers=(config.parallel or None),
+            escalate=config.deep,
+            escalation_caps={
+                "max_depth": config.escalate_max_depth,
+                "max_total": config.escalate_max_total,
+                "max_per_finding": config.escalate_max_per_finding,
+            },
         )
 
     @staticmethod
