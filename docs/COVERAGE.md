@@ -122,9 +122,14 @@ never fails a CI gate. See [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md).
 
 Stated plainly so expectations are correct:
 
-- **No SPA / client-side JS route discovery.** The crawler is **GET-only**; the optional Playwright
-  pass (`--browser`) renders known URLs for DOM/stored-XSS execution but does **not** discover
-  single-page-app routes, client-rendered links, or API routes behind JavaScript.
+- **SPA / client-side JS route discovery is limited to the optional browser engine.** The built-in
+  crawler is **GET-only** static HTML parsing. The optional Playwright pass (`--browser`) now adds
+  **JS/DOM + fetch/XHR discovery**: it renders the target, harvests anchors and form actions from the
+  post-JS DOM plus the in-scope fetch/XHR/document requests the page issues, and merges those as
+  `provenance=browser` endpoints so the normal oracles test them (`rampart/browser/discovery.py`).
+  It renders the target entry point (not a full client-side BFS/router crawl), and all discovery is
+  scope-gated by the same `allow` predicate the engine's route-guard enforces — an out-of-scope link
+  or request is never navigated, collected, or added to the model.
 - **No general authentication-protocol suite.** No OAuth / OIDC / SAML / MFA / session-management
   testing. Auth coverage is limited to JWT `alg=none` and (via `--authz`) weak JWT signing secret and
   expiry-not-enforced.

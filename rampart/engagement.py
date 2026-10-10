@@ -676,6 +676,7 @@ class Engagement:
 
         self._stage_log = []
         self.recon_tech, self.recon_pages = [], 0
+        self.browser_discovered = 0
         cfg = self.cfg
         if self.offline:
             wanted = [n for n in _NETWORK_STAGES if getattr(cfg, n, False)]
@@ -687,6 +688,11 @@ class Engagement:
                 )
         else:
             self.recon()
+            # JS/SPA route discovery (needs --browser + Playwright): harvest endpoints from the
+            # rendered DOM + fetch/XHR activity and merge them BEFORE the DAST stage, so the normal
+            # oracles then test SPA/client-rendered routes like any crawled endpoint.
+            if cfg.browser:
+                self.browser_discovery()
         # Black-box DAST stage (the oracle classes + misconfig + external scanners).
         if cfg.do_dast and not self.offline:
             result = self.supervisor.run()
@@ -806,10 +812,58 @@ class Engagement:
             "plan": result.plan,
             "recon_tech": getattr(self, "recon_tech", []),
             "recon_pages": getattr(self, "recon_pages", 0),
+            "browser_discovered": getattr(self, "browser_discovered", 0),
         }
         summary.update(self.scan_summary(result))
         self.store.save_scan(summary)
         return result
+
+    # ------------------------------------------------- browser discovery
+    def browser_discovery(self):
+        """Optional JS/SPA route discovery (needs the [browser] extra + Chromium).
+
+        Renders the target in the headless browser, harvests endpoints from the POST-JS DOM
+        (anchors + form actions) and from the page's fetch/XHR/document network activity, then
+        merges them into the application model with the SAME ``merge_into_model`` the crawler uses
+        — so the normal oracles then test these SPA/client-rendered routes like any other endpoint.
+
+        Scope-gated: the browser's own sub-requests are route-guarded by the scope (``allow``) and
+        each is audited + budgeted (``on_request``), exactly like :meth:`run_browser`. A clean skip
+        (with skip_reason noted) when the extra/Chromium is absent — never raises."""
+        self.browser_discovered = 0
+        if not self.cfg.browser:
+            return None
+        from .browser import (
+            PlaywrightDriver,
+            audited_on_request,
+            browser_discover,
+            browser_skip_reason,
+        )
+        from .infra.sidechannel import SideChannelGuard
+        from .recon import merge_into_model
+
+        why = browser_skip_reason()
+        if why:
+            self._note("browser", why)
+            return None
+        allow = self._browser_allow()
+        guard = SideChannelGuard(
+            audit=self.audit,
+            budget=self.budget,
+            engagement_id=self.pipeline.engagement_id,
+            tool="browser",
+            actor_role="browser-discover",
+        )
+        on_request = audited_on_request(guard)
+        crawl = browser_discover(PlaywrightDriver(), self.target_url, allow=allow, on_request=on_request)
+        added = merge_into_model(self.appmodel, crawl)
+        self.browser_discovered = added
+        self._note(
+            "browser",
+            f"JS/SPA route discovery: rendered {crawl.pages_visited} page(s), "
+            f"added {added} endpoint(s) to the application model",
+        )
+        return {"pages": crawl.pages_visited, "added_endpoints": added}
 
     # ----------------------------------------------------------- browser
     def run_browser(self):

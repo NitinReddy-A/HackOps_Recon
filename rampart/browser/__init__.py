@@ -13,6 +13,7 @@ attacker-controlled JavaScript ran in the live DOM.
 
 from __future__ import annotations
 
+from .discovery import browser_discover, endpoints_from_discovery
 from .engine import (
     DOMXSS_TOKEN,
     BrowserDriver,
@@ -35,6 +36,8 @@ __all__ = [
     "RenderResult",
     "run_dom_xss_oracle",
     "run_stored_xss_oracle",
+    "browser_discover",
+    "endpoints_from_discovery",
     "available",
     "browser_skip_reason",
     "install_hint",
