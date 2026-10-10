@@ -111,6 +111,7 @@ against the raw bytes you received, before parsing, using a constant-time compar
 ```python
 import hmac, hashlib, os
 
+
 def verify(raw_body: bytes, header: str) -> bool:
     secret = os.environ["RAMPART_WEBHOOK_SECRET"].encode()
     expected = "sha256=" + hmac.new(secret, raw_body, hashlib.sha256).hexdigest()

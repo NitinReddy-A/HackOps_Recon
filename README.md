@@ -620,8 +620,10 @@ for a human pentest.
 | [LLMs and API keys](docs/LLM_AND_API_KEYS.md) | providers, models, free options |
 | [LLM security testing](docs/LLM_SECURITY_TESTING.md) | the 4 OWASP LLM Top 10 categories `llm-test` covers (LLM01/05/07/02) |
 | [Coverage manifest](docs/COVERAGE.md) | exactly what Rampart does, by evidence tier — the single source of truth |
+| [Notifications](docs/NOTIFICATIONS.md) | post confirmed findings to a signed webhook or Slack |
+| [External tools](docs/EXTERNAL_TOOLS.md) | optional Nuclei/Semgrep/Trivy/… adapters (unvalidated leads) |
 | [Architecture](docs/ARCHITECTURE.md) | how the code is organized |
-| [Benchmark fixtures](docs/BENCHMARK_FIXTURES.md) | how ground truth is defined |
+| [Benchmark fixtures](docs/BENCHMARK_FIXTURES.md) | the multi-app benchmark program and ground truth |
 | [Changelog](CHANGELOG.md) | what changed in each release |
 
 ## Contributing

@@ -25,6 +25,20 @@ All notable changes to Rampart are documented here. The format follows
   (oracle-proven / single-reproduction / observation / static / indicator), the four LLM probe
   families, the white-box scanners' limits, and an explicit "not covered" section — so no reader
   can infer more than is implemented.
+- **JS / single-page-app route discovery.** With `--browser`, Rampart now renders the target with
+  the optional headless engine and discovers routes and API calls from the post-JS DOM and the
+  page's `fetch`/XHR traffic, feeding them into the application model so the oracles test endpoints
+  a static GET-only crawl never sees. Scope-gated by the same admission predicate — out-of-scope
+  links/requests are never collected or sent.
+- **Outbound findings notifications** ([docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)): post
+  *confirmed* findings to a signed generic webhook (`X-Rampart-Signature: sha256=…`, HMAC over the
+  raw body) and/or a Slack incoming webhook. Opt-in (`--notify-webhook` / `--notify-slack` + env),
+  idempotent (never re-notifies a finding), secret-safe, and failure-safe (a sink error never
+  breaks a scan). A Jira/Linear sink is a drop-in subclass.
+- **Multi-app benchmark program.** `benchmarks/corpus_runner.py` now reports per-class
+  precision/recall/F1, a **coverage manifest** (`tested+confirmed` / `tested+missed` / `not-tested`
+  — so "no findings" is never read as "fully tested"), variance across `--runs` with a determinism
+  flag, and inconclusive/error signals; ships Juice Shop fixtures alongside VAmPI.
 - **MCP parity:** the `rampart_scan` tool now exposes the deeper read-only stages the CLI offers
   (`deep`, `authz`, `bizlogic`, `api_scan`, `exploit`, `oob`, `active`) — every new field optional
   and still fully subject to the policy pipeline (`active` writes still require policy approval).
