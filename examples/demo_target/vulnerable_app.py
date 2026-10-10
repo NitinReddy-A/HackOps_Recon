@@ -93,6 +93,28 @@ SENSITIVE_FILES = {
 
 _SSTI_EXPR = re.compile(r"\{\{\s*(\d+)\s*\*\s*(\d+)\s*\}\}")
 
+# Command-injection sink: simulate a shell `echo <arg>` with no real shell and no eval. Only two
+# tightly bounded forms are "executed": arithmetic expansion `$((int op int))` (op in + - *) and
+# command substitution `$(echo text)`. Anything else is echoed literally, exactly as a reflecting
+# `echo` would. This lets the demo's CMDI be confirmed by a COMPUTED proof (the product the probe
+# itself never contains) instead of a magic marker a reflecting endpoint could fake.
+_CMD_ARITH = re.compile(r"^\$\(\(\s*(-?\d+)\s*([+\-*])\s*(-?\d+)\s*\)\)$")
+_CMD_ECHO_SUBST = re.compile(r"^\$\(\s*echo\s+(.*?)\s*\)$")
+
+
+def _demo_shell_echo(arg: str) -> str:
+    """Model what a real shell would print for the injected ``echo <arg>`` — safely (no shell, no
+    eval): evaluate ``$((int op int))`` and ``$(echo text)``; otherwise echo the literal argument."""
+    arg = arg.strip()
+    m = _CMD_ARITH.match(arg)
+    if m:
+        a, op, b = int(m.group(1)), m.group(2), int(m.group(3))
+        return str({"+": a + b, "-": a - b, "*": a * b}[op])
+    m = _CMD_ECHO_SUBST.match(arg)
+    if m:
+        return m.group(1).strip(" `)'\"")
+    return arg.strip(" `)'\"")
+
 
 def _b64url_decode(s: str) -> bytes:
     s += "=" * (-len(s) % 4)
@@ -425,7 +447,7 @@ class Handler(BaseHTTPRequestHandler):
                 # naive concatenation: execute an injected `; echo X` / `| echo X` / `&& echo X`
                 for sep in (";", "|", "&&", "&", "`", "$("):
                     if sep in host and "echo" in host:
-                        injected = host.split("echo", 1)[1].strip(" `)'\"")
+                        injected = _demo_shell_echo(host.split("echo", 1)[1])
                         out += "\n" + injected
                         break
             return self._send(200, {"output": out})

@@ -22,14 +22,25 @@ All notable changes to Rampart are documented here. The format follows
   `Rampart(..., deep=True)` in the SDK.
 - **Capability/coverage manifest** ([docs/COVERAGE.md](docs/COVERAGE.md)): an authoritative,
   code-verified statement of exactly what Rampart does — every runtime class by evidence tier
-  (oracle-proven / single-reproduction / observation / fixture-validated / static / indicator),
-  the four LLM probe families, the white-box scanners' limits, and an explicit "not covered"
-  section — so no reader can infer more than is implemented.
+  (oracle-proven / single-reproduction / observation / static / indicator), the four LLM probe
+  families, the white-box scanners' limits, and an explicit "not covered" section — so no reader
+  can infer more than is implemented.
 - **MCP parity:** the `rampart_scan` tool now exposes the deeper read-only stages the CLI offers
   (`deep`, `authz`, `bizlogic`, `api_scan`, `exploit`, `oob`, `active`) — every new field optional
   and still fully subject to the policy pipeline (`active` writes still require policy approval).
 
 ### Fixed
+- **Content-proof oracles for CMDI, SSRF, path traversal, and BFLA** — they now prove the flaw from
+  real response content instead of a marker the bundled demo emits, removing both false positives
+  (a reflecting endpoint wrongly confirmed) and false negatives (a real app missed for lacking the
+  demo's magic string). CMDI injects `; echo $((A*B))` with a fresh random product each round and
+  requires that computed product (which the payload never contains literally) in the response and
+  absent from a benign control; SSRF matches cloud-metadata/IMDS content (`AccessKeyId`, `iam-role`,
+  `computeMetadata`, …); path traversal matches a real `/etc/passwd` root line or a Windows
+  `boot.ini`/`win.ini` banner; BFLA confirms structurally — a low-privilege principal gets a 200
+  privileged aggregate while an unauthenticated request is rejected. With the CMDI oracle now
+  requiring computed proof, `CMDI` is re-enabled as a `--deep` escalation target (it could not
+  previously be one without amplifying input-reflection into false findings).
 - **Fail closed when a configured Postgres store is unreachable.** A `postgres://`/`postgresql://`
   `--store` URL with no `psycopg` driver (or a failed connection) used to silently fall back to a
   local SQLite file, so evidence landed somewhere other than configured. It now aborts with a clear
