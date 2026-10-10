@@ -438,17 +438,33 @@ Run `rampart tools` to see which external scanners are installed.
 
 ```mermaid
 flowchart TD
-    S[rampart.scope.yaml] --> G{Authorization gate}
-    G -- invalid or expired --> X[Refuse to run]
-    G -- valid --> M[Build app model<br/>endpoints · roles · accounts]
-    M --> H[Generate hypotheses<br/>rules + optional LLM]
-    H --> P[[Policy pipeline<br/>scope · IP allowlist · risk tier · budget · audit]]
-    P --> T[(Your target)]
-    T --> O{Independent oracle<br/>re-proves from clean state}
-    O -- reproduced --> C[Confirmed finding]
-    O -- not reproduced --> D[Dropped, shown in report]
-    C --> R[Correlate · score · map to compliance · report]
+    S([rampart.scope.yaml]):::doc --> G{Authorization gate}:::gate
+    G -- invalid / out of scope --> X([Refuse to run]):::stop
+    G -- valid --> M[Build the app model]:::step
+    M --> H[Generate hypotheses]:::step
+    H --> P{{Policy pipeline}}:::choke
+    P -- denied --> B([Blocked &amp; audited]):::stop
+    P -- allowed --> T[(Your target)]:::target
+    T --> O{Independent oracle}:::gate
+    O -- re-proven --> C([Confirmed finding]):::good
+    O -- not re-proven --> D([Dropped]):::drop
+    C -->|"with --deep"| H
+    C --> R[Correlate, score, report]:::step
+
+    classDef doc stroke:#94a3b8,stroke-width:1.5px
+    classDef step stroke:#3b82f6,stroke-width:1.5px
+    classDef gate stroke:#eab308,stroke-width:2px
+    classDef choke stroke:#ef4444,stroke-width:3px
+    classDef target stroke:#38bdf8,stroke-width:2px
+    classDef good stroke:#22c55e,stroke-width:2px
+    classDef drop stroke:#78716c,stroke-width:1.5px,stroke-dasharray:5 3
+    classDef stop stroke:#ef4444,stroke-width:1.5px,stroke-dasharray:5 3
 ```
+
+<sub>Amber diamonds are decision gates · the red hexagon is the **one admission choke-point** every
+request passes (scope · resolved-IP · risk tier · budget · audit) · dashed red = fail-closed ·
+green = oracle-proven · the `--deep` arrow is finding-driven escalation. Full detail:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).</sub>
 
 Two rules make the results trustworthy:
 
