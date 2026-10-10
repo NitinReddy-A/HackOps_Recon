@@ -1,0 +1,10 @@
+{
+  "_comment": "Best-effort ground truth for OWASP Juice Shop. Juice Shop's flaw set and routes vary by version; corpus_runner reports missed/unexpected AND a coverage manifest so you can refine path_keys/expected for your build. Juice Shop is a heavy Angular SPA — run with --crawl --browser so JS-discovered routes are tested; many challenges are client-side/stateful and out of scope for the runtime oracles. Treat this as a starting template, not a fixed denominator.",
+  "path_keys": ["/rest/products/search", "/api/Products", "/rest/user/login", "/api/Users", "/api/Feedbacks", "/ftp"],
+  "expected": [
+    ["SQLI", "/rest/products/search"],
+    ["XSS", "/rest/products/search"],
+    ["IDOR/BOLA", "/api/Users"],
+    ["sensitive-file-exposure", "/ftp"]
+  ]
+}
