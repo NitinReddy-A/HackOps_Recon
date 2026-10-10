@@ -20,6 +20,33 @@ All notable changes to Rampart are documented here. The format follows
   oracle proves the class with a negative control, so it can never amplify an oracle's
   false-positive mode — it finds *more*, never noisier. Available as `--deep` on the CLI and
   `Rampart(..., deep=True)` in the SDK.
+- **Capability/coverage manifest** ([docs/COVERAGE.md](docs/COVERAGE.md)): an authoritative,
+  code-verified statement of exactly what Rampart does — every runtime class by evidence tier
+  (oracle-proven / single-reproduction / observation / fixture-validated / static / indicator),
+  the four LLM probe families, the white-box scanners' limits, and an explicit "not covered"
+  section — so no reader can infer more than is implemented.
+- **MCP parity:** the `rampart_scan` tool now exposes the deeper read-only stages the CLI offers
+  (`deep`, `authz`, `bizlogic`, `api_scan`, `exploit`, `oob`, `active`) — every new field optional
+  and still fully subject to the policy pipeline (`active` writes still require policy approval).
+
+### Fixed
+- **Fail closed when a configured Postgres store is unreachable.** A `postgres://`/`postgresql://`
+  `--store` URL with no `psycopg` driver (or a failed connection) used to silently fall back to a
+  local SQLite file, so evidence landed somewhere other than configured. It now aborts with a clear
+  error (exit 2); an explicit `?on_error=sqlite-fallback` opts into the old behaviour, loudly, and
+  the fallback is recorded in `scan.json` (`store_warnings`).
+- **Sensitive-file check no longer fires on soft-404 pages.** A catch-all page that returns 200
+  with signature-matching content for every path is now caught by a non-existent-sibling negative
+  control and dropped, instead of being reported as an exposed file.
+
+### Changed
+- **Corrected documentation overclaims** flagged by a competitive review, so the docs match the
+  implementation exactly: the LLM testing is described as **4 of the OWASP LLM Top 10 categories**
+  (LLM01/05/07/02), not all ten; the "every class has a negative control and 2+ reproductions"
+  claim now spells out the honest exceptions (OOB/gRPC single reproduction; misconfiguration /
+  sensitive-file single authoritative observation); and "one choke-point" is restated as **one
+  admission contract enforced at every egress point** (the HTTP policy pipeline, plus a shared
+  admission guard for the browser/gRPC/infra engines that open their own connections).
 
 This release comes out of a full end-to-end review: seven parallel reviewers tested every
 surface against live targets and reproduced each issue before it was fixed. Every fix has a
