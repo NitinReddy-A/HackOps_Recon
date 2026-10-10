@@ -147,6 +147,8 @@ _BASE_DEFAULTS = {
     "fail_on": "high",
     "fail_on_static": "",
     "oob_collaborator_url": "",
+    "notify_webhook": "",
+    "notify_slack": "",
     "format": "html",
     "chat_path": "/chat",
     "input_field": "message",
@@ -284,6 +286,8 @@ def _make_config(args, approver=None, offline=False):
         active=bool(getattr(args, "active", False)),
         deep=bool(getattr(args, "deep", False)),
         store_url=getattr(args, "store", "") or "",
+        notify_webhook_url=getattr(args, "notify_webhook", "") or "",
+        notify_slack_url=getattr(args, "notify_slack", "") or "",
         sast_since=getattr(args, "since", "") or "",
         oob_collaborator_url=getattr(args, "oob_collaborator_url", "") or "",
         offline=offline,
@@ -452,6 +456,7 @@ def cmd_test(args, parser=None, mode=None):
     _print_summary(rb, chain_ok, eng)
     for fmt, path in written.items():
         print(f"  {fmt:>10}: {path}")
+    _notify(eng)
 
     if not result.complete:
         reason = result.incomplete_reason
@@ -586,6 +591,26 @@ def _print_summary(rb, chain_ok, eng):
         )
     )
     print()
+
+
+def _notify(eng) -> None:
+    """Post NEW confirmed findings to the configured sinks (opt-in; never breaks the run)."""
+    res = eng.notify()
+    if not res.get("enabled"):
+        return
+    if res.get("error"):
+        print(yellow(f"! notify: {_clean(res['error'])}"))
+        return
+    for s in res.get("sinks", []):
+        name = _clean(s.get("sink", "sink"))
+        if s.get("posted"):
+            n = s.get("count", 0)
+            if n:
+                print(green(f"✓ notify {name}: posted {n} new confirmed finding(s)"))
+            else:
+                print(dim(f"  notify {name}: nothing new to send"))
+        else:
+            print(yellow(f"! notify {name}: not sent ({_clean(s.get('reason', 'unknown'))})"))
 
 
 def _ci_gate(rb, fail_on):
@@ -1222,6 +1247,20 @@ def _add_scan_opts(sp, *, since=True):
         help="multi-tenant store URL (sqlite:///runs.db or postgresql://…); an unreachable "
         "Postgres store aborts the run (fail-closed) unless the URL ends with "
         "?on_error=sqlite-fallback to allow a local SQLite fallback",
+    )
+    sp.add_argument(
+        "--notify-webhook",
+        dest="notify_webhook",
+        default=None,
+        help="post CONFIRMED findings to this signed webhook URL (falls back to $RAMPART_WEBHOOK_URL; "
+        "secret from $RAMPART_WEBHOOK_SECRET)",
+    )
+    sp.add_argument(
+        "--notify-slack",
+        dest="notify_slack",
+        default=None,
+        help="post CONFIRMED findings to this Slack incoming-webhook URL (falls back to "
+        "$RAMPART_SLACK_WEBHOOK_URL)",
     )
     if since:
         sp.add_argument(
