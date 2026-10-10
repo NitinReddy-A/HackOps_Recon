@@ -1,4 +1,4 @@
 from .runstore import RunStore
-from .sql_store import SqlRunStore
+from .sql_store import SqlRunStore, StoreError
 
-__all__ = ["RunStore", "SqlRunStore"]
+__all__ = ["RunStore", "SqlRunStore", "StoreError"]

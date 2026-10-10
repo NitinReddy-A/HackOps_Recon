@@ -295,10 +295,13 @@ def _build_engagement(cfg):
     """Construct an Engagement, turning every expected failure into (None, message)."""
     from .audit.log import AuditLogError
     from .engagement import Engagement
+    from .store import StoreError
 
     try:
         return Engagement(cfg), ""
     except ScopeError as e:
+        return None, f"refused to run: {e}"
+    except StoreError as e:
         return None, f"refused to run: {e}"
     except FileNotFoundError as e:
         return None, f"refused to run: {e}"
@@ -1214,7 +1217,11 @@ def _add_scan_opts(sp, *, since=True):
         help="allow gated write/state-changing probes (off by default, also for pipeline)",
     )
     sp.add_argument(
-        "--store", default=None, help="multi-tenant store URL (sqlite:///runs.db or postgresql://…)"
+        "--store",
+        default=None,
+        help="multi-tenant store URL (sqlite:///runs.db or postgresql://…); an unreachable "
+        "Postgres store aborts the run (fail-closed) unless the URL ends with "
+        "?on_error=sqlite-fallback to allow a local SQLite fallback",
     )
     if since:
         sp.add_argument(
