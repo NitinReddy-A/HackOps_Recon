@@ -149,3 +149,131 @@ def test_scan_missing_target_is_error(tmp_path, vuln_server):
     scope_file = write_engagement(tmp_path, vuln_server.port)
     resp = _run([_call("rampart_scan", {"scope_file": scope_file})])[0]
     assert resp["result"]["isError"] is True
+
+
+# ----------------------------------------------------------- CLI-parity surface (deep stages)
+def test_scan_schema_exposes_deep_stage_parity():
+    """rampart_scan's inputSchema reaches the deeper read-only stages the CLI offers."""
+    resps = _run([{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}])
+    scan = next(t for t in resps[0]["result"]["tools"] if t["name"] == "rampart_scan")
+    props = scan["inputSchema"]["properties"]
+    for field in ("deep", "active", "authz", "bizlogic", "api_scan", "exploit", "oob"):
+        assert props[field]["type"] == "boolean", field
+    # grey-box / auth'd inputs are reachable too
+    assert props["appmodel_seed"]["type"] == "string"
+    assert props["secrets"]["type"] == "string"
+    # the active flag documents that writes still pass the policy gate
+    assert "policy approval" in props["active"]["description"]
+
+
+class _FakeResult:
+    complete = True
+    incomplete_reason = ""
+    endpoints_tested = 0
+    classes_tested: list = []
+    findings: list = []
+    correlation = None
+
+
+def test_scan_new_args_reach_engagement_config(tmp_path, monkeypatch):
+    """Every new optional arg is mapped onto the matching EngagementConfig field.
+
+    Engagement is stubbed so the mapping is asserted without running a real scan (fast,
+    no live target) — the real EngagementConfig is still constructed by the handler."""
+    import rampart.engagement as eng_mod
+
+    captured = {}
+
+    class _CapturingEngagement:
+        def __init__(self, cfg):
+            captured["cfg"] = cfg
+            self.cfg = cfg
+            self.target_url = cfg.target
+
+        def run_scan(self):
+            return _FakeResult()
+
+        def intel_status(self):
+            return {"effective": "deterministic", "requested": "deterministic"}
+
+        def budget_status(self):
+            return {}
+
+    monkeypatch.setattr(eng_mod, "Engagement", _CapturingEngagement)
+    scope_file = write_engagement(tmp_path, 9)  # no live server needed — Engagement is stubbed
+    resp = _run(
+        [
+            _call(
+                "rampart_scan",
+                {
+                    "scope_file": scope_file,
+                    "target": "http://127.0.0.1:9",
+                    "work_dir": str(tmp_path / ".rampart"),
+                    "appmodel_seed": str(tmp_path / "seed.json"),
+                    "secrets": str(tmp_path / "secrets.json"),
+                    "deep": True,
+                    "active": True,
+                    "authz": True,
+                    "bizlogic": True,
+                    "api_scan": True,
+                    "exploit": True,
+                    "oob": True,
+                },
+            )
+        ]
+    )[0]
+    assert resp["result"]["isError"] is False
+    cfg = captured["cfg"]
+    assert (cfg.deep, cfg.active, cfg.authz, cfg.bizlogic) == (True, True, True, True)
+    assert (cfg.api_scan, cfg.exploit, cfg.oob) == (True, True, True)
+    assert cfg.appmodel_seed.endswith("seed.json")
+    assert cfg.secrets_file.endswith("secrets.json")
+
+
+def test_scan_deep_authz_runs_against_demo_target(tmp_path, vuln_server):
+    """The deeper read-only stages (deep escalation + authz) run end-to-end from MCP."""
+    scope_file = write_engagement(tmp_path, vuln_server.port)
+    resp = _run(
+        [
+            _call(
+                "rampart_scan",
+                {
+                    "scope_file": scope_file,
+                    "target": f"http://127.0.0.1:{vuln_server.port}",
+                    "openapi": str(tmp_path / "openapi.json"),
+                    "appmodel_seed": str(tmp_path / "seed.json"),
+                    "work_dir": str(tmp_path / ".rampart"),
+                    "application": "demo-shop-api",
+                    "deep": True,
+                    "authz": True,
+                },
+            )
+        ]
+    )[0]
+    assert resp["result"]["isError"] is False
+    body = _payload(resp)
+    assert body["complete"] is True
+    assert body["counts"]["confirmed"] >= 1
+
+
+def test_scan_active_does_not_bypass_scope_gate(tmp_path, vuln_server):
+    """Exposing `active`/`deep` must not let a client escape scope — an out-of-scope
+    target is still refused (policy parity unchanged)."""
+    scope_file = write_engagement(tmp_path, vuln_server.port)
+    resp = _run(
+        [
+            _call(
+                "rampart_scan",
+                {
+                    "scope_file": scope_file,
+                    "target": "http://192.0.2.1:8080",  # NOT in scope.in_scope
+                    "work_dir": str(tmp_path / ".rampart"),
+                    "active": True,
+                    "deep": True,
+                    "exploit": True,
+                },
+            )
+        ]
+    )[0]
+    assert resp["result"]["isError"] is True
+    assert "error" in _payload(resp)
