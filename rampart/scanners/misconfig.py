@@ -8,6 +8,7 @@ honestly without an LLM. All are GET-observable (no state change).
 from __future__ import annotations
 
 import re
+import secrets
 
 from ..schemas.finding import Finding, Remediation, Reproduction, State, Verification
 from ..util import now_iso
@@ -114,8 +115,21 @@ _SENSITIVE_PATHS = [
 ]
 
 
+def _soft404_control_path(path: str) -> str:
+    """A sibling path that definitely does not exist, preserving any file extension so a
+    catch-all / soft-404 handler that keys on the extension is still triggered."""
+    token = f"rampart-absent-{secrets.token_hex(6)}"
+    dot = path.rfind(".")
+    slash = path.rfind("/")
+    if dot > slash:  # path has a real extension (e.g. /.env, /backup.sql, /config.json)
+        return f"{path[:dot]}-{token}{path[dot:]}"
+    return f"{path}-{token}"
+
+
 def sensitive_files_check(runner, target_url, application="target") -> list[Finding]:
-    """Probe well-known sensitive files; confirm by CONTENT signature on two observations."""
+    """Probe well-known sensitive files; confirm by CONTENT signature on two observations,
+    gated by a soft-404 negative control so a catch-all page that echoes the signature for
+    every path (a common false-positive source) is dropped instead of reported."""
     findings: list[Finding] = []
     for path, sev, sig in _SENSITIVE_PATHS:
         r1 = runner.get(
@@ -127,6 +141,19 @@ def sensitive_files_check(runner, target_url, application="target") -> list[Find
         )
         if not r1.executed or r1.status != 200 or not sig.search(r1.body or ""):
             continue
+        # Negative control: a non-existent sibling path. If the server returns 200 with the
+        # same content signature for a path that cannot exist, it is a soft-404 / catch-all —
+        # the "match" is not the real file, so drop it (precision gate, no false positive).
+        control_path = _soft404_control_path(path)
+        ctrl = runner.get(
+            control_path,
+            session=None,
+            payload_class="benign-read",
+            rationale="soft-404 negative control",
+            summary=f"sensitive {path} control",
+        )
+        if ctrl.executed and ctrl.status == 200 and sig.search(ctrl.body or ""):
+            continue  # catch-all page echoes the signature for any path -> not a real exposure
         r2 = runner.get(
             path,
             session=None,
@@ -159,7 +186,10 @@ def sensitive_files_check(runner, target_url, application="target") -> list[Find
                 references=["https://owasp.org/www-project-web-security-testing-guide/"],
                 compliance=["SOC2:CC6.1", "ISO27001:A.8.9"],
                 tags=["sensitive-file", "exposure"],
-                checks=[f"{path} returned 200 with a content signature on 2/2 requests"],
+                checks=[
+                    f"{path} returned 200 with a content signature on 2/2 requests",
+                    "soft-404 negative control (non-existent sibling path) did NOT match the signature",
+                ],
                 path=path,
             )
         )

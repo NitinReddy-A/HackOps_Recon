@@ -32,8 +32,10 @@ No incumbent is **open, self-hostable, AND evidence-first**. That's the wedge.
 
 Two invariants, enforced in code, not prompts:
 
-- **The LLM proposes; deterministic code disposes.** Every action passes one choke-point
-  (`allowlist → scope → resolved-IP → risk → policy → sandbox → audit`), fail-closed. A prompt-injected
+- **The LLM proposes; deterministic code disposes.** Every action passes one admission contract
+  (`allowlist → scope → resolved-IP → risk → policy → sandbox → audit`) — the HTTP policy pipeline,
+  and a shared admission guard that applies the same scope/IP/budget/audit to the engines that open
+  their own connections — fail-closed. A prompt-injected
   model — a demonstrated, ~100%-success attack against naive security agents — can at worst emit
   requests the policy engine rejects. Safety is a property of the architecture.
 - **Evidence over alerts.** A separate validator re-derives proof with a deterministic oracle, 2+

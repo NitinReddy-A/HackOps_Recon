@@ -29,7 +29,7 @@ python -m rampart.mcp
 | --- | --- |
 | `rampart_scope_check` | Validate a `rampart.scope.yaml` authorization contract **without touching any target**. Use this first. |
 | `rampart_scan` | Run an assessment against an in-scope target. Returns the findings (confirmed vs dropped). |
-| `rampart_llm_test` | Assess an authorized LLM endpoint against the OWASP LLM Top 10. |
+| `rampart_llm_test` | Assess an authorized LLM endpoint against 4 OWASP LLM Top 10 risk categories (LLM01/05/07/02). |
 | `rampart_report` | Render reports (html / md / json / sarif / compliance) from a stored run. Errors if the `work_dir` holds no run. |
 
 Each tool takes a `scope_file` and enforces it fail-closed: a target whose host, port, or scheme

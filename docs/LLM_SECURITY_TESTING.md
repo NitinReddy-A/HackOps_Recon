@@ -1,6 +1,9 @@
-# LLM security testing (OWASP LLM Top 10)
+# LLM security testing (OWASP LLM Top 10 — 4 categories)
 
-Rampart can assess an authorized LLM-backed endpoint for the OWASP Top 10 for LLM Applications.
+Rampart probes an authorized LLM-backed endpoint for **4 of the OWASP Top 10 for LLM Applications
+(2025)** risk categories — not all ten. The four probe families map to LLM01 Prompt Injection
+(direct + jailbreak), LLM05 Improper Output Handling, and LLM07 System Prompt Leakage / LLM02
+Sensitive Information Disclosure (listed in full below).
 It is **safe by design**: every probe looks for an inert marker or a planted canary to prove a
 guardrail was bypassed — it never tries to elicit genuinely harmful content, and the result is
 reproducible.

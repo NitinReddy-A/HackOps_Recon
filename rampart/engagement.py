@@ -662,6 +662,9 @@ class Engagement:
             "budget": self.budget_status(),
             "intel": self.intel_status(),
             "intel_provider": self.intel_status()["effective"],
+            # surfaces an opt-in Postgres->SQLite fallback (empty for the normal path) so the
+            # report/caller can see that evidence did not land in the configured store.
+            "store_warnings": list(getattr(self.store, "warnings", []) or []),
         }
 
     def run_scan(self):

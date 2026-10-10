@@ -237,7 +237,7 @@ rampart api      --target … --openapi …      # API-focused, grey-box
 rampart sast     --repo .                    # source + secrets (offline; never contacts a target)
 rampart sca      --repo . --sca-online       # dependencies vs OSV.dev, EPSS, CISA KEV
 rampart iac      --repo .                    # Terraform, CloudFormation, Kubernetes, Dockerfile
-rampart llm-test --target … --chat-path /chat       # OWASP LLM Top 10
+rampart llm-test --target … --chat-path /chat       # OWASP LLM Top 10 probes (4 categories: LLM01/05/07/02)
 rampart retest   --work-dir .rampart         # replay confirmed findings against a patched build
 rampart features                             # list every capability and how to run it
 ```
@@ -406,8 +406,13 @@ rampart serve --work-dir .rampart      # http://127.0.0.1:8787, zero dependencie
 
 ## What it tests
 
-Every class below has its own oracle: a probe, a negative control, and at least two reproductions
-from a clean state. The built-in checks need no external tools.
+Most runtime classes below have an independent oracle — a probe, a negative control, and 2+
+reproductions from a clean state — before anything is called *confirmed*. Two honest exceptions:
+the out-of-band blind SSRF/XXE and the gRPC server-reflection checks confirm on one reproduction
+plus a negative control (reflection is a single deterministic observation), and the built-in
+misconfiguration, security-header, and sensitive-file checks are single authoritative observations
+re-checked on a second request (the observation is itself the oracle). The per-class evidence tier
+is spelled out in [docs/COVERAGE.md](docs/COVERAGE.md). The built-in checks need no external tools.
 
 | Area | Checks | Turn on with |
 | --- | --- | --- |
@@ -423,7 +428,7 @@ from a clean state. The built-in checks need no external tools.
 | **Source code** | Python AST source scanner, hard-coded secrets | `--repo` |
 | **Infrastructure as code** | Terraform, CloudFormation, Kubernetes, Dockerfile | `--iac` |
 | **Dependencies (SCA)** | OSV.dev matches, ranked by EPSS, CISA KEV, and call-graph reachability | `--sca-online` |
-| **LLM apps** | OWASP LLM Top 10: prompt injection, system-prompt and secret leakage, insecure output handling, jailbreaks | `rampart llm-test` |
+| **LLM apps** | OWASP LLM Top 10 probes — 4 of the risk categories: LLM01 prompt injection + jailbreak, LLM05 improper output handling, LLM07/LLM02 system-prompt & sensitive-info leakage | `rampart llm-test` |
 | **External tools** | Nuclei, Nmap, Semgrep, Trivy, testssl.sh, imported as *unvalidated leads* | `--scanners` |
 
 Run `rampart tools` to see which external scanners are installed.
@@ -446,9 +451,15 @@ flowchart TD
 
 Two rules make the results trustworthy:
 
-1. **Every request goes through one choke-point.** Scope, resolved-IP allowlist, risk tier, policy,
-   and budget are checked on every request, and it fails closed. No agent, scanner, or LLM output can
-   route around it. A prompt-injected model can at most propose requests the policy engine rejects.
+1. **One admission contract, enforced at every egress point.** Every HTTP probe goes through one
+   choke-point — the policy pipeline (`rampart/policy/pipeline.py`): scope, resolved-IP allowlist,
+   risk tier, policy, and budget are checked on each request, fail-closed. The side engines that open
+   their own connections (headless browser, gRPC, infra) don't route around that contract: each
+   resolves and scope-checks its target against the same scope + resolved-IP allowlist itself, and
+   sends every connection through a shared admission guard (`rampart/infra/sidechannel.py`) that
+   applies the same budget, kill-switch, and tamper-evident audit — also fail-closed. No agent,
+   scanner, or LLM output can route around it; a prompt-injected model can at most propose requests
+   the policy engine rejects.
 2. **Nothing is "confirmed" without independent proof.** The oracle that confirms a finding is
    deterministic code, never an LLM, and it re-derives the result from scratch with a negative
    control. LLM-reasoned issues that can't be proven are labelled `agent-assessed`.
@@ -520,7 +531,7 @@ A separate weekly job scores Rampart against the external
 ## Safety model
 
 - **Authorization gate.** No valid, unexpired, in-scope `rampart.scope.yaml` with an accountable owner means no run.
-- **One choke-point** for every outbound request (crawler, oracles, test-account logins, the headless browser, and infrastructure probes alike), checked against the scope's host, port, and canonicalised path, and the *resolved* IP to stop DNS rebinding.
+- **One admission contract on every egress.** HTTP requests (crawler, oracles, test-account logins) are checked against the scope's host, port, and canonicalised path, and the *resolved* IP to stop DNS rebinding, by the policy pipeline. The headless browser, gRPC, and infra engines open their own connections but enforce that same scope + *resolved*-IP allowlist themselves and route every connection through a shared admission guard (`rampart/infra/sidechannel.py`) that applies the same budget, kill-switch, and tamper-evident audit — all fail-closed.
 - **Fail-closed scope parsing.** The built-in YAML parser rejects anything it doesn't fully understand instead of guessing, so a typo can't silently widen your scope.
 - **LLM containment is tested.** A regression test drives the agent layer with a model that tries to reach other hosts, ports, excluded paths, cloud metadata, and `file://` URLs, and asserts that nothing out of scope is ever contacted.
 - **Non-destructive by default.** Write probes need `--active`; state changes beyond that need human approval; destructive actions and denial of service are always denied.
@@ -603,8 +614,6 @@ for a human pentest.
 
 - The OS command injection oracle can confirm an endpoint that merely echoes its input back. Treat
   a `CMDI` finding on an endpoint that reflects parameters with extra care until this is fixed.
-- The sensitive-file check (`/.env`, `/backup.sql`, …) can be fooled by "soft 404" pages that
-  return 200 for every path.
 - The path traversal, SSRF, and BFLA oracles currently recognise response signatures that the
   bundled demo produces, so they can miss these flaws on other applications (false negatives,
   not false positives).
@@ -616,7 +625,8 @@ for a human pentest.
 | [Python SDK](docs/SDK.md) | run scans from code, gate tests |
 | [MCP / Claude Code](docs/MCP.md) | let an AI agent run scoped scans |
 | [LLMs and API keys](docs/LLM_AND_API_KEYS.md) | providers, models, free options |
-| [LLM security testing](docs/LLM_SECURITY_TESTING.md) | OWASP LLM Top 10 with `llm-test` |
+| [LLM security testing](docs/LLM_SECURITY_TESTING.md) | the 4 OWASP LLM Top 10 categories `llm-test` covers (LLM01/05/07/02) |
+| [Coverage manifest](docs/COVERAGE.md) | exactly what Rampart does, by evidence tier — the single source of truth |
 | [Architecture](docs/ARCHITECTURE.md) | how the code is organized |
 | [Benchmark fixtures](docs/BENCHMARK_FIXTURES.md) | how ground truth is defined |
 | [Changelog](CHANGELOG.md) | what changed in each release |
