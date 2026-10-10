@@ -6,7 +6,20 @@ All notable changes to Rampart are documented here. The format follows
 
 ## [Unreleased]
 
-## [1.2.0] — 2026-10-09
+### Added
+- **Finding-driven escalation (`--deep`).** A *confirmed* finding now deterministically spawns
+  bounded, deduped, oracle-proven follow-up tests — the other injection classes on a parameter
+  proven to be a live sink (the initial sweep only proposes SSRF/CMDI/traversal/redirect when the
+  parameter *name* matches a hint, so an oddly-named sink is otherwise never deep-tested), and
+  sibling endpoints returning an object type proven to have a broken ownership check. The control
+  flow is fixed code, never an LLM; it is level-synchronous and admits follow-ups in a
+  completion-order-independent order, so a parallel run escalates to exactly the same set as a
+  serial one. Hard caps (`--deep` uses depth ≤ 2, ≤ 24 total, ≤ 6 per finding) plus dedup by
+  investigation identity make runaway fan-out structurally impossible, and the counts admitted
+  and dropped by each cap are recorded in the report. Escalation only ever targets classes whose
+  oracle proves the class with a negative control, so it can never amplify an oracle's
+  false-positive mode — it finds *more*, never noisier. Available as `--deep` on the CLI and
+  `Rampart(..., deep=True)` in the SDK.
 
 This release comes out of a full end-to-end review: seven parallel reviewers tested every
 surface against live targets and reproduced each issue before it was fixed. Every fix has a

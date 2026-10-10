@@ -244,6 +244,17 @@ rampart features                             # list every capability and how to 
 
 `sast`, `sca`, and `iac` still require a valid scope contract, but never send a request.
 
+**Go deeper on what it finds.** Add `--deep` and a *confirmed* finding drives the scan harder,
+the way an assessor would: the other injection classes on a parameter proven to be a live sink,
+sibling endpoints that return an object type proven to have a broken ownership check. Every
+follow-up is re-proven by the same independent oracle, so `--deep` finds *more*, never noisier.
+The fan-out is deterministic and hard-capped (depth, total, and per-finding), with duplicates
+removed, so it can't run away — the counts admitted and dropped are in the report.
+
+```bash
+rampart pipeline --target … --scope-file … --deep     # the full, result-driven deep scan
+```
+
 **In CI**, gate the build with `--ci --fail-on high` (confirmed runtime findings) and, optionally,
 `--fail-on-static high` (source, dependency, and IaC findings, which are evidence-backed but not
 exploit-proven). Exit codes are stable:

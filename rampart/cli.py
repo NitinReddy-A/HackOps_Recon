@@ -282,6 +282,7 @@ def _make_config(args, approver=None, offline=False):
         sca_online=bool(getattr(args, "sca_online", False)),
         parallel=int(getattr(args, "parallel", 0) or 0),
         active=bool(getattr(args, "active", False)),
+        deep=bool(getattr(args, "deep", False)),
         store_url=getattr(args, "store", "") or "",
         sast_since=getattr(args, "since", "") or "",
         oob_collaborator_url=getattr(args, "oob_collaborator_url", "") or "",
@@ -1199,6 +1200,13 @@ def _add_scan_opts(sp, *, since=True):
         help="full SCA via OSV.dev (implies SCA; sends package names to an external service)",
     )
     sp.add_argument("--parallel", type=int, default=None, help="orchestrator worker cap (0 = scope limit)")
+    sp.add_argument(
+        "--deep",
+        action="store_true",
+        default=None,
+        help="finding-driven escalation: a validated finding spawns bounded, oracle-proven deep-scan "
+        "follow-ups (deduped; hard depth/total/per-finding caps)",
+    )
     sp.add_argument(
         "--active",
         action="store_true",

@@ -77,6 +77,11 @@ result = Rampart(scope="rampart.scope.yaml", target="...", repo=".", full=True).
 `full=True` turns on the safe aggressive stages. It deliberately does **not** enable `sca_online`,
 which sends dependency names to OSV.dev — pass `sca_online=True` yourself if you want it.
 
+Pass `deep=True` for finding-driven escalation: a *confirmed* finding spawns bounded, deduped,
+oracle-proven follow-up tests (sibling injection classes on a proven-hot parameter, sibling
+endpoints of a proven-vulnerable object type). It's hard-capped and deterministic, and
+`result.plan["escalation"]` reports how many follow-ups were admitted and dropped by each cap.
+
 ## LLM endpoints
 
 ```python

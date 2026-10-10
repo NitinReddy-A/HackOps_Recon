@@ -30,8 +30,12 @@ finding only when an independent oracle can re-prove it. Safety and trust are pr
         ▼                           (fail closed at every step; everything is logged before & after)
  independent oracle validates        (5) re-derive the proof from a clean state, 2+ reproductions,
         │                                negative control — the ONLY thing allowed to say "confirmed"
-        ▼
- finding (CWE/OWASP/CVSS + evidence) (6) correlate into chains, score risk, map to compliance, report
+        ▼                            ┌── (5b) finding-driven escalation (optional, `--deep`): a CONFIRMED
+ finding (CWE/OWASP/CVSS + evidence) │       finding deterministically spawns bounded follow-up
+        │  ◀──────────────────────────┘       hypotheses (the sibling injection classes on a proven-hot
+        ▼                                     parameter; sibling endpoints of a proven-vulnerable object
+ correlate · score · compliance (6)           type) — each re-enters at step 4, still gated and
+                                              oracle-proven. Hard depth/total/per-finding caps + dedup.
 ```
 
 The one thing to internalize: **step 4's arrow to the target always goes through the policy
@@ -59,7 +63,7 @@ only at an already in-scope host.)
 | `rampart/recon/` | Scope-gated crawler — discovers endpoints/params and fingerprints tech with no spec. |
 | `rampart/workers/` | The supervisor (phase state machine) and the per-class workers that gather initial signal. |
 | `rampart/validation/` | The **oracles** — independent re-derivation of proof, and the registry that maps a class to its oracle. Only oracles confirm. |
-| `rampart/orchestration/` | The DAG task graph + bounded concurrent scheduler that runs the above in parallel. |
+| `rampart/orchestration/` | The DAG task graph + bounded concurrent scheduler that runs the above in parallel, and `escalation.py` — the deterministic, capped, deduped finding-driven deep-scan policy (`--deep`). |
 
 ### The checks
 
