@@ -58,17 +58,20 @@ def test_injection_confirmed_escalates_to_other_sound_injection_classes_on_same_
     assert all(o["_origin"] == "escalation:injection-sibling" for o in outs)
 
 
-def test_cmdi_is_never_an_escalation_target_but_still_triggers_escalation():
-    # CMDI's oracle confirms on plain reflection, so escalating INTO it would amplify that into
-    # false positives on every reflection endpoint. It must never be a follow-up class...
-    for trigger in ("SQLI", "XSS", "CMDI"):
+def test_cmdi_is_now_an_escalation_target_and_still_triggers_escalation():
+    # CMDI's oracle now requires a COMPUTED proof (a fresh random product the injected input can
+    # never contain literally), so a reflecting endpoint can no longer satisfy it. CMDI is
+    # therefore safe as a follow-up target: a confirmed SQLI/XSS escalates INTO CMDI on the same
+    # parameter...
+    assert "CMDI" in ESCALATION_INJECTION_CLASSES
+    for trigger in ("SQLI", "XSS"):
         outs = follow_ups(
             _finding(trigger),
             {"vuln_class": trigger, "endpoint_method": "GET", "endpoint_path": "/x", "selector_param": "p"},
             None,
         )
-        assert "CMDI" not in {o["vuln_class"] for o in outs}
-    # ...yet a confirmed CMDI still TRIGGERS escalation into the sound classes.
+        assert "CMDI" in {o["vuln_class"] for o in outs}
+    # ...and a confirmed CMDI still TRIGGERS escalation into the other sound classes (never itself).
     outs = follow_ups(
         _finding("CMDI"),
         {
@@ -79,7 +82,9 @@ def test_cmdi_is_never_an_escalation_target_but_still_triggers_escalation():
         },
         None,
     )
-    assert {o["vuln_class"] for o in outs} == set(ESCALATION_INJECTION_CLASSES)
+    classes = {o["vuln_class"] for o in outs}
+    assert "CMDI" not in classes
+    assert classes == set(ESCALATION_INJECTION_CLASSES) - {"CMDI"}
 
 
 def test_injection_without_param_yields_nothing():

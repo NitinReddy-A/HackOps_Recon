@@ -16,7 +16,6 @@ result is proven:
 | **oracle-proven** | An independent oracle (a component separate from the discoverer) re-derives the result from a clean state with a **probe + a negative control + 2 or more reproductions**. Only these may carry `confidence=confirmed` through the validator. Source: `rampart/validation/`, `rampart/browser/`. |
 | **single-reproduction** | Confirmed, but on **one reproduction plus a negative control** (out-of-band callback) or a **single deterministic observation** (gRPC reflection either lists services or it does not). Source: `rampart/oob/`, `rampart/grpc_scan/`. |
 | **observation** | The observation *is* the oracle (a header is present or absent; a service accepts a TCP connection or not), re-checked on a **second request/connect**. Source: `rampart/scanners/`, `rampart/infra/`. |
-| **fixture-validated** | oracle-proven in structure, but the current oracle keys on a response **marker/signature the bundled demo emits**, so it can miss the flaw on other apps (false negatives, not false positives). Cross-referenced with the README "Known issues". |
 | **static** | Present in source/config; evidence-backed but **not proven at runtime** (`validated=False`). Source: `rampart/sast/`, `rampart/sca/`, `rampart/iac/`. |
 | **indicator / lead** | A human-review signal that is deliberately **never auto-confirmed** (partial detectors, passive indicators, external-scanner output). |
 
@@ -33,16 +32,16 @@ The default reproduction count is 2.
 | SQL injection | `SQLI` | `validation/web_oracles.py` | error-based **and/or** boolean-based, with a benign no-quote control |
 | Reflected XSS | `XSS` | `validation/web_oracles.py` | unescaped markup in an HTML context; encoded-reflection control |
 | Open redirect | `OPEN_REDIRECT` | `validation/web_oracles.py` | off-site `Location` vs a local-path control (canary host never fetched) |
-| Command injection | `CMDI` | `validation/more_oracles.py` | marker echo vs benign control — **see echo caveat below** |
+| Command injection | `CMDI` | `validation/more_oracles.py` | computed proof: injects `; echo $((A*B))` with fresh random A,B each round and requires the *product* (which the payload never contains literally) in the response, absent from a benign control — reflection cannot satisfy it |
 | SSTI | `SSTI` | `validation/more_oracles.py` | arithmetic differential (`{{1337*1338}}` → `1788906`) |
 | JWT `alg=none` | `JWT` | `validation/more_oracles.py` | forged token accepted **and** unauth rejected (defect isolated to signature verification) |
 | Host-header injection | `HOST_HEADER_INJECTION` | `validation/more_oracles.py` | crafted `Host` reflected; legitimate Host is clean |
 | Excessive data exposure | `EXCESSIVE_DATA` | `validation/more_oracles.py` | sensitive field names in an authenticated response |
 | Mass assignment / BOPLA | `MASS_ASSIGNMENT` | `validation/more_oracles.py` | privileged field persisted; needs `--active` (write) |
 | GraphQL introspection | `GRAPHQL` | `validation/more_oracles.py` | schema returned to an anonymous client |
-| Broken function-level authz | `BFLA` | `validation/more_oracles.py` | low-priv principal reaches a privileged function — **see fixture note below** |
-| Server-side request forgery | `SSRF` (in-band) | `validation/more_oracles.py` | response-signature oracle — **see fixture note below** |
-| Path traversal | `PATH_TRAVERSAL` | `validation/more_oracles.py` | response-signature oracle — **see fixture note below** |
+| Broken function-level authz | `BFLA` | `validation/more_oracles.py` | structural proof: low-priv principal gets a 200 privileged **aggregate** (JSON list of 2+ records) while an unauthenticated request is rejected (401/403); no marker, a bare 200 never confirms |
+| Server-side request forgery | `SSRF` (in-band) | `validation/more_oracles.py` | cloud-metadata/IMDS **content** signature (`AccessKeyId`/`SecretAccessKey`/`iam-role`/`computeMetadata`/…); a benign external fetch and a reflected metadata URL do not match |
+| Path traversal | `PATH_TRAVERSAL` | `validation/more_oracles.py` | real file-content signature (unix `/etc/passwd` `root:…:0:0:` line, or a Windows `boot.ini`/`win.ini` banner); a reflected path (e.g. `../../etc/passwd`) does not match |
 | DOM-based XSS | `DOM_XSS` | `rampart/browser/engine.py` | **execution**-proven in headless Chromium, 2+ renders + benign control; needs `--browser` (Playwright). Runs via the browser side-channel guard, not the HTTP pipeline. |
 | Stored XSS | `STORED_XSS` | `rampart/browser/engine.py` | execution-proven on fresh reads, 2+ loads; needs `--browser`. Caller performs the write. |
 
@@ -73,17 +72,6 @@ completeness.
 | Exposed sensitive file | `sensitive-file-exposure` | `scanners/misconfig.py` | 200 + **content signature** on 2/2, gated by a **soft-404 negative control** (a non-existent sibling path must NOT match the signature) |
 | Exposed sensitive service | `EXPOSED_SERVICE` | `infra/scanner.py` | open on **2 connects** + a closed in-scope control port (`confirmed`); `firm` when the scope has no spare control port. Needs `--infra`. |
 | TLS cert / weak-protocol issues | `TLS_MISCONFIG`, `TLS_WEAK_PROTOCOL` | `infra/scanner.py` | `firm` (`validated=False`) — weaker evidence |
-
-### fixture-validated — and the known caveats (consistent with README "Known issues in v1.2.0")
-
-- **SSRF (in-band), PATH_TRAVERSAL, BFLA** oracles currently recognise the response signatures the
-  bundled demo target produces (`RAMPART-SSRF`, `RAMPART-TRAVERSAL`, `RAMPART-BFLA`). On other apps
-  they can **miss** the flaw (false negatives), never invent one. Blind SSRF via `--oob` does not
-  depend on these markers.
-- **CMDI echo caveat**: the command-injection oracle can be satisfied by an endpoint that merely
-  **echoes its input** back. Treat a `CMDI` finding on a parameter-reflecting endpoint with extra care.
-  (The sensitive-file "soft-404" false positive in this list was fixed in the current development
-  line — a non-existent sibling path is now used as a negative control.)
 
 ### indicator / lead (never auto-confirmed)
 
