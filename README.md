@@ -614,8 +614,6 @@ for a human pentest.
 
 - The OS command injection oracle can confirm an endpoint that merely echoes its input back. Treat
   a `CMDI` finding on an endpoint that reflects parameters with extra care until this is fixed.
-- The sensitive-file check (`/.env`, `/backup.sql`, …) can be fooled by "soft 404" pages that
-  return 200 for every path.
 - The path traversal, SSRF, and BFLA oracles currently recognise response signatures that the
   bundled demo produces, so they can miss these flaws on other applications (false negatives,
   not false positives).

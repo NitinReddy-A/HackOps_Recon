@@ -70,7 +70,7 @@ completeness.
 | Clickjacking (no XFO / CSP frame-ancestors) | `security-misconfiguration` | `scanners/misconfig.py` | observed on 2/2 requests |
 | Insecure session-cookie flags | `security-misconfiguration` | `scanners/misconfig.py` | missing HttpOnly/Secure/SameSite on 2/2 |
 | Server/version disclosure | `security-misconfiguration` | `scanners/misconfig.py` | versioned `Server` header on 2/2 |
-| Exposed sensitive file | `sensitive-file-exposure` | `scanners/misconfig.py` | 200 + **content signature** on 2/2 — **see soft-404 caveat below** |
+| Exposed sensitive file | `sensitive-file-exposure` | `scanners/misconfig.py` | 200 + **content signature** on 2/2, gated by a **soft-404 negative control** (a non-existent sibling path must NOT match the signature) |
 | Exposed sensitive service | `EXPOSED_SERVICE` | `infra/scanner.py` | open on **2 connects** + a closed in-scope control port (`confirmed`); `firm` when the scope has no spare control port. Needs `--infra`. |
 | TLS cert / weak-protocol issues | `TLS_MISCONFIG`, `TLS_WEAK_PROTOCOL` | `infra/scanner.py` | `firm` (`validated=False`) — weaker evidence |
 
@@ -82,8 +82,8 @@ completeness.
   depend on these markers.
 - **CMDI echo caveat**: the command-injection oracle can be satisfied by an endpoint that merely
   **echoes its input** back. Treat a `CMDI` finding on a parameter-reflecting endpoint with extra care.
-- **Sensitive-file soft-404 caveat**: a site that returns `200` with matching-looking content for
-  *every* path ("soft 404") can fool the sensitive-file check.
+  (The sensitive-file "soft-404" false positive in this list was fixed in the current development
+  line — a non-existent sibling path is now used as a negative control.)
 
 ### indicator / lead (never auto-confirmed)
 
